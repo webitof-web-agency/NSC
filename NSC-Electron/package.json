@@ -1,0 +1,45 @@
+{
+  "name": "nsc-desktop",
+  "version": "1.0.0",
+  "description": "Naresh Saree Collection - Desktop Billing App",
+  "main": "electron/main.js",
+  "author": "Naresh Saree Collection",
+  "license": "ISC",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"npm run start:backend\" \"wait-on http://localhost:3002/health && npm run start:electron\"",
+    "start:electron": "electron .",
+    "start:backend": "node local-backend/server.js",
+    "build:frontend": "cd ../Billing_Software_frontend && npm run build -- --mode electron && xcopy /E /Y /I dist ..\\NSC-Electron\\renderer",
+    "build:win": "npm run build:frontend && electron-builder --win --config electron-builder.config.js",
+    "dev": "concurrently \"node local-backend/server.js\" \"wait-on http://localhost:3002/health && electron . --dev\"",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
+    "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "geoip-lite": "^1.4.10",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.2",
+    "module-alias": "^2.2.3",
+    "mongoose": "^8.19.2",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.5",
+    "qrcode": "^1.5.4",
+    "ua-parser-js": "^2.0.8",
+    "uuid": "^11.0.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^37.0.0",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.1"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "nsc-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "_moduleAliases": {
+    "@": ".",
+    "@controllers": "controllers",
+    "@middleware": "middleware",
+    "@models": "models",
+    "@routes": "routes",
+    "@services": "services",
+    "@utils": "utils",
+    "@validators": "validators"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.18",
+    "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "geoip-lite": "^1.4.10",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.2",
+    "module-alias": "^2.2.3",
+    "mongoose": "^8.19.2",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.5",
+    "puppeteer": "^25.3.0",
+    "qrcode": "^1.5.4",
+    "razorpay": "^2.9.6",
+    "ua-parser-js": "^2.0.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

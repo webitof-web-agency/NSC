@@ -141,3 +141,20 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ─────────────────────────────────────────────
+# Custom NSC Exclusions
+# ─────────────────────────────────────────────
+
+# Uploads & Media
+uploads/
+upload/
+public/uploads/
+public/upload/
+local-backend/public/uploads/
+
+# Electron Build & Bundler Output
+release/
+dist/
+renderer/
+userData/

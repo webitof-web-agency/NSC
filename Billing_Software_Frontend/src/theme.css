@@ -1,0 +1,83 @@
+/* === Global Theme Colors === */
+/* Create CSS variables so you can change all website colors from here */
+/* bg-purple-600 old change to bg-primary */
+/* text-purple-600 old change to text-primary */
+/* bg-purple-100 change to bg-third */
+/* bg-purple-50 change to bg-third  */
+/* border-purple-300 change to border-fourth */
+/* border-purple-200 change to border-fourth */
+/* peer-checked:bg-primary change to peer-checked:bg-[#A43275] */
+/* peer-focus:ring-purple-600 change to peer-focus:ring-[#A43275]  */
+/* from-indigo-300 to-purple-600 change to from-pink-300 to-pink-600 in DashboardCard.tsx */
+
+:root {
+  /* Brand Colors */
+  --color-primary: #A43275;
+  --color-secondary: #CCA2BB;
+  --color-third: #fce6f4;
+  --color-fourth: #fbb7ec;
+
+  /* Accent Colors */
+  --color-primary-accent: #30252C;
+  --color-secondary-accent: #9F9098;
+
+  /* Neutral / Foreground */
+  --color-foreground: #FBFBFB;
+}
+
+/* Dark Mode Support (optional) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #A43275;      /* same or adjust for dark mode */
+    --color-secondary: #CCA2BB;
+    --color-third: #fce6f4;
+    --color-fourth: #fbb7ec;
+    --color-primary-accent: #30252C;
+    --color-secondary-accent: #9F9098;
+    --color-foreground: #FBFBFB;
+  }
+}
+
+/* Helper classes if you want direct utility usage */
+.bg-primary {
+  background-color: var(--color-primary);
+}
+.bg-secondary {
+  background-color: var(--color-secondary);
+}
+.bg-third {
+  background-color: var(--color-third);
+}
+.bg-fourth {
+  background-color: var(--color-fourth);
+}
+.bg-primary-accent {
+  background-color: var(--color-primary-accent);
+}
+.bg-third-accent {
+  background-color: var(--color-secondary-accent);
+}
+.text-primary {
+  color: var(--color-primary);
+}
+.text-secondary {
+  color: var(--color-secondary);
+}
+.text-third {
+  color: var(--color-third);
+}
+.text-fourth {
+  color: var(--color-fourth);
+}
+.border-primary {
+  border-color: var(--color-primary);
+}
+.border-secondary {
+  border-color: var(--color-secondary);
+}
+.border-third {
+  border-color: var(--color-third);
+}
+.border-fourth {
+  border-color: var(--color-fourth);
+}
