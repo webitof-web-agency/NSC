@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const syncController = require('../controllers/syncController');
-const { protect } = require('../middleware/authMiddleware');
+const protect = require('../middleware/authMiddleware');
 
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/temp_sync/' });
