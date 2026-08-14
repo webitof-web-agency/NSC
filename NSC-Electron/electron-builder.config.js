@@ -49,13 +49,8 @@ module.exports = {
       // In production: process.resourcesPath + '/local-backend/'
       from: 'local-backend/',
       to: 'local-backend/',
-      // **/* in micromatch does NOT match dotfiles, so we explicitly add .env.local below
-      filter: ['**/*'],
-    },
-    {
-      // Explicitly copy .env.local — dotfiles are excluded by **/* glob
-      from: 'local-backend/.env.local',
-      to: 'local-backend/.env.local',
+      // Include regular files plus dotfiles like .env.local in one pass
+      filter: ['**/*', '**/.*', '.env.local'],
     },
     {
       // Bundled MongoDB Community Server binary (mongod.exe)
