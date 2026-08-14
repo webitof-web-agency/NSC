@@ -243,10 +243,13 @@ function onNetworkChange(status) {
       if (hasToken) {
         console.log('🔄 Back online — starting sync...');
         syncManager.startSync().catch(console.error);
+        syncManager.startPeriodicSync();
       } else {
         console.log('⏸️  Back online but no auth token yet — sync will run after login');
       }
     }).catch(console.error);
+  } else if (!status.isOnline && syncManager) {
+    syncManager.stopPeriodicSync();
   }
 }
 

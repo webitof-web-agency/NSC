@@ -1,5 +1,6 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const SyncJournal = require('../models/SyncJournal');
 
 // GET /api/sync/pull?cursor=XYZ
@@ -58,6 +59,12 @@ exports.getBootstrapSnapshot = async (req, res) => {
     const Invoice = require('@models/Invoice');
     const Quotation = require('@models/Quotation');
     const Supplier = require('@models/Supplier');
+    const Purchase = require('@models/Purchase');
+    const CreditNote = require('@models/CreditNote');
+    const SupplierPayment = require('@models/SupplierPayment');
+    const User = require('@models/User');
+    const Attendance = require('@models/Attendance');
+    const StaffSalary = require('@models/StaffSalary');
     
     // Only fetch non-deleted records for the bootstrap snapshot
     const baseQuery = { isDeleted: false };
@@ -67,19 +74,37 @@ exports.getBootstrapSnapshot = async (req, res) => {
       customers,
       invoices,
       quotations,
-      suppliers
+      suppliers,
+      purchases,
+      creditNotes,
+      supplierPayments,
+      users,
+      attendance,
+      staffSalary
     ] = await Promise.all([
       Customer.find(baseQuery).lean(),
       Invoice.find(baseQuery).lean(),
       Quotation.find(baseQuery).lean(),
-      Supplier.find(baseQuery).lean()
+      Supplier.find(baseQuery).lean(),
+      Purchase.find(baseQuery).lean(),
+      CreditNote.find(baseQuery).lean(),
+      SupplierPayment.find(baseQuery).lean(),
+      User.find(baseQuery).lean(),
+      Attendance.find(baseQuery).lean(),
+      StaffSalary.find(baseQuery).lean()
     ]);
 
     const snapshot = {
       customers,
       invoices,
       quotations,
-      suppliers
+      suppliers,
+      purchases,
+      'credit-notes': creditNotes,
+      'supplier-payments': supplierPayments,
+      users,
+      attendance,
+      'staff-salary': staffSalary
     };
 
     res.status(200).json({
@@ -119,12 +144,18 @@ exports.pushSyncEvents = async (req, res) => {
     const SyncConflict = require('@models/SyncConflict');
     const { resolveReferences } = require('../utils/referenceResolver');
 
-    // Mapping of collection names to Cloud Models
+    // Mapping of collection names to Cloud Models (all 10 syncable collections)
     const COLLECTION_MAP = {
       'customers': require('@models/Customer'),
       'invoices': require('@models/Invoice'),
       'quotations': require('@models/Quotation'),
-      'suppliers': require('@models/Supplier')
+      'suppliers': require('@models/Supplier'),
+      'purchases': require('@models/Purchase'),
+      'credit-notes': require('@models/CreditNote'),
+      'supplier-payments': require('@models/SupplierPayment'),
+      'users': require('@models/User'),
+      'attendance': require('@models/Attendance'),
+      'staff-salary': require('@models/StaffSalary')
     };
 
     const processedEvents = [];
@@ -323,7 +354,13 @@ exports.resolveConflict = async (req, res) => {
         'customers': require('@models/Customer'),
         'invoices': require('@models/Invoice'),
         'quotations': require('@models/Quotation'),
-        'suppliers': require('@models/Supplier')
+        'suppliers': require('@models/Supplier'),
+        'purchases': require('@models/Purchase'),
+        'credit-notes': require('@models/CreditNote'),
+        'supplier-payments': require('@models/SupplierPayment'),
+        'users': require('@models/User'),
+        'attendance': require('@models/Attendance'),
+        'staff-salary': require('@models/StaffSalary')
       };
       
       const Model = COLLECTION_MAP[conflict.collectionName];

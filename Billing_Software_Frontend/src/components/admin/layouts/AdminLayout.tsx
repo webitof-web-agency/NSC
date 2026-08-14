@@ -5,6 +5,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from '../Sidebar';
 import ProductSidebar from '../ProductSidebar';
 import SidebarToggleButton from '../SidebarToggleButton';
+import ElectronStatusBar from '../../ElectronStatusBar';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -42,23 +43,25 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   const layoutHeightClass = isElectron ? "h-[calc(100vh-32px)]" : "h-screen";
 
   return (
-    <div className={`flex bg-white font-sans ${layoutHeightClass}`}>
-      <Sidebar isOpen={isSidebarOpen} />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header toggleSidebar={() => setIsSidebarOpen(prev => !prev)} />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4">
-          {children || <Outlet />}
-        </main>
+    <>
+      <ElectronStatusBar />
+      <div className={`flex bg-white font-sans ${layoutHeightClass}`}>
+        <Sidebar isOpen={isSidebarOpen} />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header toggleSidebar={() => setIsSidebarOpen(prev => !prev)} />
+          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4">
+            {children || <Outlet />}
+          </main>
+        </div>
+
+        {/* Product Sidebar Components */}
+        <SidebarToggleButton onClick={() => setIsProductSidebarOpen(true)} />
+        <ProductSidebar
+          isOpen={isProductSidebarOpen}
+          onClose={() => setIsProductSidebarOpen(false)}
+        />
       </div>
-
-      {/* Product Sidebar Components */}
-      <SidebarToggleButton onClick={() => setIsProductSidebarOpen(true)} />
-      <ProductSidebar
-        isOpen={isProductSidebarOpen}
-        onClose={() => setIsProductSidebarOpen(false)}
-      />
-    </div>
-
+    </>
   );
 };
 

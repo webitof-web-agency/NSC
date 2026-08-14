@@ -16,3 +16,7 @@ local-backend/.env.local.override
 # OS
 .DS_Store
 Thumbs.db
+
+# MongoDB Bundled Binary
+mongodb-bin/*
+!mongodb-bin/README.md

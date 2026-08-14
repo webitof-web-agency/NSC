@@ -38,6 +38,7 @@ class SyncManager {
     this._totalCount = 0;
     this._lastSyncAt = null;
     this._syncLock = false;     // Prevent concurrent syncs
+    this._periodicSyncTimer = null;
   }
 
   // ─────────────────────────────────────────────
@@ -52,6 +53,27 @@ class SyncManager {
       total: this._totalCount,
       lastSync: this._lastSyncAt,
     };
+  }
+
+  startPeriodicSync() {
+    if (this._periodicSyncTimer) return;
+    console.log('⏱️ Starting periodic background sync (every 5 mins)...');
+    this._periodicSyncTimer = setInterval(() => {
+      this.hasAuthToken().then((has) => {
+        if (has && !this._syncLock) {
+          console.log('⏱️ Periodic sync triggered.');
+          this.startSync().catch(console.error);
+        }
+      });
+    }, 5 * 60 * 1000); // 5 minutes
+  }
+
+  stopPeriodicSync() {
+    if (this._periodicSyncTimer) {
+      console.log('⏱️ Stopping periodic background sync.');
+      clearInterval(this._periodicSyncTimer);
+      this._periodicSyncTimer = null;
+    }
   }
 
   async startSync() {
@@ -186,50 +208,70 @@ class SyncManager {
     const batches = this._chunk(events, 50);
 
     for (const batch of batches) {
-      try {
-        const remoteRes = await axios.post(
-          `${this.remoteBackendUrl}/api/sync/push`,
-          { events: batch },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              'x-device-id': this.deviceId,
-              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-            },
-            timeout: 30000,
-          }
-        );
-
-        const { processedEvents, conflicts } = remoteRes.data;
-        
-        if (conflicts && conflicts.length > 0) {
-          console.warn(`⚠️  Cloud reported ${conflicts.length} conflicts during push.`);
-          // Conflicts are stored in Cloud SyncConflict and marked as processed 
-          // so the local device doesn't keep retrying.
-        }
-
-        // 3. Mark events as synced locally
-        if (processedEvents && processedEvents.length > 0) {
-          await axios.post(
-            `${this.localBackendUrl}/api/outbox/mark-synced`,
-            { eventIds: processedEvents },
-            { timeout: 10000 }
+      let retries = 0;
+      let success = false;
+      
+      while (retries < 5 && !success) {
+        try {
+          const remoteRes = await axios.post(
+            `${this.remoteBackendUrl}/api/sync/push`,
+            { events: batch },
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'x-device-id': this.deviceId,
+                ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+              },
+              timeout: 30000,
+            }
           );
-          this._syncedCount += processedEvents.length;
-          this._pendingCount -= processedEvents.length;
+
+          const { processedEvents, conflicts } = remoteRes.data;
+          
+          if (conflicts && conflicts.length > 0) {
+            console.warn(`⚠️  Cloud reported ${conflicts.length} conflicts during push.`);
+          }
+
+          // 3. Mark events as synced locally
+          if (processedEvents && processedEvents.length > 0) {
+            await axios.post(
+              `${this.localBackendUrl}/api/outbox/mark-synced`,
+              { eventIds: processedEvents },
+              { timeout: 10000 }
+            );
+            this._syncedCount += processedEvents.length;
+            this._pendingCount -= processedEvents.length;
+          }
+
+          this._emit({
+            state: 'syncing',
+            message: `Pushed ${processedEvents?.length || 0} events to cloud`,
+            synced: this._syncedCount,
+            total: this._totalCount,
+            pending: this._pendingCount,
+          });
+
+          success = true;
+
+        } catch (batchErr) {
+          if (batchErr.response && batchErr.response.status === 401) {
+            console.error('❌ Sync Push: Unauthorized (401). Clearing stale token.');
+            try {
+              await axios.post(`${this.localBackendUrl}/api/local/sync-token`, { token: null });
+            } catch (e) {}
+            throw new Error('Unauthorized - Stale Token'); // Abort entire sync
+          }
+          
+          retries++;
+          if (retries >= 5) {
+            console.error(`❌ Batch sync push failed after 5 retries:`, batchErr.message);
+          } else {
+            // Exponential backoff: 2s, 4s, 8s, 16s... max 60s
+            const backoff = Math.min(2000 * Math.pow(2, retries - 1), 60000);
+            console.log(`⚠️ Batch push failed (${batchErr.message}). Retrying ${retries}/5 in ${backoff}ms...`);
+            await new Promise(res => setTimeout(res, backoff));
+          }
         }
-
-        this._emit({
-          state: 'syncing',
-          message: `Pushed ${processedEvents?.length || 0} events to cloud`,
-          synced: this._syncedCount,
-          total: this._totalCount,
-          pending: this._pendingCount,
-        });
-
-      } catch (batchErr) {
-        console.error(`❌ Batch sync push failed:`, batchErr.message);
-        // Continue with next batch
       }
     }
   }

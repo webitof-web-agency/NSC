@@ -1,4 +1,8 @@
 // electron/mongodbManager.js
+// Manages the lifecycle of a local MongoDB instance bundled with the app.
+// In production, uses the bundled mongod.exe from extraResources.
+// Falls back to system PATH mongod if bundled binary is not found.
+
 'use strict';
 
 const { spawn } = require('child_process');
@@ -11,7 +15,38 @@ class MongoDBManager {
     this.app = app;
     this.port = 27018;
     this.process = null;
-    this.dataDir = path.join(this.app.getPath('userData'), 'mongodb_data');
+    this.dataDir = path.join(this.app.getPath('userData'), 'mongodb', 'data');
+    this._isDev = process.argv.includes('--dev');
+  }
+
+  /**
+   * Resolve the mongod executable path.
+   * Priority:
+   *   1. Bundled binary in extraResources (production)
+   *   2. Bundled binary relative to source (development)
+   *   3. System PATH fallback ('mongod')
+   */
+  _resolveMongodPath() {
+    const platformDir = process.platform === 'win32' ? 'win-x64' : 'linux-x64';
+    const binaryName = process.platform === 'win32' ? 'mongod.exe' : 'mongod';
+
+    // Production: extraResources/mongodb-bin/<platform>/mongod
+    const prodPath = path.join(process.resourcesPath || '', 'mongodb-bin', platformDir, binaryName);
+    if (!this._isDev && fs.existsSync(prodPath)) {
+      console.log('📦 Using bundled mongod from:', prodPath);
+      return prodPath;
+    }
+
+    // Development: NSC-Electron/mongodb-bin/<platform>/mongod
+    const devPath = path.join(__dirname, '..', 'mongodb-bin', platformDir, binaryName);
+    if (fs.existsSync(devPath)) {
+      console.log('📦 Using local mongod binary from:', devPath);
+      return devPath;
+    }
+
+    // Fallback: system PATH
+    console.log('⚠️  No bundled mongod found — falling back to system PATH');
+    return 'mongod';
   }
 
   // Check if port 27018 is already in use
@@ -48,12 +83,13 @@ class MongoDBManager {
       fs.mkdirSync(this.dataDir, { recursive: true });
     }
 
+    const mongodPath = this._resolveMongodPath();
     console.log('🚀 Spawning local MongoDB on port ' + this.port);
+    console.log('   Binary:', mongodPath);
+    console.log('   Data dir:', this.dataDir);
     
     return new Promise((resolve, reject) => {
-      // In production, you would point this to a bundled mongod binary.
-      // For now, it assumes MongoDB Community Server is in the system PATH.
-      this.process = spawn('mongod', [
+      this.process = spawn(mongodPath, [
         '--port', String(this.port),
         '--dbpath', this.dataDir,
         '--bind_ip', '127.0.0.1',
@@ -76,7 +112,11 @@ class MongoDBManager {
       });
 
       this.process.on('error', (err) => {
-        console.error('❌ Failed to spawn MongoDB (is it in PATH?):', err);
+        console.error('❌ Failed to spawn MongoDB:', err.message);
+        if (err.code === 'ENOENT') {
+          console.error('   mongod binary not found. Please ensure MongoDB Community Server is installed');
+          console.error(`   or place the binary in the mongodb-bin/${process.platform === 'win32' ? 'win-x64' : 'linux-x64'}/ directory.`);
+        }
         reject(err);
       });
 
@@ -91,7 +131,7 @@ class MongoDBManager {
           console.log('⏱️ MongoDB spawn timeout reached, assuming it is running.');
           resolve();
         }
-      }, 5000);
+      }, 10000);
     });
   }
 

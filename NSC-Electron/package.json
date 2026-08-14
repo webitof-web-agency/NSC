@@ -3,15 +3,17 @@
   "version": "1.0.0",
   "description": "Naresh Saree Collection - Desktop Billing App",
   "main": "electron/main.js",
-  "author": "Naresh Saree Collection",
+  "author": "Naresh Saree Collection <info@nareshsareecollection.com>",
+  "homepage": "https://nareshsareecollection.com",
   "license": "ISC",
   "private": true,
   "scripts": {
     "start": "concurrently \"npm run start:backend\" \"wait-on http://localhost:3002/health && npm run start:electron\"",
     "start:electron": "electron .",
     "start:backend": "node local-backend/server.js",
-    "build:frontend": "cd ../Billing_Software_frontend && npm run build -- --mode electron && xcopy /E /Y /I dist ..\\NSC-Electron\\renderer",
+    "build:frontend": "cd ../Billing_Software_Frontend && npm run build -- --mode electron && cd ../NSC-Electron && npx shx rm -rf renderer && npx shx cp -r ../Billing_Software_Frontend/dist renderer",
     "build:win": "npm run build:frontend && electron-builder --win --config electron-builder.config.js",
+    "build:linux": "npm run build:frontend && electron-builder --linux rpm AppImage --x64 --config electron-builder.config.js",
     "dev": "concurrently \"node local-backend/server.js\" \"wait-on http://localhost:3002/health && electron . --dev\"",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -21,6 +23,7 @@
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-validator": "^7.2.1",
@@ -40,6 +43,7 @@
     "concurrently": "^9.1.2",
     "electron": "^37.0.0",
     "electron-builder": "^25.1.8",
+    "shx": "^0.4.0",
     "wait-on": "^8.0.1"
   }
 }

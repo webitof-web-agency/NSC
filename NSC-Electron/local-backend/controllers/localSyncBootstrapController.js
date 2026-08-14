@@ -4,11 +4,18 @@ const mongoose = require('mongoose');
 const { resolveReferences } = require('../utils/referenceResolver');
 
 // Mapping of collection names used in the snapshot payload to Mongoose Models
+// Must match all 10 collections from syncRegistry.js
 const COLLECTION_MAP = {
   'customers': 'Customer',
   'invoices': 'Invoice',
   'quotations': 'Quotation',
-  'suppliers': 'Supplier'
+  'suppliers': 'Supplier',
+  'purchases': 'Purchase',
+  'credit-notes': 'CreditNote',
+  'supplier-payments': 'SupplierPayment',
+  'users': 'User',
+  'attendance': 'Attendance',
+  'staff-salary': 'StaffSalary'
 };
 
 exports.applyBootstrap = async (req, res) => {

@@ -57,6 +57,13 @@ module.exports = {
       from: 'local-backend/.env.local',
       to: 'local-backend/.env.local',
     },
+    {
+      // Bundled MongoDB Community Server binary (mongod.exe)
+      // Placed outside ASAR so it can be spawned as a child process
+      from: 'mongodb-bin/',
+      to: 'mongodb-bin/',
+      filter: ['**/*'],
+    },
   ],
 
   // ─────────────────────────────────────────────
@@ -88,6 +95,15 @@ module.exports = {
     
     // ── Prerequisite check: MongoDB must be installed ──
     // The installer.nsh file can check for MongoDB service
+  },
+
+  // ─────────────────────────────────────────────
+  // Linux Targets
+  // ─────────────────────────────────────────────
+  linux: {
+    target: ['rpm', 'AppImage'],
+    category: 'Office',
+    icon: 'assets/icon.png',
   },
 
   // ─────────────────────────────────────────────
