@@ -37,7 +37,8 @@ async function getSettings(req, res) {
           Boolean(merged.accessToken) &&
           Boolean(merged.phoneNumberId) &&
           Boolean(merged.businessAccountId) &&
-          Boolean(merged.webhookVerifyToken),
+          Boolean(merged.webhookVerifyToken) &&
+          Boolean(merged.appSecret),
       },
     });
   } catch (error) {
@@ -53,13 +54,19 @@ async function upsertSettings(req, res) {
       ? encryptValue(incomingAccessToken)
       : existing?.accessToken || '';
 
+    const incomingAppSecret = String(req.body.appSecret || '').trim();
+    const encryptedAppSecret = incomingAppSecret
+      ? encryptValue(incomingAppSecret)
+      : existing?.appSecret || '';
+
     const payload = {
       isEnabled: toBoolean(req.body.isEnabled, false),
       accessToken: encryptedAccessToken,
       phoneNumberId: String(req.body.phoneNumberId || '').trim(),
       businessAccountId: String(req.body.businessAccountId || '').trim(),
       webhookVerifyToken: String(req.body.webhookVerifyToken || '').trim(),
-      apiVersion: String(req.body.apiVersion || process.env.WHATSAPP_API_VERSION || 'v18.0').trim(),
+      appSecret: encryptedAppSecret,
+      apiVersion: String(req.body.apiVersion || process.env.WHATSAPP_API_VERSION || 'v25.0').trim(),
       autoSendOnInvoice: toBoolean(req.body.autoSendOnInvoice, true),
       autoSendOnExchange: toBoolean(req.body.autoSendOnExchange, true),
       autoSendOnQuotation: toBoolean(req.body.autoSendOnQuotation, true),
@@ -77,6 +84,7 @@ async function upsertSettings(req, res) {
       data: {
         ...settings,
         accessTokenMasked: maskSecret(incomingAccessToken || mergeConfig(settings).accessToken),
+        appSecretMasked: maskSecret(incomingAppSecret || mergeConfig(settings).appSecret),
       },
     });
   } catch (error) {
@@ -249,10 +257,12 @@ async function testSend(req, res) {
       return res.status(400).json({ success: false, message: 'WhatsApp credentials are incomplete' });
     }
 
-    const response = await sendTextMessage({
+    const { sendTemplateMessage } = require('../services/whatsappService');
+    const response = await sendTemplateMessage({
       config,
       phone: normalizePhoneNumber(to),
-      text: 'This is a WhatsApp integration test message from NSC Billing Software.',
+      templateName: 'hello_world',
+      languageCode: 'en_US'
     });
 
     await WhatsAppSettings.findOneAndUpdate(
@@ -261,9 +271,22 @@ async function testSend(req, res) {
       { upsert: true }
     );
 
-    return res.status(200).json({ success: true, data: response });
+    const messageId = response?.messages?.[0]?.id || '';
+    return res.status(200).json({ 
+      success: true, 
+      status: 'accepted',
+      messageId: messageId,
+      recipient: to,
+      data: response 
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      error: 'WhatsApp rejected the message',
+      metaCode: error.metaCode,
+      details: error.details || error.message,
+      fbtrace_id: error.fbtrace_id
+    });
   }
 }
 

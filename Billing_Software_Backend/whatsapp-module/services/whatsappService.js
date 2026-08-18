@@ -54,9 +54,14 @@ async function callWhatsAppApi({ url, method = 'GET', token, body, isFormData = 
     : await response.text();
 
   if (!response.ok) {
-    const message = typeof payload === 'string' ? payload : payload?.error?.message || 'WhatsApp API request failed';
-    const error = new Error(message);
+    const errorMsg = payload?.error?.message || (typeof payload === 'string' ? payload : 'WhatsApp API request failed');
+    const error = new Error(errorMsg);
     error.statusCode = response.status;
+    error.metaCode = payload?.error?.code;
+    error.metaType = payload?.error?.type;
+    error.metaSubcode = payload?.error?.error_subcode;
+    error.details = payload?.error?.error_data?.details;
+    error.fbtrace_id = payload?.error?.fbtrace_id;
     error.payload = payload;
     throw error;
   }
@@ -96,6 +101,7 @@ function mergeConfig(settingsDoc) {
     phoneNumberId: settingsDoc?.phoneNumberId || envConfig.phoneNumberId,
     businessAccountId: settingsDoc?.businessAccountId || envConfig.businessAccountId,
     webhookVerifyToken: settingsDoc?.webhookVerifyToken || envConfig.webhookVerifyToken,
+    appSecret: settingsDoc?.appSecret ? decryptValue(settingsDoc.appSecret) : envConfig.appSecret,
     apiVersion: settingsDoc?.apiVersion || envConfig.apiVersion,
     autoSendOnInvoice: settingsDoc?.autoSendOnInvoice !== false,
     autoSendOnExchange: settingsDoc?.autoSendOnExchange !== false,
@@ -215,6 +221,25 @@ async function sendTextMessage({ config, phone, text }) {
       text: {
         preview_url: false,
         body: text,
+      },
+    },
+  });
+}
+
+async function sendTemplateMessage({ config, phone, templateName, languageCode }) {
+  return await callWhatsAppApi({
+    url: getGraphBaseUrl(config.apiVersion, config.phoneNumberId, 'messages'),
+    method: 'POST',
+    token: config.accessToken,
+    body: {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: {
+          code: languageCode,
+        },
       },
     },
   });
@@ -409,6 +434,7 @@ module.exports = {
   uploadMediaToWhatsApp,
   sendDocumentMessage,
   sendTextMessage,
+  sendTemplateMessage,
   getMessageStatus,
   fetchConversationReplies,
   isRetryableWhatsAppError,

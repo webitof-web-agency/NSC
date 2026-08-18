@@ -1545,7 +1545,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
       if (discountAmount > grossInclusive) discountAmount = grossInclusive;
 
       const netInclusive = grossInclusive - discountAmount;
-      calculatedTax = taxType === "GST" ? (netInclusive * taxRate) / 100 : 0;
+      calculatedTax = taxType === "GST" ? netInclusive - (netInclusive / (1 + (taxRate / 100))) : 0;
       finalAmount = netInclusive;
     } else {
       // GST Exclusive OR Non-GST

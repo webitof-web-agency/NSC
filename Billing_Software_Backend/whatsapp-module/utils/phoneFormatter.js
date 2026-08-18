@@ -10,15 +10,15 @@ function normalizePhoneNumber(phone, defaultCountryCode = '91') {
   }
 
   if (raw.startsWith('+')) {
-    return `+${digits}`;
+    return digits;
   }
 
   if (digits.length === 10) {
-    return `+${defaultCountryCode}${digits}`;
+    return `${defaultCountryCode}${digits}`;
   }
 
   if (digits.length > 10) {
-    return `+${digits}`;
+    return digits;
   }
 
   throw new Error('Customer phone number must contain at least 10 digits');

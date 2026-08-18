@@ -8,7 +8,20 @@ import LoaderSpinner from '@components/admin/LoaderSpinner';
 import Constants from '@constants/api';
 import type { RootState } from '@store/index';
 import { pageCardClass, WhatsAppSectionHeader, WhatsAppTabs } from './WhatsAppShared';
-import type { WhatsAppSettingsData } from './WhatsAppShared';
+export interface WhatsAppSettingsData {
+  isEnabled: boolean;
+  accessToken: string;
+  phoneNumberId: string;
+  businessAccountId: string;
+  webhookVerifyToken: string;
+  appSecret: string;
+  apiVersion: string;
+  autoSendOnInvoice: boolean;
+  autoSendOnExchange: boolean;
+  autoSendOnQuotation: boolean;
+  testRecipientPhone: string;
+  isConfigured?: boolean;
+}
 
 const initialSettings: WhatsAppSettingsData = {
   isEnabled: false,
@@ -16,7 +29,8 @@ const initialSettings: WhatsAppSettingsData = {
   phoneNumberId: '',
   businessAccountId: '',
   webhookVerifyToken: '',
-  apiVersion: 'v18.0',
+  appSecret: '',
+  apiVersion: 'v25.0',
   autoSendOnInvoice: true,
   autoSendOnExchange: true,
   autoSendOnQuotation: true,
@@ -29,6 +43,7 @@ const WhatsAppSettings = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
 
   const loadSettings = async () => {
     try {
@@ -73,16 +88,25 @@ const WhatsAppSettings = () => {
   const handleTestSend = async () => {
     try {
       setIsTesting(true);
-      await axios.post(
+      const response = await axios.post(
         Constants.WHATSAPP_TEST_SEND_URL,
         { phone: settings.testRecipientPhone },
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      setTestResult({
+        success: true,
+        data: response.data,
+      });
       toast.success('Test message sent successfully');
       await loadSettings();
     } catch (error: any) {
       console.error(error);
-      toast.error(error.response?.data?.message || 'Test send failed');
+      setTestResult({
+        success: false,
+        error: error.response?.data?.error || 'Test send failed',
+        details: error.response?.data?.details || error.message,
+      });
+      toast.error(error.response?.data?.error || 'Test send failed');
     } finally {
       setIsTesting(false);
     }
@@ -163,6 +187,16 @@ const WhatsAppSettings = () => {
                 className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-950 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </label>
+            <label className="space-y-2 text-sm text-gray-700">
+              <span className="font-medium">App Secret</span>
+              <input
+                type="password"
+                value={settings.appSecret || ''}
+                onChange={(event) => setSettings((prev) => ({ ...prev, appSecret: event.target.value }))}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 text-gray-950 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Meta App Secret for HMAC Webhook verification"
+              />
+            </label>
             <label className="space-y-2 text-sm text-gray-700 md:max-w-xs">
               <span className="font-medium">API Version</span>
               <input
@@ -220,6 +254,23 @@ const WhatsAppSettings = () => {
               {isTesting ? 'Sending Test...' : 'Send Test Message'}
             </button>
           </div>
+          {testResult && (
+            <div className={`mt-6 rounded-xl border p-4 text-sm ${testResult.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>
+              <h3 className="font-semibold">{testResult.success ? 'Message Accepted by WhatsApp' : 'WhatsApp Rejected the Message'}</h3>
+              {testResult.success ? (
+                <div className="mt-2 space-y-1 text-emerald-800">
+                  <p><strong>Message ID (wamid):</strong> {testResult.data?.messageId || 'N/A'}</p>
+                  <p><strong>Recipient:</strong> {testResult.data?.recipient || 'N/A'}</p>
+                  <p><strong>Delivery Status:</strong> Pending webhook confirmation...</p>
+                </div>
+              ) : (
+                <div className="mt-2 space-y-1 text-red-800">
+                  <p><strong>Error:</strong> {testResult.error}</p>
+                  <p><strong>Details:</strong> {JSON.stringify(testResult.details)}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end">

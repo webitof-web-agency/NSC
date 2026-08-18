@@ -61,7 +61,6 @@ export const TiptapEditor = ({ value, onChange, onEditorReady }: TiptapEditorPro
   const editor = useEditor({
     extensions: [
       StarterKit,
-      Underline,
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),

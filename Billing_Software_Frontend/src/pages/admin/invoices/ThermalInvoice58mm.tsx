@@ -125,7 +125,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
         return (
             <div
                 ref={ref}
-                className="w-[70mm] p-2 font-mono text-[11px] leading-[1.4] text-black"
+                className="w-[70mm] p-2 font-mono font-bold text-[11px] leading-[1.4] text-black"
             >
                 {companyDetails?.siteLogo && (
                     <div className="text-center mb-1">

@@ -8,6 +8,8 @@ const SupplierPayment = require('@models/SupplierPayment');
 const DebitNote = require('@models/DebitNote');
 const Quotation = require('@models/Quotation');
 const Supplier = require('@models/Supplier');
+const CompanySettings = require('@models/CompanySettings');
+const State = require('@models/State');
 const ExcelJS = require('exceljs');
 
 const roundMoney = (value) => Number((Number(value) || 0).toFixed(2));
@@ -27,20 +29,37 @@ const buildReportDateFilter = (dateField, startDate, endDate) => {
 const getItemTaxableValue = (item = {}, invoice = {}) => {
   const itemAmount = Number(item.amount ?? (Number(item.qty || 0) * Number(item.rate || 0)));
   const taxAmount = Number(item.tax || 0);
-  const gstType = String(invoice.gstType || '').toLowerCase();
 
-  if (gstType === 'inclusive') {
-    return roundMoney(Math.max(itemAmount - taxAmount, 0));
-  }
-
-  return roundMoney(itemAmount);
+  // The frontend stores the final amount (inclusive of tax) in `item.amount`.
+  // Therefore, for both Inclusive and Exclusive GST invoices, the pre-tax base is `Amount - Tax`.
+  return roundMoney(Math.max(itemAmount - taxAmount, 0));
 };
 
 const getItemTaxRate = (item = {}, invoice = {}) => {
   const taxableValue = getItemTaxableValue(item, invoice);
   const taxAmount = roundMoney(item.tax || 0);
   if (!taxableValue || !taxAmount) return 0;
-  return roundMoney((taxAmount / taxableValue) * 100);
+  
+  const derivedRate1 = (taxAmount / taxableValue) * 100;
+  
+  const itemAmount = Number(item.amount ?? (Number(item.qty || 0) * Number(item.rate || 0)));
+  const derivedRate2 = itemAmount ? (taxAmount / itemAmount) * 100 : 0;
+  
+  const standardSlabs = [0, 0.1, 0.25, 1.5, 3, 5, 12, 18, 28];
+  let minDiff = Infinity;
+  let closestSlab = 0;
+  
+  for (const slab of standardSlabs) {
+     const diff1 = Math.abs(derivedRate1 - slab);
+     const diff2 = Math.abs(derivedRate2 - slab);
+     const bestDiff = Math.min(diff1, diff2);
+     if (bestDiff < minDiff) {
+        minDiff = bestDiff;
+        closestSlab = slab;
+     }
+  }
+  
+  return closestSlab;
 };
 
 const addHsnSummarySheet = (workbook, sheetName, records) => {
@@ -2024,6 +2043,334 @@ const exportHsnGstReportExcel = async (req, res) => {
   }
 };
 
+const exportSalesGstReportExcel = async (req, res) => {
+  try {
+    const { startDate, endDate, search = '' } = req.query;
+
+    const query = {
+      isDeleted: false,
+      status: { $ne: 'CANCELLED' }
+    };
+
+    if (startDate || endDate) {
+      query.invoiceDate = {};
+      if (startDate) query.invoiceDate.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.invoiceDate.$lte = end;
+      }
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { invoiceNumber: searchRegex },
+        { 'items.name': searchRegex }
+      ];
+    }
+
+    const invoices = await Invoice.find(query)
+      .populate('billTo', 'name email phone state')
+      .populate('userId', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    let companySettings = null;
+    if (req.user && req.user._id) {
+      companySettings = await CompanySettings.findOne({ userId: req.user._id });
+    } else if (invoices.length > 0 && invoices[0].userId) {
+      companySettings = await CompanySettings.findOne({ userId: invoices[0].userId });
+    }
+    
+    const states = await State.find({}).lean();
+    const stateMap = {};
+    states.forEach(s => {
+      stateMap[String(s._id)] = s.name;
+    });
+
+    const resolveStateName = (val) => {
+      if (!val) return '';
+      const strVal = String(val).trim();
+      return stateMap[strVal] || strVal;
+    };
+
+    const companyStateRaw = companySettings?.state || '';
+    const companyState = resolveStateName(companyStateRaw).toLowerCase();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('GST Sales Report');
+
+    worksheet.columns = [
+      { header: 'GSTIN/UIN', key: 'gstin', width: 20 },
+      { header: "Buyer's Name", key: 'buyerName', width: 25 },
+      { header: 'Invoice No.', key: 'invoiceNo', width: 15 },
+      { header: 'Invoice Date', key: 'invoiceDate', width: 15 },
+      { header: 'PoS', key: 'pos', width: 20 },
+      { header: 'Total Invoice Value', key: 'totalValue', width: 18 },
+      { header: 'Rate', key: 'rate', width: 12 },
+      { header: 'Taxable Value', key: 'taxableValue', width: 15 },
+      { header: 'IGST', key: 'igst', width: 12 },
+      { header: 'CGST', key: 'cgst', width: 12 },
+      { header: 'SGST', key: 'sgst', width: 12 },
+      { header: 'Invoice Type', key: 'invoiceType', width: 15 }
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFD3D3D3' }
+    };
+
+    invoices.forEach(invoice => {
+      const gstin = invoice.customerGstin || (invoice.billTo?.gstin) || '';
+      const buyerName = invoice.billTo?.name || 'CASH';
+      const formattedDate = invoice.invoiceDate 
+        ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-')
+        : '';
+      
+      const buyerStateRaw = invoice.shippingAddress?.state || invoice.billTo?.state || companySettings?.state || '';
+      const resolvedBuyerState = resolveStateName(buyerStateRaw);
+      const buyerState = resolvedBuyerState.toLowerCase();
+      
+      const pos = resolvedBuyerState || 'N/A';
+      const isIntraState = companyState === buyerState;
+      const invoiceType = gstin ? 'B2B' : 'B2CS';
+      const totalInvoiceValue = roundMoney(invoice.TotalAmount || 0);
+
+      if (invoice.items && invoice.items.length > 0) {
+        let totalTaxableValue = 0;
+        let totalIgst = 0;
+        let totalCgst = 0;
+        let totalSgst = 0;
+        const uniqueRates = new Set();
+
+        invoice.items.forEach((item) => {
+          const taxableValue = getItemTaxableValue(item, invoice);
+          const taxAmount = roundMoney(item.tax || 0);
+          const rate = getItemTaxRate(item, invoice);
+          
+          uniqueRates.add(rate);
+          totalTaxableValue += taxableValue;
+
+          if (invoice.taxType !== 'Non-GST') {
+            if (isIntraState) {
+              totalCgst += taxAmount / 2;
+              totalSgst += taxAmount / 2;
+            } else {
+              totalIgst += taxAmount;
+            }
+          }
+        });
+        
+        worksheet.addRow({
+          gstin: gstin,
+          buyerName: buyerName,
+          invoiceNo: invoice.invoiceNumber,
+          invoiceDate: formattedDate,
+          pos: pos,
+          totalValue: totalInvoiceValue.toFixed(2),
+          rate: Array.from(uniqueRates).map(r => r.toFixed(2)).join(', '),
+          taxableValue: totalTaxableValue.toFixed(2),
+          igst: totalIgst.toFixed(2),
+          cgst: totalCgst.toFixed(2),
+          sgst: totalSgst.toFixed(2),
+          invoiceType: invoiceType
+        });
+      }
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `GST_Sales_Report_${today}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export GST Sales Report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting GST Sales Report',
+      error: err.message
+    });
+  }
+};
+
+
+const exportPurchaseGstReportExcel = async (req, res) => {
+  try {
+    const { startDate, endDate, search = '' } = req.query;
+
+    const query = {
+      isDeleted: false,
+      status: { $ne: 'CANCELLED' }
+    };
+
+    if (startDate || endDate) {
+      query.purchaseDate = {};
+      if (startDate) query.purchaseDate.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.purchaseDate.$lte = end;
+      }
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { purchaseId: searchRegex },
+        { supplierBillNumber: searchRegex },
+        { 'items.name': searchRegex }
+      ];
+    }
+
+    const purchases = await Purchase.find(query)
+      .populate('vendorId', 'firstName lastName email phone gstin state')
+      .populate('userId', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const vendorIds = purchases
+        .map(p => p.vendorId ? p.vendorId._id : null)
+        .filter(id => id !== null);
+
+    const suppliers = await Supplier.find({ user_id: { $in: vendorIds } }).lean();
+    const supplierMap = suppliers.reduce((acc, sup) => {
+        if (sup.user_id) {
+            acc[sup.user_id.toString()] = sup;
+        }
+        return acc;
+    }, {});
+
+    let companySettings = null;
+    if (req.user && req.user._id) {
+      companySettings = await CompanySettings.findOne({ userId: req.user._id }).lean();
+    } else if (purchases.length > 0 && purchases[0].userId) {
+      companySettings = await CompanySettings.findOne({ userId: purchases[0].userId }).lean();
+    }
+    
+    const states = await State.find({}).lean();
+    const stateMap = {};
+    states.forEach(s => {
+      stateMap[String(s._id)] = s.name;
+    });
+
+    const resolveStateName = (val) => {
+      if (!val) return '';
+      const strVal = String(val).trim();
+      return stateMap[strVal] || strVal;
+    };
+
+    const companyStateRaw = companySettings?.state || '';
+    const companyState = resolveStateName(companyStateRaw).toLowerCase();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('GST Purchase Report');
+
+    worksheet.columns = [
+      { header: 'GSTIN/UIN', key: 'gstin', width: 20 },
+      { header: "Supplier's Name", key: 'supplierName', width: 25 },
+      { header: 'Purchase Bill', key: 'purchaseBill', width: 15 },
+      { header: 'Date', key: 'purchaseDate', width: 15 },
+      { header: 'PoS', key: 'pos', width: 20 },
+      { header: 'Total Invoice Value', key: 'totalValue', width: 18 },
+      { header: 'Rate', key: 'rate', width: 12 },
+      { header: 'Taxable Value', key: 'taxableValue', width: 15 },
+      { header: 'IGST', key: 'igst', width: 12 },
+      { header: 'CGST', key: 'cgst', width: 12 },
+      { header: 'SGST', key: 'sgst', width: 12 }
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFD3D3D3' }
+    };
+
+    purchases.forEach(purchase => {
+      const vendorIdStr = purchase.vendorId ? purchase.vendorId._id.toString() : '';
+      const supplier = supplierMap[vendorIdStr] || {};
+      const gstin = supplier.gstin || purchase.vendorId?.gstin || '';
+      
+      const supplierNameRaw = supplier.companyName || supplier.name || (purchase.vendorId ? `${purchase.vendorId.firstName || ''} ${purchase.vendorId.lastName || ''}`.trim() : '');
+      const supplierName = supplierNameRaw || 'CASH';
+      
+      const formattedDate = purchase.purchaseDate 
+        ? new Date(purchase.purchaseDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-')
+        : '';
+      
+      const supplierStateRaw = supplier.state || purchase.vendorId?.state || '';
+      const resolvedSupplierState = resolveStateName(supplierStateRaw);
+      const supplierState = resolvedSupplierState.toLowerCase();
+      
+      const pos = resolvedSupplierState || 'N/A';
+      const isIntraState = companyState === supplierState;
+      const totalInvoiceValue = roundMoney(purchase.totalAmount || 0);
+
+      if (purchase.items && purchase.items.length > 0) {
+        let totalTaxableValue = 0;
+        let totalIgst = 0;
+        let totalCgst = 0;
+        let totalSgst = 0;
+        const uniqueRates = new Set();
+
+        purchase.items.forEach((item) => {
+          const taxableValue = getItemTaxableValue(item, purchase);
+          const taxAmount = roundMoney(item.tax || 0);
+          const rate = getItemTaxRate(item, purchase);
+          
+          uniqueRates.add(rate);
+          totalTaxableValue += taxableValue;
+
+          if (purchase.taxType !== 'Non-GST') {
+            if (isIntraState) {
+              totalCgst += taxAmount / 2;
+              totalSgst += taxAmount / 2;
+            } else {
+              totalIgst += taxAmount;
+            }
+          }
+        });
+        
+        worksheet.addRow({
+          gstin: gstin,
+          supplierName: supplierName,
+          purchaseBill: purchase.supplierBillNumber || purchase.purchaseId,
+          purchaseDate: formattedDate,
+          pos: pos,
+          totalValue: totalInvoiceValue.toFixed(2),
+          rate: Array.from(uniqueRates).map(r => r.toFixed(2)).join(', '),
+          taxableValue: totalTaxableValue.toFixed(2),
+          igst: totalIgst.toFixed(2),
+          cgst: totalCgst.toFixed(2),
+          sgst: totalSgst.toFixed(2)
+        });
+      }
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `GST_Purchase_Report_${today}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export GST Purchase Report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting GST Purchase Report',
+      error: err.message
+    });
+  }
+};
+
 
 module.exports = {
   getInvoiceSalesReport,
@@ -2033,6 +2380,8 @@ module.exports = {
   getQuotationSalesReport,
   exportSalesReportExcel,
   exportPurchaseReport,
+  exportPurchaseGstReportExcel,
   getHsnGstReport,
   exportHsnGstReportExcel,
+  exportSalesGstReportExcel,
 };

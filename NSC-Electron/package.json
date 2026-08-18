@@ -13,7 +13,7 @@
     "start:backend": "node local-backend/server.js",
     "build:frontend": "cd ../Billing_Software_Frontend && npm run build -- --mode electron && cd ../NSC-Electron && npx shx rm -rf renderer && npx shx cp -r ../Billing_Software_Frontend/dist renderer",
     "build:win": "npm run build:frontend && electron-builder --win --config electron-builder.config.js",
-    "build:linux": "npm run build:frontend && electron-builder --linux rpm AppImage --x64 --config electron-builder.config.js",
+    "build:linux": "npm run build:frontend && electron-builder --linux AppImage --x64 --config electron-builder.config.js",
     "dev": "concurrently \"node local-backend/server.js\" \"wait-on http://localhost:3002/health && electron . --dev\"",
     "postinstall": "electron-builder install-app-deps"
   },

@@ -1,6 +1,7 @@
 import { useDispatch, useSelector } from "react-redux"
+import { useEffect } from "react";
 import type { RootState } from "../store"
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import type { PermissionAction } from "@models/permissions";
 import { hasPermission } from "@utils/hasPermission";
 import { isTokenExpired } from "@utils/auth";
@@ -13,9 +14,15 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ( { moduleSlug, action}) =
     const { isAuthenticated, isLoading, user, token } = useSelector((state: RootState) => state.auth);
     const { data: systemSettings } = useSelector((state: RootState) => state.systemSettings);
     const dispatch = useDispatch();
+    const location = useLocation();
+
+    useEffect(() => {
+        if (!isAuthenticated || !token || isTokenExpired(token)) {
+            dispatch(logout());
+        }
+    }, [isAuthenticated, token, dispatch]);
 
     if (!isAuthenticated || !token || isTokenExpired(token)) {
-        dispatch(logout());
         return <Navigate to="/admin/login" state={{ from: location.pathname }} replace />;
     }
 

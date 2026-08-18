@@ -200,6 +200,54 @@ const SalesReport: React.FC = () => {
         }
     }
 
+    const handleExportGstExcel = async () => {
+        try {
+            setIsExporting(true);
+
+            const params: any = {};
+            if (dateRange.startDate) {
+                params.startDate = formatLocalDateTime(dateRange.startDate, 'start', true);
+            }
+            if (dateRange.endDate) {
+                params.endDate = formatLocalDateTime(dateRange.endDate, 'end', true);
+            }
+            if (debouncedSearchTerm) {
+                params.search = debouncedSearchTerm;
+            }
+            if (statusFilter !== 'all') {
+                params.status = statusFilter.toUpperCase();
+            }
+
+            const response = await axios.get(Constants.EXPORT_SALES_GST_REPORT_EXCEL_URL, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                },
+                params,
+                responseType: 'blob'
+            });
+
+            const blob = new Blob([response.data], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `GST_Sales_Report_${new Date().toISOString().split('T')[0]}.xlsx`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+
+            toast.success('GST Sales report exported successfully!');
+        } catch (error) {
+            console.error('Export error:', error);
+            toast.error('Failed to export GST sales report');
+        } finally {
+            setIsExporting(false);
+        }
+    }
+
     const fetchAllSalesReportRows = async () => {
         const params: Record<string, string> = {};
         if (dateRange.startDate && dateRange.endDate) {
@@ -305,6 +353,11 @@ const SalesReport: React.FC = () => {
 
         if (selectedFormat === "excel") {
             await handleExportExcel();
+            return;
+        }
+
+        if (selectedFormat === "gst-excel") {
+            await handleExportGstExcel();
             return;
         }
 
@@ -520,6 +573,11 @@ const SalesReport: React.FC = () => {
                         value: "excel",
                         label: "Excel",
                         description: "Download the report as an Excel file.",
+                    },
+                    {
+                        value: "gst-excel",
+                        label: "GST Excel",
+                        description: "Download the report in GST compatible Excel format.",
                     },
                     {
                         value: "pdf",

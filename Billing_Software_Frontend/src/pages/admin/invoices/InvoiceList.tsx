@@ -891,7 +891,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                 hideWhen: item.status !== 'PENDING' || !['UPI', 'PHONEPE', 'MIXED'].includes(item.payment_method) ? ['PAID', 'UNPAID', 'PENDING', 'DRAFT', 'EXCHANGE', 'CANCELLED', 'PARTIALLY_PAID', 'OVERDUE'] : []
             },
             {
-                label: 'Send WhatsApp',
+                label: 'WhatsApp',
                 icon: <MessageCircle size={14} />,
                 onClick: () => handleSendWhatsAppClick(item),
                 hideWhen: ['CANCELLED']
@@ -907,6 +907,19 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                     }
                 },
                 // Allow printing for PAID now!
+                hideWhen: ['CANCELLED']
+            },
+            {
+                label: 'Print Bill + WhatsApp',
+                icon: <Printer size={14} />,
+                onClick: () => {
+                    handleSendWhatsAppClick(item);
+                    if (isInvoiceFullySettled(item)) {
+                        handlePrintBill(item);
+                    } else {
+                        handlePayAndPrint(item);
+                    }
+                },
                 hideWhen: ['CANCELLED']
             },
             {

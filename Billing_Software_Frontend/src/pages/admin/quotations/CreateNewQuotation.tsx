@@ -583,7 +583,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
             const safeDiscount = Math.min(discountBase, grossInclusive);
             const netInclusive = grossInclusive - safeDiscount;
 
-            computedTax = taxType === 'GST' ? (netInclusive * taxRate) / 100 : 0;
+            computedTax = taxType === 'GST' ? netInclusive - (netInclusive / (1 + (taxRate / 100))) : 0;
             finalAmount = netInclusive;
             discountAmount = safeDiscount;
         } else {

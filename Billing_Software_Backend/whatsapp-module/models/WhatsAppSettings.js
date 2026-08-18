@@ -33,9 +33,14 @@ const whatsAppSettingsSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    appSecret: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     apiVersion: {
       type: String,
-      default: process.env.WHATSAPP_API_VERSION || 'v18.0',
+      default: process.env.WHATSAPP_API_VERSION || 'v25.0',
       trim: true,
     },
     autoSendOnInvoice: {

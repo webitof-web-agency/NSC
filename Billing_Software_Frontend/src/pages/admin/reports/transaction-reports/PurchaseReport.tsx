@@ -22,6 +22,7 @@ import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import { useSearchParams } from "react-router-dom";
+import { toast } from "react-toastify";
 
 interface PurchaseReportResponse {
     success: boolean;
@@ -177,6 +178,38 @@ const PurchaseReport: React.FC = () => {
         }
     };
 
+    const handleExportGstExcel = async () => {
+        try {
+            setIsExporting(true);
+            const params: Record<string, string> = {
+                search: debouncedSearchTerm,
+            };
+            if (dateRange.startDate && dateRange.endDate) {
+                params.startDate = formatLocalDateTime(dateRange.startDate, 'start', true);
+                params.endDate = formatLocalDateTime(dateRange.endDate, 'end', true);
+            }
+
+            const response = await axios.get(Constants.EXPORT_PURCHASE_GST_REPORT_URL, {
+                headers: { Authorization: `Bearer ${token}` },
+                params,
+                responseType: 'blob',
+            });
+
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            const today = new Date().toISOString().split('T')[0];
+            link.setAttribute('download', `GST_Purchase_Report_${today}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (error) {
+            console.error('Export failed:', error);
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     const fetchAllPurchaseReportRows = async () => {
         const params: Record<string, string> = {
             search: debouncedSearchTerm,
@@ -281,6 +314,11 @@ const PurchaseReport: React.FC = () => {
 
         if (selectedFormat === "excel") {
             await handleExportExcel();
+            return;
+        }
+
+        if (selectedFormat === "gst-excel") {
+            await handleExportGstExcel();
             return;
         }
 
@@ -406,6 +444,11 @@ const PurchaseReport: React.FC = () => {
                         value: "excel",
                         label: "Excel",
                         description: "Download the report as an Excel file.",
+                    },
+                    {
+                        value: "gst-excel",
+                        label: "GST Excel",
+                        description: "Download the GST formatted report as an Excel file.",
                     },
                     {
                         value: "pdf",

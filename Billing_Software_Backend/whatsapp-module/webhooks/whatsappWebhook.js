@@ -1,6 +1,8 @@
+const crypto = require('crypto');
 const WhatsAppSettings = require('../models/WhatsAppSettings');
 const WhatsAppMessageLog = require('../models/WhatsAppMessageLog');
 const { getWhatsAppConfig } = require('../../config/whatsapp');
+const { decryptValue } = require('../utils/credentialCrypto');
 
 async function resolveVerifyToken(userId) {
   if (userId) {
@@ -15,6 +17,21 @@ async function resolveVerifyToken(userId) {
     .lean();
 
   return latestSettings?.webhookVerifyToken || getWhatsAppConfig().webhookVerifyToken;
+}
+
+async function resolveAppSecret(userId) {
+  if (userId) {
+    const settings = await WhatsAppSettings.findOne({ userId }).lean();
+    if (settings?.appSecret) {
+      return decryptValue(settings.appSecret);
+    }
+  }
+
+  const latestSettings = await WhatsAppSettings.findOne({ appSecret: { $ne: '' } })
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  return latestSettings?.appSecret ? decryptValue(latestSettings.appSecret) : getWhatsAppConfig().appSecret;
 }
 
 async function verifyWebhook(req, res) {
@@ -32,6 +49,21 @@ async function verifyWebhook(req, res) {
 
 async function handleWebhook(req, res) {
   try {
+    const signature = req.headers['x-hub-signature-256'];
+    if (signature) {
+      const appSecret = await resolveAppSecret(req.query.userId);
+      if (appSecret && req.rawBody) {
+        const hmac = crypto.createHmac('sha256', appSecret);
+        const digest = Buffer.from('sha256=' + hmac.update(req.rawBody).digest('hex'), 'utf8');
+        const checksum = Buffer.from(signature, 'utf8');
+        
+        if (checksum.length !== digest.length || !crypto.timingSafeEqual(digest, checksum)) {
+          console.error('WhatsApp Webhook signature verification failed');
+          return res.status(401).send('Invalid signature');
+        }
+      }
+    }
+
     const entries = Array.isArray(req.body.entry) ? req.body.entry : [];
 
     for (const entry of entries) {

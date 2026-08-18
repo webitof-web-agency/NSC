@@ -381,6 +381,12 @@ const navItems: NavItemType[] = [
                 title: "Localization Settings",
                 slug: "website-settings",
             },
+            {
+                type: "link",
+                to: "/admin/settings/legal-pages",
+                title: "Legal Pages",
+                slug: "website-settings",
+            },
         ],
     },
     {

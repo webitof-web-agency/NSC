@@ -17,6 +17,7 @@ const SignatureController = require('../controllers/SignatureController');
 const currencyController = require('../controllers/currencyController');
 const BankDetailController = require('@controllers/bankDetailController');
 const CompanySettings = require('@controllers/CompanySettingsController');
+const legalSettingsController = require('@controllers/legalSettingsController');
 const appVersionController = require('@controllers/appVersionController');
 const dashboardController = require('@controllers/Admin/dashboardController');
 const { uploadCompanyFields, handleUploadError } = require('../middleware/uploadCompanyImages');
@@ -259,6 +260,11 @@ router.get('/system-settings', protect, CompanySettings.getBasicDetails);
 router.patch('/company/setup', protect, setup.single('siteLogo'), CompanySettings.updateCompanySetup);
 router.post('/create-general-settings', protect, CompanySettings.createOrUpdateGeneralSetting);
 router.get('/general-settings-list', protect, CompanySettings.listGeneralSettings);
+
+// Legal Settings
+router.get('/settings/legal', protect, legalSettingsController.getLegalSettings);
+router.put('/settings/legal', protect, legalSettingsController.updateLegalSettings);
+
 router.get('/customers/portal-branding', protect, customerPortalController.getAdminCustomerPortalBranding);
 router.put('/customers/portal-branding', protect, uploadCustomerPortalBranding, handleCustomerPortalUploadError, customerPortalController.updateAdminCustomerPortalBranding);
 router.post('/customers/portal-branding/promo-gallery', protect, uploadCustomerPortalPromoMedia, handleCustomerPortalUploadError, customerPortalController.addPromoGalleryItem);
@@ -451,11 +457,13 @@ router.get('/report/profit-loss/export-excel', protect, accountingReportControll
 //transaction report
 router.get('/report/sales', protect, transactionReportController.getInvoiceSalesReport);
 router.get('/report/sales/export-excel', protect, transactionReportController.exportSalesReportExcel);  // ✅ Export sales report to Excel
+router.get('/report/sales/export-gst-excel', protect, transactionReportController.exportSalesGstReportExcel);
 router.get('/report/hsn-gst', protect, transactionReportController.getHsnGstReport);
 router.get('/report/hsn-gst/export-excel', protect, transactionReportController.exportHsnGstReportExcel);
 router.get('/report/sales-return', protect, transactionReportController.getCreditNoteSalesReport);
 router.get('/report/purchase', protect, transactionReportController.getPurchaseReport);
 router.get('/report/purchase/export', protect, transactionReportController.exportPurchaseReport);
+router.get('/report/purchase/export-gst', protect, transactionReportController.exportPurchaseGstReportExcel);
 router.get('/report/debit-note', protect, transactionReportController.getDebitNoteReport);
 router.get('/report/quotation', protect, transactionReportController.getQuotationSalesReport);
 

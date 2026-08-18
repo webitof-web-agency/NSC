@@ -9,6 +9,7 @@ const authRoutes = require('./routes/authRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const syncRoutes = require('./routes/syncRoutes');
+const publicRoutes = require('./routes/publicRoutes');
 const Invoice = require('@models/Invoice');
 const Quotation = require('@models/Quotation');
 const Customer = require('@models/Customer');
@@ -84,7 +85,13 @@ if (!process.env.JWT_SECRET) {
 }
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.originalUrl.startsWith('/api/whatsapp/webhook')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  }
+}));
 app.use('/uploads', express.static('uploads'));
 
 app.get('/', (req, res) => {
@@ -108,10 +115,16 @@ app.get('/health', (req, res) => {
 });
 
 console.log('🛣️  Setting up routes...');
+
+const whatsappWebhook = require('./whatsapp-module/webhooks/whatsappWebhook');
+app.get('/api/whatsapp/webhook', whatsappWebhook.verifyWebhook);
+app.post('/api/whatsapp/webhook', whatsappWebhook.handleWebhook);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/whatsapp', whatsappRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/customer', customerRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/sync', syncRoutes);
 console.log('✅ Routes configured');
 
@@ -123,7 +136,6 @@ const startServer = async () => {
     require('./attendanceAutoCheckoutCron');
     require('./invoiceCreditNotificationCron');
     require('./variantRetentionCron');
-    require('./whatsappStatusSyncCron');
 
     app.listen(PORT, () => {
       console.log('═══════════════════════════════════════════════════════════');

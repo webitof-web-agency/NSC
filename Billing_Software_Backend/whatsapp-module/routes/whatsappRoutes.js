@@ -1,12 +1,8 @@
 const express = require('express');
 const protect = require('../../middleware/authMiddleware');
 const whatsappController = require('../controllers/whatsappController');
-const whatsappWebhook = require('../webhooks/whatsappWebhook');
 
 const router = express.Router();
-
-router.get('/webhook', whatsappWebhook.verifyWebhook);
-router.post('/webhook', whatsappWebhook.handleWebhook);
 
 router.get('/settings', protect, whatsappController.getSettings);
 router.post('/settings', protect, whatsappController.upsertSettings);

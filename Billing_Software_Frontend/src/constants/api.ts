@@ -128,6 +128,7 @@ const Constants = {
   get DOWNLOAD_PURCHASE_TEMPLATE_URL() { return `${this.API_BASE_URL}/admin/purchases/download-template`; },
   get EXPORT_PURCHASE_URL() { return `${this.API_BASE_URL}/admin/purchases/export`; },
   get EXPORT_PURCHASE_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/purchase/export`; }, // Added specific report export URL
+  get EXPORT_PURCHASE_GST_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/purchase/export-gst`; },
   get UPLOAD_INVOICES_EXCEL_URL() { return `${this.API_BASE_URL}/admin/invoices/upload-excel`; },
   get EXPORT_INVOICES_EXCEL_URL() { return `${this.API_BASE_URL}/admin/invoices/export`; },
   get GET_SUPPLIER_PAYMENTS_URL() { return `${this.API_BASE_URL}/admin/supplierpayments`; },
@@ -172,6 +173,8 @@ const Constants = {
   get CUSTOMER_PORTAL_INVOICES_URL() { return `${this.API_BASE_URL}/customer/invoices`; },
   get FETCH_LOCALIZATION_DROPDOWNS_URL() { return `${this.API_BASE_URL}/admin/localization`; },
   get UPDATE_LOCALIZATION_URL() { return `${this.API_BASE_URL}/admin/localizations`; },
+  get LEGAL_SETTINGS_URL() { return `${this.API_BASE_URL}/admin/settings/legal`; },
+  get PUBLIC_LEGAL_URL() { return `${this.API_BASE_URL}/public/legal`; },
   get CREATE_QUOTATION_URL() { return `${this.API_BASE_URL}/admin/quotations`; },
   get GET_CUSTOMERS_WITH_SEARCH_URL() { return `${this.API_BASE_URL}/admin/customers-all`; },
   get GET_QUOTATIONS_FOR_LIST_URL() { return `${this.API_BASE_URL}/admin/quotations`; },
@@ -248,6 +251,7 @@ const Constants = {
   get GET_QUOTATION_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/quotation`; },
   get GET_SALES_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/sales`; },
   get EXPORT_SALES_REPORT_EXCEL_URL() { return `${this.API_BASE_URL}/admin/report/sales/export-excel`; }, // ✅ Export sales report to Excel
+  get EXPORT_SALES_GST_REPORT_EXCEL_URL() { return `${this.API_BASE_URL}/admin/report/sales/export-gst-excel`; },
   get GET_HSN_GST_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/hsn-gst`; },
   get EXPORT_HSN_GST_REPORT_EXCEL_URL() { return `${this.API_BASE_URL}/admin/report/hsn-gst/export-excel`; },
   get GET_SALES_RETURN_REPORT_URL() { return `${this.API_BASE_URL}/admin/report/sales-return`; },

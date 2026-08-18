@@ -29,6 +29,7 @@ import BulkImportPurchases from "@pages/admin/purchases/BulkImportPurchases";
 import BulkImportSuppliers from "@pages/admin/purchases/BulkImportSuppliers";
 import CurrencyList from "@pages/admin/settings/financeSettings/currencies/CurrencyList";
 import LocalizationSettings from "@pages/admin/settings/websiteSettings/LocalizationSettings";
+import LegalSettings from "@pages/admin/settings/websiteSettings/LegalSettings";
 import CustomerPortalBranding from "@pages/admin/settings/websiteSettings/CustomerPortalBranding";
 import CustomerList from "@pages/admin/customers/CustomerList";
 import CustomerForm from "@pages/admin/customers/CreateCustomer";
@@ -191,6 +192,7 @@ const AdminRoute = () => {
                 <Route element={<ProtectedRoute moduleSlug="website-settings" action="view" />}>
                     <Route path="/settings/company-settings" element={<><Seo title="Company Settings" /><CompanySettings /></>} />
                     <Route path="/settings/localization" element={<><Seo title="Localization Settings" /><LocalizationSettings /></>} />
+                    <Route path="/settings/legal-pages" element={<><Seo title="Legal Settings" /><LegalSettings /></>} />
                 </Route>
 
                 {/* System Settings */}

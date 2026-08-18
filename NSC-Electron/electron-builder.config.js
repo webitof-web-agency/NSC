@@ -13,7 +13,7 @@ module.exports = {
   // App metadata
   // ─────────────────────────────────────────────
   appId: 'com.nareshsareecollection.desktop',
-  productName: 'NSC Billing',
+  productName: 'NSCBilling',
   copyright: `Copyright © ${new Date().getFullYear()} Naresh Saree Collection`,
 
   // ─────────────────────────────────────────────
@@ -96,9 +96,10 @@ module.exports = {
   // Linux Targets
   // ─────────────────────────────────────────────
   linux: {
-    target: ['rpm', 'AppImage'],
+    target: ['AppImage'],
     category: 'Office',
     icon: 'assets/icon.png',
+    executableName: 'nsc-billing',
   },
 
   // ─────────────────────────────────────────────
