@@ -393,6 +393,7 @@ const PaymentModal: React.FC<Props> = ({
           : "Invoice saved on credit - payment deferred"
       );
       successData = {
+        invoiceId: savedInvoiceId,
         totalPaid: paidNow,
         paymentMethod: "CREDIT",
         invoiceStatus,

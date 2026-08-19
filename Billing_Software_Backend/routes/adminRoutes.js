@@ -325,9 +325,16 @@ router.get('/invoices/:id', protect, invoiceController.getInvoice);
 router.get('/invoices/details/:id', invoiceController.getInvoice);
 router.put('/invoices/:id', protect, upload.single('signatureImage'), invoiceController.updateInvoice);
 router.delete('/invoices/:id', protect, invoiceController.deleteInvoice);
+const invoicePublicLinkController = require('@controllers/Admin/Invoice/invoicePublicLinkController');
+
 router.post('/invoices/bulk-delete', protect, invoiceController.bulkDeleteInvoices);
 router.post('/quotation-convert-to-invoice/:quotationId', protect, upload.single('signatureImage'), invoiceController.convertQuotationToInvoice);
 router.post('/invoice/payment', protect, invoiceController.recordInvoicePayment);
+
+// Public Link endpoints
+router.post('/invoices/:id/public-link', protect, invoicePublicLinkController.getOrCreatePublicLink);
+router.post('/invoices/:id/public-link/regenerate', protect, invoicePublicLinkController.regeneratePublicLink);
+router.delete('/invoices/:id/public-link', protect, invoicePublicLinkController.disablePublicLink);
 router.post('/invoices-minimal', protect, invoiceController.listInvoicesMinimal);
 router.get('/invoice-payment-details/:id', protect, invoiceController.getInvoicePaymentDetails);
 router.get('/invoices-recurring', protect, invoiceController.getChildInvoices);

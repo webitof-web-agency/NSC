@@ -107,6 +107,26 @@ const customerSchema = new mongoose.Schema(
     isDeleted: {
       type: Boolean,
       default: false
+    },
+
+    whatsappMarketingOptIn: {
+      type: Boolean,
+      default: false
+    },
+    
+    whatsappMarketingOptInAt: {
+      type: Date,
+      default: null
+    },
+
+    whatsappMarketingOptInSource: {
+      type: String,
+      default: ''
+    },
+
+    whatsappMarketingOptOutAt: {
+      type: Date,
+      default: null
     }
   },
   {

@@ -60,6 +60,7 @@ const tabs = [
   { to: '/admin/whatsapp', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/admin/whatsapp/settings', label: 'Settings', icon: Settings2 },
   { to: '/admin/whatsapp/templates', label: 'Templates', icon: FileText },
+  { to: '/admin/whatsapp/marketing', label: 'Marketing', icon: FileText },
   { to: '/admin/whatsapp/messages', label: 'Messages', icon: MessagesSquare },
   { to: '/admin/whatsapp/delivered', label: 'Delivered', icon: CheckCheck },
   { to: '/admin/whatsapp/read', label: 'Read', icon: Eye },

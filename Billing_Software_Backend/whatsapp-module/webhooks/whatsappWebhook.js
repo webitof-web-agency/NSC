@@ -68,25 +68,67 @@ async function handleWebhook(req, res) {
 
     for (const entry of entries) {
       for (const change of entry.changes || []) {
+        if (change.field === 'message_template_status_update') {
+          const tmplUpdate = change.value || {};
+          const metaId = tmplUpdate.message_template_id;
+          const status = tmplUpdate.event; // e.g. APPROVED, REJECTED
+          const reason = tmplUpdate.reason || '';
+          
+          if (metaId && status) {
+            const WhatsAppMetaTemplate = require('../models/WhatsAppMetaTemplate');
+            await WhatsAppMetaTemplate.findOneAndUpdate(
+              { metaId },
+              { $set: { status, rejectionReason: reason } }
+            );
+          }
+          continue; // It's not a message event
+        }
+
         const statuses = change?.value?.statuses || [];
         for (const statusEntry of statuses) {
           const update = {};
-          if (statusEntry.status === 'sent') update.status = 'sent';
+          if (statusEntry.status === 'sent') update.status = 'SENT';
           if (statusEntry.status === 'delivered') {
-            update.status = 'delivered';
+            update.status = 'DELIVERED';
             update.deliveredAt = new Date();
           }
           if (statusEntry.status === 'read') {
-            update.status = 'read';
+            update.status = 'READ';
             update.readAt = new Date();
           }
           if (statusEntry.errors?.length) {
-            update.status = 'failed';
+            update.status = 'FAILED';
             update.errorMessage = statusEntry.errors.map((item) => item.title || item.message).join(', ');
           }
 
           if (Object.keys(update).length) {
-            await WhatsAppMessageLog.findOneAndUpdate({ messageId: statusEntry.id }, { $set: update });
+            const existingLog = await WhatsAppMessageLog.findOne({ messageId: statusEntry.id });
+            if (existingLog) {
+              const oldStatus = existingLog.status;
+              const newStatus = update.status || oldStatus;
+              
+              await WhatsAppMessageLog.findByIdAndUpdate(existingLog._id, { $set: update });
+              
+              if (existingLog.campaignId && oldStatus !== newStatus) {
+                const WhatsAppCampaign = require('../models/WhatsAppCampaign');
+                const incObj = {};
+                
+                // Track transition cleanly. Only increment the new status.
+                // We do NOT decrement the "previous" status because we don't want to lose
+                // the fact that it WAS sent when it transitions to delivered.
+                // But wait, the standard way is to show total current in that state, 
+                // or cumulative? Usually it's cumulative (e.g. 100 sent, 90 delivered).
+                // Let's just track cumulative reached states based on the transition.
+                if (newStatus === 'SENT' && oldStatus !== 'SENT') incObj.sentCount = 1;
+                if (newStatus === 'DELIVERED' && oldStatus !== 'DELIVERED') incObj.deliveredCount = 1;
+                if (newStatus === 'READ' && oldStatus !== 'READ') incObj.readCount = 1;
+                if (newStatus === 'FAILED' && oldStatus !== 'FAILED') incObj.failedCount = 1;
+
+                if (Object.keys(incObj).length > 0) {
+                  await WhatsAppCampaign.findByIdAndUpdate(existingLog.campaignId, { $inc: incObj });
+                }
+              }
+            }
           }
         }
 

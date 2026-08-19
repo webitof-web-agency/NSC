@@ -330,7 +330,18 @@ const invoiceSchema = new mongoose.Schema(
       type: Number,
       default: null,
       // UPI portion for MIXED payment method (previously phonePeAmount)
-    }
+    },
+    publicShareId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    publicShareEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    publicShareCreatedAt: Date,
+    publicShareRegeneratedAt: Date
   },
   { timestamps: true }
 );

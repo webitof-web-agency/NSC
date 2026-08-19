@@ -447,6 +447,20 @@ const updateCustomer = async (req, res) => {
         : customer.bankDetails
     };
 
+    if (req.body.whatsappMarketingOptIn !== undefined) {
+      const newOptIn = req.body.whatsappMarketingOptIn === true || req.body.whatsappMarketingOptIn === 'true';
+      const oldOptIn = customer.whatsappMarketingOptIn;
+      
+      updateFields.whatsappMarketingOptIn = newOptIn;
+      if (newOptIn && !oldOptIn) {
+        updateFields.whatsappMarketingOptInAt = new Date();
+        updateFields.whatsappMarketingOptInSource = req.body.whatsappMarketingOptInSource || 'Admin UI';
+        updateFields.whatsappMarketingOptOutAt = null;
+      } else if (!newOptIn && oldOptIn) {
+        updateFields.whatsappMarketingOptOutAt = new Date();
+      }
+    }
+
     // Apply updates
     Object.assign(customer, updateFields);
     if (

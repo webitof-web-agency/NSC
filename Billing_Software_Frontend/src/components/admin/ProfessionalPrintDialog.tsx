@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
     Printer, FileText, X, Copy, RotateCw, Minus, Plus,
     AlignCenter, AlignLeft, Monitor, CheckCircle2, Loader2,
-    Settings2, Eye
+    Settings2, Eye, MessageCircle
 } from 'lucide-react';
 
 export type ProfessionalPrintPaperSize = 'A4' | 'A5' | 'Thermal-80mm' | 'Thermal-58mm' | 'Custom';
@@ -13,6 +13,9 @@ export interface ProfessionalPrintDialogProps {
     isOpen: boolean;
     onClose: () => void;
     onPrint: () => void;
+    onWhatsApp?: () => void;
+    onPrintAndWhatsApp?: () => void;
+    isWhatsAppLoading?: boolean;
     title?: string;
     documentName?: string;
     documentType?: string;
@@ -83,6 +86,9 @@ const ProfessionalPrintDialog: React.FC<ProfessionalPrintDialogProps> = ({
     isOpen,
     onClose,
     onPrint,
+    onWhatsApp,
+    onPrintAndWhatsApp,
+    isWhatsAppLoading = false,
     title = 'Print Document',
     documentName = 'Ready to print',
     documentType = 'Document',
@@ -369,10 +375,35 @@ const ProfessionalPrintDialog: React.FC<ProfessionalPrintDialogProps> = ({
                                         >
                                             Cancel
                                         </button>
+                                        
+                                        {onWhatsApp && (
+                                            <button
+                                                type="button"
+                                                onClick={onWhatsApp}
+                                                disabled={isWhatsAppLoading || isPrinting}
+                                                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#25D366] bg-white text-sm font-semibold text-[#25D366] hover:bg-[#25D366]/10 disabled:cursor-not-allowed disabled:opacity-60 transition"
+                                            >
+                                                {isWhatsAppLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+                                                WhatsApp Only
+                                            </button>
+                                        )}
+
+                                        {onPrintAndWhatsApp && (
+                                            <button
+                                                type="button"
+                                                onClick={onPrintAndWhatsApp}
+                                                disabled={isWhatsAppLoading || isPrinting}
+                                                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] text-sm font-bold text-white shadow-sm shadow-[#25D366]/25 hover:bg-[#25D366]/90 disabled:cursor-not-allowed disabled:opacity-60 transition"
+                                            >
+                                                {isWhatsAppLoading || isPrinting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                                                Print + WhatsApp
+                                            </button>
+                                        )}
+
                                         <button
                                             type="button"
                                             onClick={onPrint}
-                                            disabled={isPrinting}
+                                            disabled={isPrinting || isWhatsAppLoading}
                                             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-sm font-bold text-white shadow-sm shadow-primary/25 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60 transition"
                                         >
                                             {isPrinting ? (

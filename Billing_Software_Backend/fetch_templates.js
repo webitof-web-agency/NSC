@@ -1,40 +1,35 @@
-require('dotenv').config();
+const mongoose = require('mongoose');
+const dotenv = require('dotenv');
+dotenv.config();
 
-async function checkTemplates() {
-  const version = 'v21.0';
-  const token = process.env.WHATSAPP_ACCESS_TOKEN;
-  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+const User = require('./models/User');
+const { getMessageTemplates } = require('./whatsapp-module/services/metaApiService');
 
-  if (!token || !wabaId) {
-    console.error('Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID in .env');
+async function run() {
+  await mongoose.connect(process.env.MONGO_URI);
+  console.log('Connected to Mongo');
+
+  const user = await User.findOne();
+  if (!user) {
+    console.log('No user found');
     process.exit(1);
   }
 
-  const url = `https://graph.facebook.com/${version}/${wabaId}/message_templates?limit=100`;
-  console.log(`Fetching from ${url}`);
-
   try {
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
+    const rawData = await getMessageTemplates(user._id, 100);
+    console.log('Total templates returned in first page:', rawData?.data?.length);
 
-    const data = await response.json();
-    if (data.error) {
-      console.error('Error fetching templates:', data.error);
-      return;
-    }
-
-    const approved = data.data.filter(t => t.status === 'APPROVED');
-    console.log('Approved templates:');
-    approved.forEach(t => {
-      console.log(`- Name: ${t.name}, Language: ${t.language}, Category: ${t.category}`);
+    rawData?.data?.forEach(tmpl => {
+      console.log(`- ${tmpl.name} | ${tmpl.language} | ${tmpl.category} | ${tmpl.status}`);
     });
+    
+    console.log('\nPaging:', JSON.stringify(rawData?.paging, null, 2));
 
   } catch (err) {
-    console.error(err);
+    console.error('Error fetching templates:', err);
   }
+
+  process.exit(0);
 }
 
-checkTemplates();
+run();

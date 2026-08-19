@@ -1,0 +1,26 @@
+--- src/pages/admin/invoices/InvoiceList.tsx
++++ src/pages/admin/invoices/InvoiceList.tsx
+@@ -1336,6 +1336,25 @@
+                 onPrint={() => {
+                     setShowProfessionalPrintDialog(false);
+                     window.setTimeout(() => executePrintBill(), 80);
++                }}
++                onWhatsApp={async () => {
++                    if (printableInvoiceData) {
++                        await handleSendWhatsAppClick(printableInvoiceData);
++                        setShowProfessionalPrintDialog(false);
++                    } else {
++                        toast.error("Invoice data missing");
++                    }
++                }}
++                onPrintAndWhatsApp={async () => {
++                    if (printableInvoiceData) {
++                        await handleSendWhatsAppClick(printableInvoiceData);
++                        setShowProfessionalPrintDialog(false);
++                        window.setTimeout(() => executePrintBill(), 80);
++                    } else {
++                        toast.error("Invoice data missing");
++                    }
+                 }}
+                 title="Print Thermal Bill"
+                 documentName={printableInvoiceData?.invoiceNumber || "Invoice Bill"}

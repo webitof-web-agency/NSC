@@ -94,6 +94,7 @@ import MrpSettings from "@pages/admin/settings/systemSettings/MrpSettings";
 import WhatsAppDashboard from '@pages/admin/whatsapp/WhatsAppDashboard';
 import WhatsAppSettings from '@pages/admin/whatsapp/WhatsAppSettings';
 import WhatsAppTemplates from '@pages/admin/whatsapp/WhatsAppTemplates';
+import WhatsAppMarketing from '@pages/admin/whatsapp/WhatsAppMarketing';
 import WhatsAppMessages from '@pages/admin/whatsapp/WhatsAppMessages';
 import WhatsAppDelivered from '@pages/admin/whatsapp/WhatsAppDelivered';
 import WhatsAppRead from '@pages/admin/whatsapp/WhatsAppRead';
@@ -212,6 +213,7 @@ const AdminRoute = () => {
                     <Route path="/whatsapp" element={<><Seo title="WhatsApp Dashboard" /><WhatsAppDashboard /></>} />
                     <Route path="/whatsapp/settings" element={<><Seo title="WhatsApp Settings" /><WhatsAppSettings /></>} />
                     <Route path="/whatsapp/templates" element={<><Seo title="WhatsApp Templates" /><WhatsAppTemplates /></>} />
+                    <Route path="/whatsapp/marketing" element={<><Seo title="WhatsApp Marketing" /><WhatsAppMarketing /></>} />
                     <Route path="/whatsapp/messages" element={<><Seo title="WhatsApp Messages" /><WhatsAppMessages /></>} />
                     <Route path="/whatsapp/delivered" element={<><Seo title="Delivered Messages" /><WhatsAppDelivered /></>} />
                     <Route path="/whatsapp/read" element={<><Seo title="Read Messages" /><WhatsAppRead /></>} />

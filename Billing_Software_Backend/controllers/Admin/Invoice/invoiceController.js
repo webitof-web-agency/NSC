@@ -757,14 +757,6 @@ const createInvoice = async (req, res) => {
 
     await syncCreditNotificationForInvoice(invoice._id);
 
-    triggerWhatsAppSend({
-      documentType: finalStatus === 'EXCHANGE' ? 'exchange' : 'invoice',
-      documentId: invoice._id,
-      userId,
-    }).catch((error) => {
-      console.error('WhatsApp trigger failed for invoice:', error.message);
-    });
-
     res.status(201).json({
       message: "Invoice created successfully",
       data: invoice,

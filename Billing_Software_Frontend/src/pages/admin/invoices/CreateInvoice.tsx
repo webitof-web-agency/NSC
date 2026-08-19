@@ -599,7 +599,32 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
   // To Print the Bill
   const printRef = useRef<HTMLDivElement>(null);
   const [showProfessionalPrintDialog, setShowProfessionalPrintDialog] = useState(false);
+  const [createdInvoiceId, setCreatedInvoiceId] = useState<string | null>(null);
   const pendingPrintActionRef = useRef<(() => void) | null>(null);
+
+  const handleSendWhatsAppClick = async () => {
+    const phone = customerDetails?.phone || selectedCustomer?.phone || customerSearchInput;
+    if (!phone) {
+      toast.error('No phone number attached to this invoice');
+      return;
+    }
+    const targetInvoiceId = isEditMode ? invoiceId : createdInvoiceId;
+    if (!targetInvoiceId) {
+      toast.error('Invoice ID not found. Please save first.');
+      return;
+    }
+    try {
+      await axios.post(
+        Constants.WHATSAPP_SEND_MANUAL_URL,
+        { documentId: targetInvoiceId, documentType: 'invoice' },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success('WhatsApp send requested successfully');
+    } catch (error: any) {
+      console.error('Failed to send invoice on WhatsApp:', error);
+      toast.error(error.response?.data?.message || 'Failed to send WhatsApp message');
+    }
+  };
 
   const executePrintBill = useReactToPrint({
     documentTitle: `Invoice-${invoiceFormData.invoiceNumber || ""}`,
@@ -1654,11 +1679,11 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
     invoiceLevelDiscountType
   );
   const syncCombinedDiscount = syncLineDiscount + syncExtraDiscount;
-  
+
   const syncGrandTotalExact = isInclusiveCalc
     ? syncSubTotal - syncCombinedDiscount
     : syncSubTotal + syncTotalTax - syncCombinedDiscount;
-    
+
   const syncGrandTotal = Math.round(syncGrandTotalExact);
   const syncTotalInWords = numberToWords(syncGrandTotal);
 
@@ -3961,6 +3986,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
             grandTotal={isExchangePaymentMode ? exchangePaymentAmount : (isEditMode ? editOutstandingAmount : editAdditionalPayable)}
             isEdit={isEditMode}
             onSuccess={(data) => {
+              if (data?.invoiceId) setCreatedInvoiceId(data.invoiceId);
               if (data?.totalPaid !== undefined) {
                 setInvoiceFormData(prev => ({
                   ...prev,
@@ -4041,6 +4067,17 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
           pendingPrintActionRef.current = null;
         }}
         onPrint={() => {
+          setShowProfessionalPrintDialog(false);
+          window.setTimeout(() => executePrintBill(), 80);
+        }}
+        onWhatsApp={async () => {
+          await handleSendWhatsAppClick();
+          setShowProfessionalPrintDialog(false);
+          if (pendingPrintActionRef.current) pendingPrintActionRef.current();
+          pendingPrintActionRef.current = null;
+        }}
+        onPrintAndWhatsApp={async () => {
+          await handleSendWhatsAppClick();
           setShowProfessionalPrintDialog(false);
           window.setTimeout(() => executePrintBill(), 80);
         }}

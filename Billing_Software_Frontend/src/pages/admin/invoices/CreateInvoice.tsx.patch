@@ -1,0 +1,30 @@
+--- src/pages/admin/invoices/CreateInvoice.tsx
++++ src/pages/admin/invoices/CreateInvoice.tsx
+@@ -600,6 +600,21 @@
+   // To Print the Bill
+   const printRef = useRef<HTMLDivElement>(null);
+   const [showProfessionalPrintDialog, setShowProfessionalPrintDialog] = useState(false);
+   const [createdInvoiceId, setCreatedInvoiceId] = useState<string | null>(null);
+   const pendingPrintActionRef = useRef<(() => void) | null>(null);
++
++  const handleSendWhatsAppClick = async () => {
++    const phone = invoiceFormData.customerPhone || invoiceFormData.customer?.phoneNumber;
++    if (!phone) {
++      toast.error('No phone number attached to this invoice');
++      return;
++    }
++    const targetInvoiceId = isEditMode ? invoiceId : createdInvoiceId;
++    if (!targetInvoiceId) {
++      toast.error('Invoice ID not found. Please save first.');
++      return;
++    }
++    try {
++      await axios.post(Constants.WHATSAPP_SEND_MANUAL_URL, { documentId: targetInvoiceId, documentType: 'invoice' });
++      toast.success('WhatsApp send requested successfully');
++    } catch (error: any) {
++      console.error('Failed to send invoice on WhatsApp:', error);
++      toast.error(error.response?.data?.message || 'Failed to send WhatsApp message');
++    }
++  };
+ 
+   const executePrintBill = useReactToPrint({

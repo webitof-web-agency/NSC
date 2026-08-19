@@ -13,6 +13,12 @@ const whatsAppMessageLogSchema = new mongoose.Schema(
       ref: 'Customer',
       default: null,
     },
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'WhatsAppCampaign',
+      default: null,
+      index: true,
+    },
     customerPhone: {
       type: String,
       default: '',
@@ -25,7 +31,6 @@ const whatsAppMessageLogSchema = new mongoose.Schema(
     },
     documentType: {
       type: String,
-      enum: ['invoice', 'exchange', 'quotation'],
       required: true,
       index: true,
     },
@@ -52,14 +57,18 @@ const whatsAppMessageLogSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['queued', 'sent', 'delivered', 'read', 'failed', 'replied'],
-      default: 'queued',
+      enum: ['QUEUED', 'PROCESSING', 'ACCEPTED', 'SENT', 'DELIVERED', 'READ', 'FAILED', 'REPLIED', 'SKIPPED', 'DELIVERY_UNKNOWN'],
+      default: 'QUEUED',
       index: true,
     },
     errorMessage: {
       type: String,
       default: '',
       trim: true,
+    },
+    lastErrorCode: {
+      type: String,
+      default: '',
     },
     renderedMessage: {
       type: String,
@@ -72,6 +81,35 @@ const whatsAppMessageLogSchema = new mongoose.Schema(
     amount: {
       type: Number,
       default: 0,
+    },
+    processingBy: {
+      type: String,
+      default: null,
+    },
+    processingStartedAt: {
+      type: Date,
+      default: null,
+    },
+    processingLeaseUntil: {
+      type: Date,
+      default: null,
+    },
+    requestStartedAt: {
+      type: Date,
+      default: null,
+    },
+    attemptCount: {
+      type: Number,
+      default: 0,
+    },
+    nextRetryAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    acceptedAt: {
+      type: Date,
+      default: null,
     },
     sentAt: {
       type: Date,
@@ -103,6 +141,14 @@ const whatsAppMessageLogSchema = new mongoose.Schema(
     },
   },
   { timestamps: true }
+);
+
+whatsAppMessageLogSchema.index(
+  { campaignId: 1, customerPhone: 1 },
+  { 
+    unique: true, 
+    partialFilterExpression: { campaignId: { $exists: true, $ne: null } } 
+  }
 );
 
 module.exports = mongoose.model('WhatsAppMessageLog', whatsAppMessageLogSchema);

@@ -142,18 +142,9 @@ const createQuotation = async (req, res) => {
       }
     }
 
-    triggerWhatsAppSend({
-      documentType: 'quotation',
-      documentId: quotation._id,
-      userId,
-    }).catch((error) => {
-      console.error('WhatsApp trigger failed for quotation:', error.message);
-    });
-
-    return res.status(200).json({
-      success: true,
+    res.status(201).json({
       message: "Quotation created successfully",
-      data: quotation
+      data: quotation,
     });
 
   } catch (err) {

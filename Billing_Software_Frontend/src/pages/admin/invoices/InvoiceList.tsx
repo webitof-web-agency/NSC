@@ -1331,6 +1331,23 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                     setShowProfessionalPrintDialog(false);
                     window.setTimeout(() => handlePrint(), 80);
                 }}
+                onWhatsApp={async () => {
+                    if (printableInvoiceData) {
+                        await handleSendWhatsAppClick(printableInvoiceData);
+                        setShowProfessionalPrintDialog(false);
+                    } else {
+                        toast.error("Invoice data missing");
+                    }
+                }}
+                onPrintAndWhatsApp={async () => {
+                    if (printableInvoiceData) {
+                        await handleSendWhatsAppClick(printableInvoiceData);
+                        setShowProfessionalPrintDialog(false);
+                        window.setTimeout(() => handlePrint(), 80);
+                    } else {
+                        toast.error("Invoice data missing");
+                    }
+                }}
                 title="Print Thermal Bill"
                 documentName={printableInvoiceData?.invoiceNumber || "Invoice Bill"}
                 documentType="Thermal Bill"

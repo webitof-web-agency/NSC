@@ -1,8 +1,8 @@
 const WhatsAppSettings = require('../models/WhatsAppSettings');
-const WhatsAppTemplate = require('../models/WhatsAppTemplate');
 const WhatsAppMessageLog = require('../models/WhatsAppMessageLog');
+const WhatsAppTemplateAssignment = require('../models/WhatsAppTemplateAssignment');
+require('../models/WhatsAppMetaTemplate');
 const { normalizePhoneNumber } = require('../utils/phoneFormatter');
-const { renderWhatsAppMessage } = require('../utils/templateRenderer');
 const { generateDocumentPdfBuffer } = require('../utils/pdfGenerator');
 const { decryptValue } = require('../utils/credentialCrypto');
 const { getWhatsAppConfig } = require('../../config/whatsapp');
@@ -226,7 +226,7 @@ async function sendTextMessage({ config, phone, text }) {
   });
 }
 
-async function sendTemplateMessage({ config, phone, templateName, languageCode }) {
+async function sendTemplateMessage({ config, phone, templateName, languageCode, components = [] }) {
   return await callWhatsAppApi({
     url: getGraphBaseUrl(config.apiVersion, config.phoneNumberId, 'messages'),
     method: 'POST',
@@ -240,6 +240,7 @@ async function sendTemplateMessage({ config, phone, templateName, languageCode }
         language: {
           code: languageCode,
         },
+        components: components.length > 0 ? components : undefined,
       },
     },
   });
@@ -276,60 +277,143 @@ async function fetchConversationReplies() {
   return [];
 }
 
-function shouldAutoSend(config, documentType) {
-  if (documentType === 'quotation') return config.autoSendOnQuotation;
-  if (documentType === 'exchange') return config.autoSendOnExchange;
-  return config.autoSendOnInvoice;
+function buildTemplateComponents(assignment, context, mediaId = null, filename = null) {
+  const components = [];
+
+  // Group variables by component type
+  const bodyParams = [];
+  const headerParams = [];
+
+  if (assignment.variableMappings && assignment.variableMappings.length > 0) {
+    const sortedMappings = [...assignment.variableMappings].sort((a, b) => a.parameterIndex - b.parameterIndex);
+
+    for (const mapping of sortedMappings) {
+      let resolvedValue = '';
+      if (mapping.sourceType === 'FIXED') {
+        resolvedValue = mapping.sourceValue;
+      } else if (mapping.sourceType === 'VARIABLE') {
+        resolvedValue = String(context[mapping.sourceValue] ?? '');
+      }
+
+      if (mapping.component === 'BODY') {
+        bodyParams.push({ type: 'text', text: resolvedValue });
+      } else if (mapping.component === 'HEADER') {
+        headerParams.push({ type: 'text', text: resolvedValue });
+      } else if (mapping.component === 'BUTTONS') {
+        // Not perfectly mapped for all button types, assuming dynamic URL for now
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: mapping.buttonIndex || 0,
+          parameters: [{ type: 'text', text: resolvedValue }]
+        });
+      }
+    }
+  }
+
+  const headerComponentDef = assignment.metaTemplateId?.components?.find(c => c.type === 'HEADER');
+  const expectsImageHeader = headerComponentDef && headerComponentDef.format === 'IMAGE';
+
+  if (expectsImageHeader && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF') {
+    components.push({
+      type: 'header',
+      parameters: [{
+        type: 'image',
+        image: {
+          link: 'https://app.nareshsareecollection.com/landing/assets/img/apple-icon.png'
+        }
+      }]
+    });
+  } else if (mediaId && assignment.headerMapping?.sourceType === 'DOCUMENT_PDF') {
+    components.push({
+      type: 'header',
+      parameters: [{
+        type: 'document',
+        document: {
+          id: mediaId,
+          filename: filename || 'document.pdf',
+        }
+      }]
+    });
+  } else if (headerParams.length > 0) {
+    components.push({
+      type: 'header',
+      parameters: headerParams,
+    });
+  }
+
+  if (bodyParams.length > 0) {
+    components.push({
+      type: 'body',
+      parameters: bodyParams,
+    });
+  }
+
+  return components;
+}
+
+function skipOrRejectManualSend(manual, reason, extra = {}) {
+  if (manual) {
+    throw new Error(reason);
+  }
+
+  return { skipped: true, reason, ...extra };
 }
 
 async function triggerWhatsAppSend({ documentType, documentId, userId, manual = false }) {
   const settingsDoc = await WhatsAppSettings.findOne({ userId });
   const config = mergeConfig(settingsDoc);
 
-  if (!config.isEnabled && !manual) {
-    return { skipped: true, reason: 'WhatsApp is disabled' };
+  if (!config.isEnabled) {
+    return skipOrRejectManualSend(manual, 'WhatsApp is disabled');
   }
 
-  if (!shouldAutoSend(config, documentType) && !manual) {
-    return { skipped: true, reason: `Auto-send disabled for ${documentType}` };
+  // Find the Assignment
+  const messageType = String(documentType).toUpperCase();
+  const assignment = await WhatsAppTemplateAssignment.findOne({ userId, messageType, isEnabled: true })
+    .populate('metaTemplateId').lean();
+
+  if (!assignment || !assignment.metaTemplateId) {
+    return skipOrRejectManualSend(manual, `No active Meta Template assignment found for ${messageType}`);
+  }
+
+  if (assignment.metaTemplateId.status !== 'APPROVED') {
+    return skipOrRejectManualSend(
+      manual,
+      `Assigned Meta Template is not APPROVED (status: ${assignment.metaTemplateId.status})`
+    );
   }
 
   const context = await resolveDocumentContext({ documentType, documentId, userId });
 
-  const template =
-    (await WhatsAppTemplate.findOne({ userId, type: documentType, isActive: true }).lean()) ||
-    {
-      type: documentType,
-      includeDocument: true,
-    };
-
-  const rendered = renderWhatsAppMessage({
-    template,
-    context: {
-      customerName: context.customerName,
-      customerPhone: context.customerPhone,
-      documentNumber: context.documentNumber,
-      amount: context.amount,
-      date: context.date,
-      companyName: context.companyName,
-      documentType,
-    },
-  });
+  // Ensure we have a publicShareId if needed by the template
+  const needsPublicShareId = assignment.variableMappings?.some(m => m.sourceValue === 'publicShareId');
+  if (needsPublicShareId && context.document && documentType === 'invoice') {
+    const publicShareService = require('../../services/publicShareService');
+    const InvoiceModel = getWhatsAppModuleConfig().models.InvoiceModel;
+    const invoiceModelInstance = InvoiceModel ? await InvoiceModel.findById(documentId) : null;
+    if (!invoiceModelInstance) {
+      throw new Error('Invoice not found while preparing the WhatsApp template link');
+    }
+    context.publicShareId = await publicShareService.getOrCreatePublicShareId(invoiceModelInstance);
+  }
 
   const log = await WhatsAppMessageLog.create({
     userId,
     customerId: context.customerId,
     customerPhone: context.customerPhone || '',
     customerName: context.customerName,
-    documentType,
+    documentType, // Keeping this field as it matches messageType mostly
     documentId,
     documentNumber: context.documentNumber,
-    status: 'queued',
-    renderedMessage: rendered.text,
+    status: 'QUEUED',
+    renderedMessage: `Template: ${assignment.metaTemplateName}`,
     amount: context.amount,
     lastAttemptAt: new Date(),
     metadata: {
       manual,
+      assignmentId: assignment._id,
+      templateName: assignment.metaTemplateName,
     },
   });
 
@@ -344,18 +428,17 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
 
     if (!String(context.customerPhone || '').trim()) {
       await WhatsAppMessageLog.findByIdAndUpdate(log._id, {
-        $set: {
-          status: 'failed',
-          errorMessage: 'Customer phone number is missing',
-          lastAttemptAt: new Date(),
-        },
+        $set: { status: 'FAILED', errorMessage: 'Customer phone number is missing', lastAttemptAt: new Date() },
       });
-      return { skipped: true, logId: log._id, reason: 'Customer phone number is missing' };
+      return skipOrRejectManualSend(manual, 'Customer phone number is missing', { logId: log._id });
     }
 
     const phone = normalizePhoneNumber(context.customerPhone);
     const sendOutcome = await withRetry(async () => {
-      if (template.includeDocument) {
+      let mediaId = null;
+      let filename = null;
+
+      if (assignment.headerMapping?.sourceType === 'DOCUMENT_PDF') {
         const pdfBuffer = await generateDocumentPdfBuffer({
           companyName: context.companyName,
           documentLabel: context.documentLabel,
@@ -368,27 +451,22 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
           items: context.items,
         });
 
-        const filename = `${documentType}-${context.documentNumber || documentId}.pdf`;
+        filename = `${documentType}-${context.documentNumber || documentId}.pdf`;
         const mediaUpload = await uploadMediaToWhatsApp({ config, pdfBuffer, filename });
-        const mediaId = mediaUpload.id || '';
-        const response = await sendDocumentMessage({
-          config,
-          phone,
-          mediaId,
-          filename,
-          caption: rendered.text,
-        });
-
-        return { response, mediaId };
+        mediaId = mediaUpload.id || '';
       }
 
-      const response = await sendTextMessage({
+      const components = buildTemplateComponents(assignment, context, mediaId, filename);
+
+      const response = await sendTemplateMessage({
         config,
         phone,
-        text: rendered.text,
+        templateName: assignment.metaTemplateName,
+        languageCode: assignment.languageCode,
+        components,
       });
 
-      return { response, mediaId: '' };
+      return { response, mediaId };
     });
 
     const messageId = sendOutcome.result?.response?.messages?.[0]?.id || '';
@@ -397,9 +475,9 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
       $set: {
         customerPhone: phone,
         messageId,
-        mediaId: sendOutcome.result.mediaId,
-        status: 'sent',
-        sentAt: new Date(),
+        mediaId: sendOutcome.result.mediaId || '',
+        status: 'ACCEPTED',
+        acceptedAt: new Date(),
         lastAttemptAt: new Date(),
         retryCount: Math.max(sendOutcome.attempts - 1, 0),
         errorMessage: '',
@@ -415,13 +493,12 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
   } catch (error) {
     await WhatsAppMessageLog.findByIdAndUpdate(log._id, {
       $set: {
-        status: 'failed',
+        status: 'FAILED',
         errorMessage: error.message,
         lastAttemptAt: new Date(),
         retryCount: Math.max((error.attempts || 1) - 1, 0),
       },
     });
-
     throw error;
   }
 }
