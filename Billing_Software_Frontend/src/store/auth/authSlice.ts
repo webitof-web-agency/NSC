@@ -88,6 +88,13 @@ export const authSlice = createSlice({
                     state.token = token;
                     state.user = JSON.parse(user);
                     state.isAuthenticated = true;
+
+                    // Ensure local backend has the sync token cached when restoring session
+                    if (typeof window !== 'undefined' && 'electronAPI' in window) {
+                        const localPort = (window as any).__electronLocalBackendPort || 3002;
+                        axios.post(`http://localhost:${localPort}/api/local/sync-token`, { token })
+                            .catch(() => {});
+                    }
                 } catch (e) {
                     console.error("Failed to parse user data from cookies", e);
                     state.isAuthenticated = false;

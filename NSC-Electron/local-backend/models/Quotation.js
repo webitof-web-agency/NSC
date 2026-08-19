@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+﻿const offlineSyncPlugin = require("../middleware/offlineSync");
 const mongoose = require('mongoose');
 
 const quotationSchema = new mongoose.Schema({
@@ -25,7 +25,7 @@ const quotationSchema = new mongoose.Schema({
   },
   items: [{
     id: {
-      type: String,      
+      type: String,
       required: true
     },
     product_id: {
@@ -51,104 +51,6 @@ const quotationSchema = new mongoose.Schema({
       type: String,
       required: false
     },
-    qty: {
-      type: Number,
-      required: true
-    },
-    rate: {
-      type: Number,
-      required: true
-    },
-    discount: {
-      type: Number,
-      default: 0
-    },
-    tax: {
-      type: Number,
-      default: 0
-    },
-    tax_group_id: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'TaxGroup'
-    },
-    discount_type: {
-      type: String,
-      enum: ['Fixed', 'Percentage'],
-      default: 'Fixed'
-    },
-    discount_value: {
-      type: Number,
-      default: 0
-    },
-    amount: {
-      type: Number,
-      required: true
-    }
-  }],
-  status: {
-    type: String,
-    enum: ['draft', 'sent', 'accepted', 'declined'],
-    default: 'draft'
-  },
-  paymentTerms: {
-    type: String,
-    required: false
-  },
-  taxableAmount: {
-    type: Number,
-    required: true
-  },
-  totalDiscount: {
-    type: Number,
-    default: 0
-  },
-  vat: {
-    type: Number,
-    default: 0
-  },
-  roundOff: {
-    type: Boolean,
-    default: false
-  },
-  TotalAmount: {
-    type: Number,
-    required: true
-  },
-  notes: String,
-  termsAndCondition: String,
-  sign_type: {
-    type: String,
-    enum: ['digitalSignature', 'eSignature', 'none'],
-    default: 'none'
-  },
-  signatureId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Signature'
-  },
-  signatureImage: String,
-  signatureName: String,
-  isDeleted: {
-    type: Boolean,
-    default: false
-  },
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  salesPerson: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: false,
-  },
-  billFrom: {
-    ref: 'User',
-    type: mongoose.Schema.Types.ObjectId,
-    required: true
-  },
-  billTo: {
-    ref: 'Customer',
-    type: mongoose.Schema.Types.ObjectId,
     qty: {
       type: Number,
       required: true

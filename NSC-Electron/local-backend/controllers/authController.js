@@ -75,7 +75,7 @@ exports.login = async (req, res) => {
         console.log(`[Auth] Local login failed for ${email}. Attempting Cloud Fallback...`);
         try {
           const axios = require('axios');
-          const REMOTE_URL = process.env.REMOTE_URL || 'https://api.nareshsareecollection.com'; // Adjust to actual cloud URL if needed
+          const REMOTE_URL = process.env.REMOTE_BACKEND_URL || process.env.REMOTE_URL || 'https://server.nareshsareecollection.com';
           
           const cloudRes = await axios.post(`${REMOTE_URL}/api/auth/login`, { email, password }, { timeout: 10000 });
           

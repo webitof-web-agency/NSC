@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+﻿import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import axios from "axios";
 import Constants from "@constants/api";
 
@@ -15,50 +15,44 @@ interface SetupContextProps {
 
 const SetupStatusContext = createContext<SetupContextProps | undefined>(undefined);
 
+// Live backend URL — injected by Vite at build time from .env
+const LIVE_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://server.nareshsareecollection.com';
+const LIVE_VERSION_URL = `${LIVE_BASE_URL}/api/admin/app-version`;
+
 /**
- * Waits for ElectronStatusBar to set window.__electronConnectionMode (set via IPC),
- * then returns the correct app-version URL:
- *   - online  → live backend (https://server.nareshsareecollection.com)
- *   - offline → local backend (http://localhost:3002)
+ * fetchSetupStatus — Self-detecting online/offline, no race conditions.
  *
- * We poll for up to 2 seconds because ElectronStatusBar calls getConnectionMode()
- * asynchronously and may not have resolved by the time this runs on mount.
- * If the mode never arrives (e.g. non-Electron browser), we fall back to the
- * standard Constants URL.
+ * Browser:  calls Constants.APP_VERSION_URL (standard flow, unchanged)
+ * Electron: tries live backend with 3s timeout
+ *             responds  -> ONLINE  -> returns live backend result (Login page)
+ *             times out -> OFFLINE -> falls back to local backend
+ *
+ * Eliminates all race conditions with NetworkMonitor / ElectronStatusBar timing.
  */
-async function getAppVersionUrl(): Promise<string> {
+async function fetchSetupStatus(): Promise<SetupStatus> {
     const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
+
     if (!isElectron) {
-        return Constants.APP_VERSION_URL;
+        const res = await axios.get(Constants.APP_VERSION_URL, { timeout: 10000 });
+        return res.data.data;
     }
 
+    // Electron: try live backend first (3s timeout)
+    try {
+        console.log('[SetupStatus] Trying live backend ->', LIVE_VERSION_URL);
+        const res = await axios.get(LIVE_VERSION_URL, { timeout: 3000 });
+        console.log('[SetupStatus] Live backend OK -> ONLINE');
+        return res.data.data;
+    } catch {
+        console.log('[SetupStatus] Live backend unreachable -> OFFLINE, using local backend');
+    }
+
+    // Fallback: local backend (offline mode)
     const localPort = (window as any).__electronLocalBackendPort || 3002;
-    const localUrl  = `http://localhost:${localPort}/api/admin/app-version`;
-    const liveUrl   = Constants.APP_VERSION_URL; // uses live backend base URL
-
-    // Poll for __electronConnectionMode — set by ElectronStatusBar after IPC resolves
-    const maxWaitMs = 2000;
-    const intervalMs = 100;
-    let elapsed = 0;
-
-    while (elapsed < maxWaitMs) {
-        const mode = (window as any).__electronConnectionMode;
-        if (mode === 'online') {
-            console.log('[SetupStatus] Mode=online → using live backend');
-            return liveUrl;
-        }
-        if (mode === 'offline') {
-            console.log('[SetupStatus] Mode=offline → using local backend');
-            return localUrl;
-        }
-        // Not set yet — wait and retry
-        await new Promise(res => setTimeout(res, intervalMs));
-        elapsed += intervalMs;
-    }
-
-    // Timeout: default to local backend (safe fallback — avoids broken live call)
-    console.warn('[SetupStatus] Timed out waiting for connection mode — falling back to local backend');
-    return localUrl;
+    const localUrl = `http://localhost:${localPort}/api/admin/app-version`;
+    console.log('[SetupStatus] Calling local backend ->', localUrl);
+    const res = await axios.get(localUrl, { timeout: 5000 });
+    return res.data.data;
 }
 
 export const SetupStatusProvider = ({ children }: { children: ReactNode }) => {
@@ -72,14 +66,13 @@ export const SetupStatusProvider = ({ children }: { children: ReactNode }) => {
                 if (stored) {
                     setStatus(JSON.parse(stored));
                 } else {
-                    const url = await getAppVersionUrl();
-                    console.log('[SetupStatus] Checking setup at:', url);
-                    const response = await axios.get(url);
-                    setStatus(response.data.data);
-                    sessionStorage.setItem("setupStatus", JSON.stringify(response.data.data));
+                    const data = await fetchSetupStatus();
+                    setStatus(data);
+                    sessionStorage.setItem("setupStatus", JSON.stringify(data));
                 }
             } catch (e) {
-                console.error("Failed to load setup status", e);
+                console.error("[SetupStatus] Failed to load setup status:", e);
+                setStatus({ new_register: true, company_settings: true });
             } finally {
                 setIsLoading(false);
             }
@@ -87,13 +80,18 @@ export const SetupStatusProvider = ({ children }: { children: ReactNode }) => {
         loadStatus();
     }, []);
 
-    // Keep sessionStorage synced with state
     useEffect(() => {
         if (status) sessionStorage.setItem("setupStatus", JSON.stringify(status));
     }, [status]);
 
     return (
-        <SetupStatusContext.Provider value={{ status: status || { new_register: true, company_settings: true }, setStatus: status => setStatus(status), isLoading }}>
+        <SetupStatusContext.Provider
+            value={{
+                status: status || { new_register: true, company_settings: true },
+                setStatus: (s) => setStatus(s),
+                isLoading,
+            }}
+        >
             {children}
         </SetupStatusContext.Provider>
     );

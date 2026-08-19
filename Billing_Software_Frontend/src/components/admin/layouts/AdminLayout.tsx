@@ -5,7 +5,6 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from '../Sidebar';
 import ProductSidebar from '../ProductSidebar';
 import SidebarToggleButton from '../SidebarToggleButton';
-import ElectronStatusBar from '../../ElectronStatusBar';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -42,14 +41,26 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
   const layoutHeightClass = isElectron ? "h-[calc(100vh-32px)]" : "h-screen";
 
+  const [contentKey, setContentKey] = useState<number>(0);
+
+  useEffect(() => {
+    const handleModeChange = () => {
+      // Remount the active page to trigger fresh API requests to the newly active backend
+      setContentKey(k => k + 1);
+    };
+    window.addEventListener("electron:mode-change", handleModeChange);
+    return () => window.removeEventListener("electron:mode-change", handleModeChange);
+  }, []);
+
   return (
     <>
-      <ElectronStatusBar />
+      {/* ElectronStatusBar is rendered once at root level in App.tsx — NOT here */}
       <div className={`flex bg-white font-sans ${layoutHeightClass}`}>
+
         <Sidebar isOpen={isSidebarOpen} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <Header toggleSidebar={() => setIsSidebarOpen(prev => !prev)} />
-          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4">
+          <main key={contentKey} className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4">
             {children || <Outlet />}
           </main>
         </div>

@@ -87,10 +87,23 @@ export function useElectronBridge(): ElectronBridgeResult {
       setSyncStatus(status);
     });
 
-    // Subscribe to network changes
+    // Subscribe to IPC network changes
     const unsubNetwork = electronAPI().onNetworkChange((status: NetworkStatus) => {
       setNetworkStatus(status);
     });
+
+    // Native browser window events for instant offline response
+    const handleBrowserOffline = () => {
+      setNetworkStatus({ isOnline: false, mode: 'offline', checkedAt: new Date().toISOString() });
+    };
+    const handleBrowserOnline = () => {
+      electronAPI().getConnectionMode().then((status: NetworkStatus) => {
+        setNetworkStatus(status);
+      });
+    };
+
+    window.addEventListener('offline', handleBrowserOffline);
+    window.addEventListener('online', handleBrowserOnline);
 
     // Subscribe to sync progress
     const unsubSync = electronAPI().onSyncStatus((progress: SyncStatus) => {
@@ -100,6 +113,8 @@ export function useElectronBridge(): ElectronBridgeResult {
     return () => {
       if (typeof unsubNetwork === 'function') unsubNetwork();
       if (typeof unsubSync === 'function') unsubSync();
+      window.removeEventListener('offline', handleBrowserOffline);
+      window.removeEventListener('online', handleBrowserOnline);
     };
   }, [isElectron]);
 

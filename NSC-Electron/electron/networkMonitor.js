@@ -1,26 +1,33 @@
 // electron/networkMonitor.js
 // Monitors real internet connectivity (not just navigator.onLine)
-// Uses DNS lookup to verify actual connectivity every N seconds
+// Uses DNS resolution and HTTP checks to verify actual connectivity
 
 'use strict';
 
 const dns = require('dns');
+const https = require('https');
+const http = require('http');
 const { EventEmitter } = require('events');
 
 class NetworkMonitor extends EventEmitter {
   /**
    * @param {Object} options
-   * @param {number}   options.checkInterval   - ms between checks (default 8000)
+   * @param {number}   options.checkInterval   - ms between checks (default 5000)
    * @param {Function} options.onStatusChange  - callback when status changes
-   * @param {string[]} options.testHosts       - hostnames to DNS-resolve
-   * @param {string}   options.pingUrl         - remote URL to ping as fallback
+   * @param {string[]} options.testHosts       - domain hostnames to DNS-resolve (NO IP literals)
+   * @param {string}   options.pingUrl         - remote URL to ping as verification
    */
   constructor(options = {}) {
     super();
-    this.checkInterval = options.checkInterval || 8000;
+    this.checkInterval = options.checkInterval || 5000;
     this.onStatusChange = options.onStatusChange || null;
-    this.testHosts = options.testHosts || ['google.com', '1.1.1.1', '8.8.8.8'];
-    this.pingUrl = options.pingUrl || 'https://server.nareshsareecollection.com/api/health';
+    // Real domains only (never IP addresses like 1.1.1.1 because dns.lookup on IPs returns success without network)
+    this.testHosts = options.testHosts || [
+      'server.nareshsareecollection.com',
+      'google.com',
+      'cloudflare.com',
+    ];
+    this.pingUrl = options.pingUrl || 'https://server.nareshsareecollection.com/api/admin/app-version';
 
     this._isOnline = false;   // Start assuming offline
     this._timer = null;
@@ -54,7 +61,7 @@ class NetworkMonitor extends EventEmitter {
   }
 
   // ─────────────────────────────────────────────
-  // Internal: DNS-based connectivity check
+  // Internal: DNS + HTTP connectivity check
   // ─────────────────────────────────────────────
 
   async _check() {
@@ -63,31 +70,44 @@ class NetworkMonitor extends EventEmitter {
 
     let newOnline = false;
 
-    // 1. Check DNS resolution of fallback hosts
+    // 1. Check DNS resolution of domain names (with 2500ms timeout per host)
     for (const host of this.testHosts) {
       try {
         await new Promise((resolve, reject) => {
-          dns.lookup(host, (err) => {
-            if (err) reject(err);
-            else resolve();
+          const timeout = setTimeout(() => reject(new Error('DNS timeout')), 2500);
+          dns.lookup(host, (err, address) => {
+            clearTimeout(timeout);
+            if (err || !address) reject(err || new Error('No address'));
+            else resolve(address);
           });
         });
         newOnline = true;
         break; // Stop checking if one succeeds
-      } catch (e) {
-        // Continue to next host
+      } catch {
+        // Try next host
       }
     }
 
-    // 2. HTTP ping fallback if DNS fails
+    // 2. HTTP ping fallback / verification if DNS failed
     if (!newOnline && this.pingUrl) {
       try {
-        const fetch = require('node-fetch') || global.fetch; // Node 18+ has global fetch
-        const res = await fetch(this.pingUrl, { method: 'GET', signal: AbortSignal.timeout(3000) });
-        if (res.ok) {
-          newOnline = true;
-        }
-      } catch (e) {
+        await new Promise((resolve, reject) => {
+          const client = this.pingUrl.startsWith('https') ? https : http;
+          const req = client.get(this.pingUrl, { timeout: 3000 }, (res) => {
+            if (res.statusCode && res.statusCode < 500) {
+              resolve();
+            } else {
+              reject(new Error(`Status ${res.statusCode}`));
+            }
+          });
+          req.on('error', reject);
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('HTTP timeout'));
+          });
+        });
+        newOnline = true;
+      } catch {
         // Still offline
       }
     }
@@ -113,3 +133,4 @@ class NetworkMonitor extends EventEmitter {
 }
 
 module.exports = NetworkMonitor;
+
