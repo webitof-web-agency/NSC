@@ -315,12 +315,16 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
   const expectsImageHeader = headerComponentDef && headerComponentDef.format === 'IMAGE';
 
   if (expectsImageHeader && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF') {
+    let fallbackImageUrl = 'https://app.nareshsareecollection.com/landing/assets/img/apple-icon.png';
+    if (headerComponentDef.example && headerComponentDef.example.header_handle && headerComponentDef.example.header_handle.length > 0) {
+      fallbackImageUrl = headerComponentDef.example.header_handle[0];
+    }
     components.push({
       type: 'header',
       parameters: [{
         type: 'image',
         image: {
-          link: 'https://app.nareshsareecollection.com/landing/assets/img/apple-icon.png'
+          link: fallbackImageUrl
         }
       }]
     });
@@ -340,6 +344,19 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
       type: 'header',
       parameters: headerParams,
     });
+  }
+
+  // Force button parameter to use publicShareId for invoices to prevent broken links
+  if (documentType === 'invoice' && context.publicShareId) {
+    const nonButtonComponents = components.filter(c => c.type !== 'button');
+    nonButtonComponents.push({
+      type: 'button',
+      sub_type: 'url',
+      index: 0,
+      parameters: [{ type: 'text', text: context.publicShareId }]
+    });
+    components.length = 0;
+    components.push(...nonButtonComponents);
   }
 
   if (bodyParams.length > 0) {

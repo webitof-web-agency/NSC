@@ -4,11 +4,9 @@ dotenv.config();
 
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(async () => {
-    const Assignment = require('./whatsapp-module/models/WhatsAppTemplateAssignment');
-    const assignments = await Assignment.find({});
-    assignments.forEach(a => {
-      console.log(`ID: ${a._id}, messageType: ${a.messageType}, isEnabled: ${a.isEnabled}`);
-    });
+    const Template = require('./whatsapp-module/models/WhatsAppMetaTemplate');
+    const invoiceTemplate = await Template.findOne({ name: 'invoice_template' });
+    console.log(JSON.stringify(invoiceTemplate.components, null, 2));
     process.exit(0);
   })
   .catch(err => {

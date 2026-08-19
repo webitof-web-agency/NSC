@@ -52,8 +52,14 @@ function serializePublicInvoice(invoice, businessSettings) {
 
 exports.getPublicInvoice = async (req, res) => {
   try {
-    const { publicShareId } = req.params;
-    
+    let { publicShareId } = req.params;
+
+    // Handle case where Meta Template hardcodes `:id` before the dynamic parameter
+    // e.g. https://app.nareshsareecollection.com/invoice/:idABCXYZ
+    if (publicShareId && publicShareId.startsWith(':id')) {
+      publicShareId = publicShareId.substring(3);
+    }
+
     // Basic validation of the token (base64url is alphanumeric + hyphens + underscores)
     if (!publicShareId || publicShareId.length < 20 || !/^[A-Za-z0-9_-]+$/.test(publicShareId)) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
@@ -87,11 +93,15 @@ exports.getPublicInvoice = async (req, res) => {
 
 exports.downloadPublicInvoicePdf = async (req, res) => {
   try {
-    const { publicShareId } = req.params;
-    
+    let { publicShareId } = req.params;
+
+    if (publicShareId && publicShareId.startsWith(':id')) {
+      publicShareId = publicShareId.substring(3);
+    }
+
     // Basic validation of the token
     if (!publicShareId || publicShareId.length < 20 || !/^[A-Za-z0-9_-]+$/.test(publicShareId)) {
-      return res.status(404).send('Invoice not found');
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
     const invoice = await Invoice.findOne({ 
