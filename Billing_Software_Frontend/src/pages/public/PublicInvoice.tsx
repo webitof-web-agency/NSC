@@ -1,251 +1,280 @@
-import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import axios from 'axios';
-import Constants from '@constants/api';
-import { Download, Instagram, ShoppingBag, CheckCircle2 } from 'lucide-react';
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
+import axios from "axios";
+import { FileX2, Printer } from "lucide-react";
+import { useReactToPrint } from "react-to-print";
+import Constants from "@constants/api";
+import type { InvoiceData, Item } from "@models/invoice";
+import InvoiceTemplateB from "@pages/admin/invoices/InvoiceTemplateB";
+
+interface PublicAddress {
+  name?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  pincode?: string;
+}
+
+interface PublicInvoiceItem {
+  id?: string;
+  name: string;
+  variantName?: string;
+  unit?: string;
+  quantity: number;
+  rate: number;
+  amount: number;
+  discount: number;
+  taxAmount: number;
+  taxGroupId?: string;
+  discountType?: string;
+  discountValue?: number | null;
+  hsnCode: string;
+}
 
 interface PublicInvoiceData {
   invoiceNumber: string;
   date: string;
   dueDate: string;
   status: string;
+  paymentMethod?: string;
   totalAmount: number;
   subtotal: number;
   taxAmount: number;
   discountAmount: number;
-  roundOff: number;
+  customerGstin?: string;
+  ewayBillNumber?: string;
+  shippingAddress?: PublicAddress | null;
+  termsAndCondition?: string;
+  notes?: string;
+  exchangeOldTotal?: number | null;
+  exchangeNewTotal?: number | null;
   customer: {
     name: string;
     phone: string;
     address: string;
     state: string;
     gstNumber: string;
+    billingAddress?: PublicAddress | null;
   };
-  items: Array<{
-    name: string;
-    quantity: number;
-    rate: number;
-    amount: number;
-    discount: number;
-    taxAmount: number;
-    hsnCode: string;
-  }>;
+  items: PublicInvoiceItem[];
+  exchangeOriginalItems?: PublicInvoiceItem[];
   business: {
     name: string;
-    logo: string;
+    logo?: string;
     phone: string;
     email: string;
     address: string;
     state: string;
     gstNumber: string;
-    instagram: string;
-    website: string;
   };
 }
+
+const emptyAddress = (): NonNullable<InvoiceData["shippingAddress"]> => ({
+  name: "",
+  addressLine1: "",
+  addressLine2: "",
+  city: "",
+  state: "",
+  country: "",
+  pincode: "",
+});
+
+const toTemplateAddress = (
+  address?: PublicAddress | null,
+): NonNullable<InvoiceData["shippingAddress"]> => ({
+  ...emptyAddress(),
+  ...address,
+});
+
+const toTemplateItem = (item: PublicInvoiceItem, index: number, prefix: string): Item => ({
+  id: item.id || `${prefix}-${index}`,
+  name: item.name || "N/A",
+  variantName: item.variantName || "-",
+  unit: item.unit || "",
+  qty: Number(item.quantity || 0),
+  rate: Number(item.rate || 0),
+  discount: Number(item.discount || 0),
+  tax: Number(item.taxAmount || 0),
+  tax_group_id: item.taxGroupId || "",
+  discount_type: item.discountType === "Percentage" ? "Percentage" : "Fixed",
+  discount_value: item.discountValue ?? null,
+  amount: Number(item.amount || 0),
+});
+
+const toInvoiceTemplateData = (invoice: PublicInvoiceData): InvoiceData => {
+  const billingAddress = toTemplateAddress(invoice.customer.billingAddress);
+
+  return {
+    id: invoice.invoiceNumber,
+    invoiceNumber: invoice.invoiceNumber,
+    invoiceDate: invoice.date,
+    dueDate: invoice.dueDate,
+    referenceNo: "",
+    status: invoice.status,
+    payment_method: invoice.paymentMethod || "",
+    taxableAmount: Number(invoice.subtotal || 0),
+    totalDiscount: Number(invoice.discountAmount || 0),
+    vat: Number(invoice.taxAmount || 0),
+    TotalAmount: Number(invoice.totalAmount || 0),
+    exchangeOldTotal: invoice.exchangeOldTotal ?? undefined,
+    exchangeNewTotal: invoice.exchangeNewTotal ?? undefined,
+    items: invoice.items.map((item, index) => toTemplateItem(item, index, "item")),
+    exchangeOriginalItems: (invoice.exchangeOriginalItems || []).map((item, index) =>
+      toTemplateItem(item, index, "exchange-item"),
+    ),
+    billFrom: {
+      id: "",
+      name: invoice.business.name,
+      email: invoice.business.email,
+      phone: invoice.business.phone,
+      address: invoice.business.address,
+      image: invoice.business.logo || null,
+    },
+    billTo: {
+      id: "",
+      name: invoice.customer.name || "N/A",
+      email: "",
+      phone: invoice.customer.phone || "N/A",
+      billingAddress,
+      image: null,
+    },
+    customerGstin: invoice.customerGstin || invoice.customer.gstNumber,
+    ewayBillNumber: invoice.ewayBillNumber,
+    shippingAddress: invoice.shippingAddress
+      ? toTemplateAddress(invoice.shippingAddress)
+      : null,
+    notes: invoice.notes || "",
+    termsAndCondition: invoice.termsAndCondition || "",
+    isRecurring: false,
+    recurring: null,
+    recurringDuration: null,
+    sign_type: "digitalSignature",
+    signature: {
+      id: "",
+      name: "",
+      image: null,
+    },
+    createdAt: invoice.date,
+    updatedAt: invoice.date,
+  };
+};
 
 const PublicInvoice = () => {
   const { publicShareId } = useParams<{ publicShareId: string }>();
   const [invoice, setInvoice] = useState<PublicInvoiceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchPublicInvoice = async () => {
       try {
-        const res = await axios.get(`${Constants.BASE_URL}/api/public/invoices/${publicShareId}`);
-        if (res.data.success) {
-          setInvoice(res.data.data);
+        const response = await axios.get(
+          `${Constants.BASE_URL}/api/public/invoices/${publicShareId}`,
+        );
+        if (response.data.success) {
+          setInvoice(response.data.data);
         } else {
           setError(true);
         }
-      } catch (err) {
+      } catch {
         setError(true);
       } finally {
         setLoading(false);
       }
     };
+
     if (publicShareId) {
       fetchPublicInvoice();
     }
   }, [publicShareId]);
 
-  const handleDownloadPdf = async () => {
-    try {
-      setDownloading(true);
-      const res = await axios.get(`${Constants.BASE_URL}/api/public/invoices/${publicShareId}/pdf`, {
-        responseType: 'blob',
-      });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `Invoice-${invoice?.invoiceNumber || 'Download'}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      alert("Failed to download PDF");
-    } finally {
-      setDownloading(false);
+  useEffect(() => {
+    if (invoice) {
+      document.title = `Invoice ${invoice.invoiceNumber} - ${invoice.business.name}`;
+      let meta = document.querySelector('meta[name="robots"]');
+      if (!meta) {
+        meta = document.createElement("meta");
+        meta.setAttribute("name", "robots");
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute("content", "noindex,nofollow");
     }
-  };
+  }, [invoice]);
+
+  const handlePrint = useReactToPrint({
+    contentRef: invoiceRef,
+    documentTitle: invoice?.invoiceNumber || "Invoice",
+    pageStyle: `
+      @page {
+        size: auto;
+        margin: 5mm 5mm 2mm 2mm;
+      }
+      @page:first {
+        margin: 2mm;
+      }
+    `,
+  });
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+      <div className="flex min-h-screen items-center justify-center bg-slate-100">
+        <div
+          className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"
+          aria-label="Loading invoice"
+          role="status"
+        />
       </div>
     );
   }
 
   if (error || !invoice) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="text-center max-w-md bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-          <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center mx-auto mb-4">
-            <ShoppingBag size={24} />
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">Invoice Not Found</h2>
-          <p className="text-gray-500 mb-6">The invoice you are looking for does not exist or the link has expired.</p>
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+        <div className="max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <FileX2 className="mx-auto mb-4 text-slate-400" size={40} />
+          <h1 className="mb-2 text-xl font-bold text-slate-950">Invoice Not Found</h1>
+          <p className="text-sm text-slate-600">
+            The invoice does not exist or this public link is no longer active.
+          </p>
         </div>
       </div>
     );
   }
 
-  useEffect(() => {
-    if (invoice) {
-      document.title = `Invoice ${invoice.invoiceNumber} - ${invoice.business.name}`;
-      // Set a generic meta noindex in case the server header is missed by any crawler (defense in depth)
-      let meta = document.querySelector('meta[name="robots"]');
-      if (!meta) {
-        meta = document.createElement('meta');
-        meta.setAttribute('name', 'robots');
-        document.head.appendChild(meta);
-      }
-      meta.setAttribute('content', 'noindex,nofollow');
-    }
-  }, [invoice]);
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount);
-  };
+  const invoiceTemplateData = toInvoiceTemplateData(invoice);
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4 font-sans text-gray-900 pb-24">
-      <div className="max-w-2xl mx-auto space-y-6">
-        
-        {/* Header / Thank You Card */}
-        <div className="bg-white rounded-3xl p-6 text-center shadow-sm border border-gray-100">
-          <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 size={32} />
-          </div>
-          <h1 className="text-2xl font-bold mb-1">Thank You!</h1>
-          <p className="text-gray-500 text-sm">Thank you for shopping with</p>
-          <p className="font-semibold text-gray-900">{invoice.business.name}</p>
-        </div>
-
-        {/* Invoice Details Card */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
-          <div className="flex justify-between items-start mb-8">
-            <div>
-              <p className="text-xs text-gray-500 uppercase font-semibold tracking-wider mb-1">Invoice Amount</p>
-              <p className="text-3xl font-bold text-emerald-600">{formatCurrency(invoice.totalAmount)}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-gray-500 uppercase font-semibold tracking-wider mb-1">Invoice No</p>
-              <p className="font-medium">{invoice.invoiceNumber}</p>
-              <p className="text-sm text-gray-500">{new Date(invoice.date).toLocaleDateString('en-IN')}</p>
-            </div>
-          </div>
-
-          <div className="mb-8 p-4 bg-gray-50 rounded-2xl">
-            <p className="text-xs text-gray-500 uppercase font-semibold tracking-wider mb-2">Billed To</p>
-            <p className="font-semibold">{invoice.customer.name}</p>
-            {invoice.customer.phone && <p className="text-sm text-gray-600">{invoice.customer.phone}</p>}
-          </div>
-
-          <div className="space-y-4 mb-8">
-            <p className="text-xs text-gray-500 uppercase font-semibold tracking-wider">Order Items</p>
-            <div className="space-y-3">
-              {invoice.items.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-start pb-3 border-b border-gray-100 last:border-0 last:pb-0">
-                  <div className="flex-1 pr-4">
-                    <p className="font-medium text-sm">{item.name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{item.quantity} x {formatCurrency(item.rate)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium text-sm">{formatCurrency(item.amount)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="border-t border-gray-100 pt-4 space-y-2 text-sm">
-            <div className="flex justify-between text-gray-600">
-              <span>Subtotal</span>
-              <span>{formatCurrency(invoice.subtotal)}</span>
-            </div>
-            {invoice.taxAmount > 0 && (
-              <div className="flex justify-between text-gray-600">
-                <span>Tax</span>
-                <span>{formatCurrency(invoice.taxAmount)}</span>
-              </div>
-            )}
-            {invoice.discountAmount > 0 && (
-              <div className="flex justify-between text-emerald-600">
-                <span>Discount</span>
-                <span>-{formatCurrency(invoice.discountAmount)}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-bold text-lg pt-2 mt-2 border-t border-gray-100">
-              <span>Total</span>
-              <span>{formatCurrency(invoice.totalAmount)}</span>
-            </div>
+    <div className="min-h-screen bg-slate-100 px-3 py-5 text-slate-950 sm:px-6 sm:py-8">
+      <main className="mx-auto max-w-5xl">
+        <div className="overflow-x-auto border border-slate-200 bg-white shadow-sm">
+          <div ref={invoiceRef}>
+            <InvoiceTemplateB
+              invoiceData={invoiceTemplateData}
+              companyDetails={{
+                name: invoice.business.name,
+                address: invoice.business.address,
+                phone: invoice.business.phone,
+                logo: invoice.business.logo,
+                dateFormat: "DD MMMM YYYY",
+              }}
+            />
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="mt-4 print:hidden">
           <button
-            onClick={handleDownloadPdf}
-            disabled={downloading}
-            className="flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white p-4 rounded-2xl font-medium transition-colors disabled:opacity-70"
+            type="button"
+            onClick={() => handlePrint()}
+            className="inline-flex min-w-48 cursor-pointer items-center justify-center gap-2 rounded bg-primary px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
           >
-            {downloading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-            ) : (
-              <Download size={20} />
-            )}
-            Download PDF
+            <Printer size={17} />
+            Print / Save as PDF
           </button>
-          
-          {invoice.business.website && (
-            <a
-              href={invoice.business.website}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 p-4 rounded-2xl font-medium transition-colors"
-            >
-              <ShoppingBag size={20} />
-              Shop Online
-            </a>
-          )}
         </div>
-
-        {invoice.business.instagram && (
-          <a
-            href={invoice.business.instagram}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 bg-white hover:bg-gray-50 border border-gray-200 text-pink-600 p-4 rounded-2xl font-medium transition-colors"
-          >
-            <Instagram size={20} />
-            Follow us on Instagram
-          </a>
-        )}
-
-      </div>
+      </main>
     </div>
   );
 };

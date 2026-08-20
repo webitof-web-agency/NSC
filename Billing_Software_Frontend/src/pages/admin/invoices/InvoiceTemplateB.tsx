@@ -9,9 +9,16 @@ import logoImage from '@assets/images/logo.png';
 import { resolveAssetUrl } from '@utils/assetUrl';
 
 type InvoiceDetailsProps = {
-    invoiceData: InvoiceData
+    invoiceData: InvoiceData;
+    companyDetails?: {
+        name?: string;
+        address?: string;
+        phone?: string;
+        logo?: string;
+        dateFormat?: string;
+    };
 }
-const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData }) => {
+const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData, companyDetails }) => {
     const { data: systemSettings } = useSelector((state: RootState) => state.systemSettings);
     const cachedSettings = (() => {
         if (typeof window === "undefined") return null;
@@ -35,9 +42,19 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData }) => {
         invoiceData?.shippingAddress &&
         Object.values(invoiceData.shippingAddress).some((value) => String(value || "").trim() !== "")
     );
-    const companyName = systemSettings?.company?.companyName || cachedSettings?.company?.companyName || "N/A";
-    const companyAddress = systemSettings?.company?.address || cachedSettings?.company?.address || "N/A";
-    const companyPhone = systemSettings?.company?.phone || cachedSettings?.company?.phone || "N/A";
+    const companyName = companyDetails?.name || systemSettings?.company?.companyName || cachedSettings?.company?.companyName || "N/A";
+    const companyAddress = companyDetails?.address || systemSettings?.company?.address || cachedSettings?.company?.address || "N/A";
+    const companyPhone = companyDetails?.phone || systemSettings?.company?.phone || cachedSettings?.company?.phone || "N/A";
+    const companyLogo =
+        resolveAssetUrl(companyDetails?.logo) ||
+        resolveAssetUrl(systemSettings?.company?.siteLogo) ||
+        resolveAssetUrl(systemSettings?.company?.favicon) ||
+        logoImage;
+    const invoiceDateFormat =
+        companyDetails?.dateFormat ||
+        systemSettings?.dateFormat?.format ||
+        cachedSettings?.dateFormat?.format ||
+        'DD-MM-YYYY';
     const InvoiceWrapper = styled.div`
     p{
       font-size: 12px;
@@ -53,11 +70,7 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData }) => {
                 {/* Row 1: Logo + Title */}
                 <div className="flex justify-between items-center">
                     <img
-                        src={
-                            resolveAssetUrl(systemSettings?.company?.siteLogo) ||
-                            resolveAssetUrl(systemSettings?.company?.favicon) ||
-                            logoImage
-                        }
+                        src={companyLogo}
                         alt="Company Logo"
                         className="w-32 h-auto"
                     />
@@ -68,7 +81,7 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData }) => {
                 <div className="flex justify-between items-center mt-2 text-sm text-gray-600">
                     <p className="text-xs">Original For Recipient</p>
                     <div className="flex items-center gap-4">
-                        <p>Date: {formatDate(invoiceData?.invoiceDate, systemSettings?.dateFormat.format ?? 'DD-MM-YYYY')}</p>
+                        <p>Date: {formatDate(invoiceData?.invoiceDate, invoiceDateFormat)}</p>
                         <p>
                             Invoice No: {invoiceData?.invoiceNumber}
                         </p>
@@ -143,7 +156,7 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData }) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {exchangeOriginalItems.map((item: any, index: number) => (
+                                {exchangeOriginalItems.map((item, index) => (
                                     <tr key={item.id || `prev-${index}`} className="border-b border-gray-200">
                                         <td className="p-3">{index + 1}</td>
                                         <td className="p-3 font-medium">{item.name}<p className="text-xs text-gray-500">{item.variantName}</p></td>

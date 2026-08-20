@@ -1035,7 +1035,7 @@ const updateInvoice = async (req, res) => {
       referenceNo,
       items: mergedItems,
       status,
-      payment_method,
+      ...(existingInvoice.status === "DRAFT" ? { payment_method } : {}),
       taxableAmount: calculatedTaxableAmount,
       TotalAmount: calculatedTotalAmount,
       vat: calculatedVat,
@@ -1069,9 +1069,11 @@ const updateInvoice = async (req, res) => {
       userId,
       taxType: taxType || existingInvoice.taxType || "GST",     // ✅ Save tax type
       gstType: (taxType || existingInvoice.taxType) === "Non-GST" ? null : (gstType || existingInvoice.gstType || "Exclusive"), // ✅ Save GST mode only for GST, null for Non-GST
-      cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
-      cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
-      upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
+      ...(existingInvoice.status === "DRAFT" ? {
+        cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
+        cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
+        upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
+      } : {}),
     };
 
     const parsedExchangeOriginalItems = (() => {
@@ -1100,9 +1102,9 @@ const updateInvoice = async (req, res) => {
       updateData.exchangeOriginalItems = parsedExchangeOriginalItemsWithSnapshots;
     }
 
-    const skipExchangeDetection = String(req.body.skipExchangeDetection || "")
-      .trim()
-      .toLowerCase() === "true";
+    const skipExchangeDetection = req.body.skipExchangeDetection !== undefined 
+      ? String(req.body.skipExchangeDetection).trim().toLowerCase() === "true"
+      : true; // Default to true so regular edits don't become exchanges
 
     const isExchangeTransaction =
       !skipExchangeDetection &&
@@ -1482,9 +1484,9 @@ const updateInvoice = async (req, res) => {
       }
     }
 
-    const skipPaymentSync = String(req.body.skipPaymentSync || "")
-      .trim()
-      .toLowerCase() === "true";
+    const skipPaymentSync = req.body.skipPaymentSync !== undefined
+      ? String(req.body.skipPaymentSync).trim().toLowerCase() === "true"
+      : true; // Default to true so regular edits don't magically change payments without explicit payment actions
 
     // ✅ Update existing invoice payment amount if invoice total changed (non-exchange)
     if (invoice && !isExchangeTransaction && !skipPaymentSync) {

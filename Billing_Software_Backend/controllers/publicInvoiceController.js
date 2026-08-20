@@ -2,53 +2,77 @@ const Invoice = require('../models/Invoice');
 const CompanySettings = require('../models/CompanySettings');
 const { generateDocumentPdfBuffer } = require('../whatsapp-module/utils/pdfGenerator');
 
+function serializePublicItem(item) {
+  return {
+    id: item._id || item.rowId || '',
+    name: item.name || item.productName || '',
+    variantName: item.variantName || '',
+    unit: item.unit || '',
+    quantity: Number(item.qty ?? item.quantity ?? 0),
+    rate: Number(item.rate ?? item.unitPrice ?? 0),
+    amount: Number(item.amount ?? item.totalAmount ?? item.totalPrice ?? 0),
+    discount: Number(item.discount ?? 0),
+    taxAmount: Number(item.tax ?? item.taxAmount ?? 0),
+    taxGroupId: item.tax_group_id || '',
+    discountType: item.discount_type || 'Fixed',
+    discountValue: item.discount_value ?? null,
+    hsnCode: item.hsn_code || item.hsnCode || ''
+  };
+}
+
 function serializePublicInvoice(invoice, businessSettings) {
-  // Return ONLY safe fields necessary for the public page
+  const customer =
+    invoice.billTo && typeof invoice.billTo === 'object'
+      ? invoice.billTo
+      : invoice.customerId && typeof invoice.customerId === 'object'
+        ? invoice.customerId
+        : null;
+
+  // Return only the safe invoice fields required by the public NSC template.
   return {
     invoiceNumber: invoice.invoiceNumber,
     date: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     status: invoice.status,
-    totalAmount: invoice.totalAmount,
-    subtotal: invoice.subtotal,
-    taxAmount: invoice.taxAmount,
-    discountAmount: invoice.discountAmount,
-    roundOff: invoice.roundOff,
-    
-    // Customer info (only what's printed on invoice)
+    paymentMethod: invoice.payment_method || '',
+    totalAmount: Number(invoice.TotalAmount ?? invoice.totalAmount ?? 0),
+    subtotal: Number(invoice.taxableAmount ?? invoice.subtotal ?? 0),
+    taxAmount: Number(invoice.vat ?? invoice.taxAmount ?? 0),
+    discountAmount: Number(invoice.totalDiscount ?? invoice.discountAmount ?? 0),
+    roundOff: invoice.roundOff || false,
+    termsAndCondition: invoice.termsAndCondition || '',
+    notes: invoice.notes || '',
+    customerGstin: invoice.customerGstin || '',
+    ewayBillNumber: invoice.ewayBillNumber || '',
+    shippingAddress: invoice.shippingAddress || null,
+    exchangeOldTotal: invoice.exchangeOldTotal ?? null,
+    exchangeNewTotal: invoice.exchangeNewTotal ?? null,
+
     customer: {
-      name: invoice.customer?.name || invoice.customerName,
-      phone: invoice.customer?.phoneNumber || invoice.customerPhone,
-      address: invoice.billingAddress || invoice.customer?.address,
-      state: invoice.customer?.state,
-      gstNumber: invoice.customer?.gstNumber
+      name: customer?.name || invoice.customerName || '',
+      phone: customer?.phone || customer?.phoneNumber || invoice.customerPhone || '',
+      address: customer?.billingAddress?.addressLine1 || customer?.address || invoice.billingAddress || '',
+      state: customer?.billingAddress?.state || customer?.state || '',
+      gstNumber: customer?.gstin || customer?.gstNumber || invoice.customerGstin || '',
+      billingAddress: customer?.billingAddress || null
     },
-    
-    // Items
-    items: (invoice.products || []).map(p => ({
-      name: p.productName || p.product?.name,
-      quantity: p.quantity,
-      rate: p.unitPrice || p.rate,
-      amount: p.totalPrice || p.amount,
-      discount: p.discount,
-      taxAmount: p.taxAmount,
-      hsnCode: p.hsnCode || p.product?.hsnCode
-    })),
-    
-    // Business info
+
+    items: (invoice.items || []).map(serializePublicItem),
+    exchangeOriginalItems: (invoice.exchangeOriginalItems || []).map(serializePublicItem),
+
     business: {
       name: businessSettings?.companyName || 'Naresh Saree Collection',
-      logo: businessSettings?.companyLogo,
-      phone: businessSettings?.contactNumber,
-      email: businessSettings?.email,
-      address: businessSettings?.address,
-      state: businessSettings?.state,
-      gstNumber: businessSettings?.gstNumber,
-      instagram: businessSettings?.socialLinks?.instagram || businessSettings?.instagramUrl,
-      website: businessSettings?.website
+      logo: businessSettings?.siteLogo || businessSettings?.favicon || businessSettings?.companyLogo || '',
+      phone: businessSettings?.phone || businessSettings?.contactNumber || '',
+      email: businessSettings?.email || '',
+      address: businessSettings?.address || '',
+      state: businessSettings?.state || '',
+      gstNumber: businessSettings?.gstin || businessSettings?.gstNumber || ''
     }
   };
 }
+
+exports.serializePublicInvoice = serializePublicInvoice;
 
 exports.getPublicInvoice = async (req, res) => {
   try {
@@ -68,14 +92,16 @@ exports.getPublicInvoice = async (req, res) => {
     const invoice = await Invoice.findOne({ 
       publicShareId, 
       publicShareEnabled: true 
-    }).populate('customer').populate('products.product');
+    }).populate('billTo').lean();
 
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
     // Attempt to get business settings
-    const companySettings = await CompanySettings.findOne() || {};
+    const companySettings = (await CompanySettings.findOne()
+      .sort({ createdAt: -1 })
+      .lean()) || {};
 
     const publicDto = serializePublicInvoice(invoice, companySettings);
 
@@ -107,29 +133,33 @@ exports.downloadPublicInvoicePdf = async (req, res) => {
     const invoice = await Invoice.findOne({ 
       publicShareId, 
       publicShareEnabled: true 
-    }).populate('customer').populate('products.product');
+    }).populate('billTo').lean();
 
     if (!invoice) {
       return res.status(404).send('Invoice not found');
     }
 
-    const companySettings = await CompanySettings.findOne() || {};
+    const companySettings = (await CompanySettings.findOne()
+      .sort({ createdAt: -1 })
+      .lean()) || {};
+
+    const publicInvoice = serializePublicInvoice(invoice, companySettings);
 
     // Build the document context for the existing generator
     const documentContext = {
-      companyName: companySettings?.companyName || 'Naresh Saree Collection',
+      companyName: publicInvoice.business.name,
       documentLabel: 'Invoice',
-      documentNumber: invoice.invoiceNumber,
-      customerName: invoice.customer?.name || invoice.customerName,
-      customerPhone: invoice.customer?.phoneNumber || invoice.customerPhone,
-      date: invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString() : '',
-      amount: invoice.totalAmount,
-      status: invoice.status,
-      items: (invoice.products || []).map(p => ({
-        name: p.productName || p.product?.name,
-        qty: p.quantity,
-        rate: p.unitPrice || p.rate,
-        amount: p.totalPrice || p.amount
+      documentNumber: publicInvoice.invoiceNumber,
+      customerName: publicInvoice.customer.name,
+      customerPhone: publicInvoice.customer.phone,
+      date: publicInvoice.date ? new Date(publicInvoice.date).toLocaleDateString() : '',
+      amount: publicInvoice.totalAmount,
+      status: publicInvoice.status,
+      items: publicInvoice.items.map(item => ({
+        name: item.name,
+        qty: item.quantity,
+        rate: item.rate,
+        amount: item.amount
       }))
     };
 
