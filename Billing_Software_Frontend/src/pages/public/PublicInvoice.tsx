@@ -1,75 +1,64 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
-import { FileX2, Printer } from "lucide-react";
+import { FileX2 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import Constants from "@constants/api";
 import type { InvoiceData, Item } from "@models/invoice";
 import InvoiceTemplateB from "@pages/admin/invoices/InvoiceTemplateB";
+import PublicInvoicePortal, {
+  type PublicAddress,
+  type PublicInvoiceData,
+  type PublicInvoiceItem,
+  type PublicPortalBranding,
+} from "./PublicInvoicePortal";
 
-interface PublicAddress {
-  name?: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  state?: string;
-  country?: string;
-  pincode?: string;
-}
+const defaultPortalBranding: PublicPortalBranding = {
+  activeBannerType: "none",
+  bannerImage: "",
+  bannerVideo: "",
+  footerLogo: "",
+  heroTitle: "",
+  heroSubtitle: "",
+  footerText: "",
+  footerAddress: "",
+  footerPhone: "",
+  footerPhoneAlt: "",
+  footerEmail: "",
+  footerWebsite: "",
+  facebookUrl: "",
+  instagramUrl: "",
+  youtubeUrl: "",
+  whatsappNumber: "",
+  shopOnlineUrl: "",
+  portalAccentColor: "#A43275",
+  showPromotionalBanner: true,
+  showPromotionalGallery: true,
+  showShopOnline: true,
+  showSocialLinks: true,
+  enableCustomerHistory: false,
+  promoGallery: [],
+};
 
-interface PublicInvoiceItem {
-  id?: string;
-  name: string;
-  variantName?: string;
-  unit?: string;
-  quantity: number;
-  rate: number;
-  amount: number;
-  discount: number;
-  taxAmount: number;
-  taxGroupId?: string;
-  discountType?: string;
-  discountValue?: number | null;
-  hsnCode: string;
-}
-
-interface PublicInvoiceData {
-  invoiceNumber: string;
-  date: string;
-  dueDate: string;
-  status: string;
-  paymentMethod?: string;
-  totalAmount: number;
-  subtotal: number;
-  taxAmount: number;
-  discountAmount: number;
-  customerGstin?: string;
-  ewayBillNumber?: string;
-  shippingAddress?: PublicAddress | null;
-  termsAndCondition?: string;
-  notes?: string;
-  exchangeOldTotal?: number | null;
-  exchangeNewTotal?: number | null;
-  customer: {
-    name: string;
-    phone: string;
-    address: string;
-    state: string;
-    gstNumber: string;
-    billingAddress?: PublicAddress | null;
-  };
-  items: PublicInvoiceItem[];
-  exchangeOriginalItems?: PublicInvoiceItem[];
-  business: {
-    name: string;
-    logo?: string;
-    phone: string;
-    email: string;
-    address: string;
-    state: string;
-    gstNumber: string;
-  };
-}
+const normalizePortalInvoice = (invoice: PublicInvoiceData): PublicInvoiceData => ({
+  ...invoice,
+  payment: invoice.payment || {
+    method: invoice.paymentMethod || "",
+    totalPaid: ["PAID", "EXCHANGE"].includes(invoice.status) ? invoice.totalAmount : 0,
+    balanceAmount: ["PAID", "EXCHANGE"].includes(invoice.status) ? 0 : invoice.totalAmount,
+  },
+  portalBranding: {
+    ...defaultPortalBranding,
+    ...(invoice.portalBranding || {}),
+    promoGallery: invoice.portalBranding?.promoGallery || [],
+  },
+  history: invoice.history || {
+    requested: false,
+    enabled: false,
+    code: "OTP_DELIVERY_NOT_CONFIGURED",
+    message: "Invoice history is not enabled by this business.",
+  },
+});
 
 const emptyAddress = (): NonNullable<InvoiceData["shippingAddress"]> => ({
   name: "",
@@ -175,7 +164,7 @@ const PublicInvoice = () => {
           `${Constants.BASE_URL}/api/public/invoices/${publicShareId}`,
         );
         if (response.data.success) {
-          setInvoice(response.data.data);
+          setInvoice(normalizePortalInvoice(response.data.data));
         } else {
           setError(true);
         }
@@ -192,16 +181,31 @@ const PublicInvoice = () => {
   }, [publicShareId]);
 
   useEffect(() => {
-    if (invoice) {
-      document.title = `Invoice ${invoice.invoiceNumber} - ${invoice.business.name}`;
-      let meta = document.querySelector('meta[name="robots"]');
-      if (!meta) {
-        meta = document.createElement("meta");
-        meta.setAttribute("name", "robots");
-        document.head.appendChild(meta);
-      }
-      meta.setAttribute("content", "noindex,nofollow");
+    const previousTitle = document.title;
+    let meta = document.querySelector('meta[name="robots"]');
+    const createdMeta = !meta;
+    const previousRobotsContent = meta?.getAttribute("content");
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "robots");
+      document.head.appendChild(meta);
     }
+    meta.setAttribute("content", "noindex,nofollow");
+
+    return () => {
+      document.title = previousTitle;
+      if (createdMeta) {
+        meta?.remove();
+      } else if (previousRobotsContent === null) {
+        meta?.removeAttribute("content");
+      } else {
+        meta?.setAttribute("content", previousRobotsContent);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (invoice) document.title = `Invoice ${invoice.invoiceNumber} - ${invoice.business.name}`;
   }, [invoice]);
 
   const handlePrint = useReactToPrint({
@@ -220,7 +224,7 @@ const PublicInvoice = () => {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
+      <div className="flex min-h-[100dvh] items-center justify-center bg-[#f8f6f3]">
         <div
           className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"
           aria-label="Loading invoice"
@@ -232,12 +236,12 @@ const PublicInvoice = () => {
 
   if (error || !invoice) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
-        <div className="max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-          <FileX2 className="mx-auto mb-4 text-slate-400" size={40} />
-          <h1 className="mb-2 text-xl font-bold text-slate-950">Invoice Not Found</h1>
-          <p className="text-sm text-slate-600">
-            The invoice does not exist or this public link is no longer active.
+      <div className="flex min-h-[100dvh] items-center justify-center bg-[#f8f6f3] px-4">
+        <div className="w-full max-w-[420px] rounded-2xl border border-stone-200 bg-white p-7 text-center shadow-sm">
+          <FileX2 className="mx-auto mb-4 text-stone-400" size={40} />
+          <h1 className="mb-2 font-serif text-xl font-bold text-stone-950">Invoice Not Found</h1>
+          <p className="text-sm leading-6 text-stone-600">
+            This invoice link is invalid, expired, or no longer active.
           </p>
         </div>
       </div>
@@ -247,34 +251,25 @@ const PublicInvoice = () => {
   const invoiceTemplateData = toInvoiceTemplateData(invoice);
 
   return (
-    <div className="min-h-screen bg-slate-100 px-2 py-3 text-slate-950 sm:px-6 sm:py-8">
-      <main className="mx-auto max-w-5xl">
-        <div className="overflow-hidden border border-slate-200 bg-white shadow-sm">
-          <div ref={invoiceRef}>
-            <InvoiceTemplateB
-              invoiceData={invoiceTemplateData}
-              companyDetails={{
-                name: invoice.business.name,
-                address: invoice.business.address,
-                phone: invoice.business.phone,
-                logo: invoice.business.logo,
-                dateFormat: "DD MMMM YYYY",
-              }}
-            />
-          </div>
-        </div>
+    <div className="min-h-[100dvh] overflow-x-hidden bg-[#eeeae5]">
+      <PublicInvoicePortal invoice={invoice} onDownload={() => handlePrint()} />
 
-        <div className="mt-4 print:hidden">
-          <button
-            type="button"
-            onClick={() => handlePrint()}
-            className="inline-flex min-h-12 min-w-48 w-full cursor-pointer items-center justify-center gap-2 rounded bg-primary px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 sm:w-auto"
-          >
-            <Printer size={17} />
-            Print / Save as PDF
-          </button>
-        </div>
-      </main>
+      <div
+        ref={invoiceRef}
+        aria-hidden="true"
+        className="portal-print-document pointer-events-none fixed left-[-10000px] top-0 w-[210mm] bg-white print:static print:w-auto"
+      >
+        <InvoiceTemplateB
+          invoiceData={invoiceTemplateData}
+          companyDetails={{
+            name: invoice.business.name,
+            address: invoice.business.address,
+            phone: invoice.business.phone,
+            logo: invoice.business.logo,
+            dateFormat: "DD MMMM YYYY",
+          }}
+        />
+      </div>
     </div>
   );
 };

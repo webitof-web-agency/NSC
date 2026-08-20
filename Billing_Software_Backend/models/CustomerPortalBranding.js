@@ -114,6 +114,38 @@ const customerPortalBrandingSchema = new mongoose.Schema({
         default: '',
         trim: true,
     },
+    shopOnlineUrl: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 2048,
+    },
+    portalAccentColor: {
+        type: String,
+        default: '#A43275',
+        trim: true,
+        match: /^#[0-9A-Fa-f]{6}$/,
+    },
+    showPromotionalBanner: {
+        type: Boolean,
+        default: true,
+    },
+    showPromotionalGallery: {
+        type: Boolean,
+        default: true,
+    },
+    showShopOnline: {
+        type: Boolean,
+        default: true,
+    },
+    showSocialLinks: {
+        type: Boolean,
+        default: true,
+    },
+    enableCustomerHistory: {
+        type: Boolean,
+        default: false,
+    },
     promoGallery: {
         type: [customerPortalPromoGalleryItemSchema],
         default: [],

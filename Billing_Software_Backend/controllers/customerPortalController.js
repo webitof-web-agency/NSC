@@ -9,8 +9,27 @@ const DateFormat = require('@models/DateFormat');
 const TimeFormat = require('@models/TimeFormat');
 const Timezone = require('@models/Timezone');
 const generateToken = require('@utils/generateToken');
+const {
+  DEFAULT_PORTAL_ACCENT_COLOR,
+  sanitizeHttpUrl,
+} = require('@utils/publicInvoicePortal');
 const fs = require('fs');
 const path = require('path');
+
+const PORTAL_IMAGE_MAX_SIZE = 10 * 1024 * 1024;
+const PORTAL_VIDEO_MAX_SIZE = 50 * 1024 * 1024;
+
+const parseFormBoolean = (value, fallback) => {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return fallback;
+};
+
+const validateOptionalHttpUrl = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return sanitizeHttpUrl(trimmed) || null;
+};
 
 const buildAbsoluteFileUrl = (req, filePath) => {
   if (!filePath) return '';
@@ -35,6 +54,13 @@ const extractCustomerPortalBranding = (branding, req) => ({
   instagramUrl: branding?.instagramUrl || '',
   youtubeUrl: branding?.youtubeUrl || '',
   whatsappNumber: branding?.whatsappNumber || '',
+  shopOnlineUrl: branding?.shopOnlineUrl || '',
+  portalAccentColor: branding?.portalAccentColor || DEFAULT_PORTAL_ACCENT_COLOR,
+  showPromotionalBanner: branding?.showPromotionalBanner !== false,
+  showPromotionalGallery: branding?.showPromotionalGallery !== false,
+  showShopOnline: branding?.showShopOnline !== false,
+  showSocialLinks: branding?.showSocialLinks !== false,
+  enableCustomerHistory: branding?.enableCustomerHistory === true,
   promoGallery: (branding?.promoGallery || [])
     .slice()
     .sort((a, b) => Number(a?.order || 0) - Number(b?.order || 0))
@@ -102,6 +128,13 @@ const buildLegacyBrandingPayload = (settings) => ({
   instagramUrl: settings?.customerPortalInstagramUrl || '',
   youtubeUrl: settings?.customerPortalYoutubeUrl || '',
   whatsappNumber: settings?.customerPortalWhatsappNumber || '',
+  shopOnlineUrl: settings?.customerPortalShopOnlineUrl || '',
+  portalAccentColor: settings?.customerPortalAccentColor || DEFAULT_PORTAL_ACCENT_COLOR,
+  showPromotionalBanner: settings?.customerPortalShowPromotionalBanner !== false,
+  showPromotionalGallery: settings?.customerPortalShowPromotionalGallery !== false,
+  showShopOnline: settings?.customerPortalShowShopOnline !== false,
+  showSocialLinks: settings?.customerPortalShowSocialLinks !== false,
+  enableCustomerHistory: settings?.customerPortalEnableCustomerHistory === true,
   promoGallery: normalizePromoGalleryItems(settings?.customerPortalPromoGallery || []),
 });
 
@@ -369,8 +402,42 @@ const updateAdminCustomerPortalBranding = async (req, res) => {
   try {
     const branding = await findOrCreateCustomerPortalBrandingForUser(req.user);
 
+    const activeBannerType = String(req.body.activeBannerType || branding.activeBannerType || 'none');
+    if (!['none', 'image', 'video'].includes(activeBannerType)) {
+      cleanupUploadedFiles(req.files);
+      return res.status(400).json({ message: 'Invalid banner type.' });
+    }
+
+    const accentColor = String(req.body.portalAccentColor || branding.portalAccentColor || DEFAULT_PORTAL_ACCENT_COLOR).trim();
+    if (!/^#[0-9A-Fa-f]{6}$/.test(accentColor)) {
+      cleanupUploadedFiles(req.files);
+      return res.status(400).json({ message: 'Accent color must be a six-digit hex color.' });
+    }
+
+    const urlFields = ['footerWebsite', 'facebookUrl', 'instagramUrl', 'youtubeUrl', 'shopOnlineUrl'];
+    const normalizedUrls = {};
+    for (const field of urlFields) {
+      const normalizedUrl = validateOptionalHttpUrl(req.body[field]);
+      if (normalizedUrl === null) {
+        cleanupUploadedFiles(req.files);
+        return res.status(400).json({ message: `${field} must use a valid http or https URL.` });
+      }
+      normalizedUrls[field] = normalizedUrl;
+    }
+
+    const bannerImageFile = req.files?.bannerImage?.[0];
+    const bannerVideoFile = req.files?.bannerVideo?.[0];
+    const footerLogoFile = req.files?.footerLogo?.[0];
+    const oversizedImage = [bannerImageFile, footerLogoFile].find((file) => file && file.size > PORTAL_IMAGE_MAX_SIZE);
+    if (oversizedImage || (bannerVideoFile && bannerVideoFile.size > PORTAL_VIDEO_MAX_SIZE)) {
+      cleanupUploadedFiles(req.files);
+      return res.status(400).json({
+        message: oversizedImage ? 'Images must be 10MB or smaller.' : 'Videos must be 50MB or smaller.',
+      });
+    }
+
     const updates = {
-      activeBannerType: req.body.activeBannerType || branding.activeBannerType || 'none',
+      activeBannerType,
       heroTitle: req.body.heroTitle || '',
       heroSubtitle: req.body.heroSubtitle || '',
       footerText: req.body.footerText || '',
@@ -378,34 +445,44 @@ const updateAdminCustomerPortalBranding = async (req, res) => {
       footerPhone: req.body.footerPhone || '',
       footerPhoneAlt: req.body.footerPhoneAlt || '',
       footerEmail: req.body.footerEmail || '',
-      footerWebsite: req.body.footerWebsite || '',
-      facebookUrl: req.body.facebookUrl || '',
-      instagramUrl: req.body.instagramUrl || '',
-      youtubeUrl: req.body.youtubeUrl || '',
+      ...normalizedUrls,
       whatsappNumber: req.body.whatsappNumber || '',
+      portalAccentColor: accentColor.toUpperCase(),
+      showPromotionalBanner: parseFormBoolean(req.body.showPromotionalBanner, branding.showPromotionalBanner !== false),
+      showPromotionalGallery: parseFormBoolean(req.body.showPromotionalGallery, branding.showPromotionalGallery !== false),
+      showShopOnline: parseFormBoolean(req.body.showShopOnline, branding.showShopOnline !== false),
+      showSocialLinks: parseFormBoolean(req.body.showSocialLinks, branding.showSocialLinks !== false),
+      enableCustomerHistory: parseFormBoolean(req.body.enableCustomerHistory, branding.enableCustomerHistory === true),
     };
-
-    const bannerImageFile = req.files?.bannerImage?.[0];
-    const bannerVideoFile = req.files?.bannerVideo?.[0];
-    const footerLogoFile = req.files?.footerLogo?.[0];
+    const oldFilesToDelete = [];
 
     if (bannerImageFile) {
-      if (branding.bannerImage) deleteUploadedFile(branding.bannerImage);
+      if (branding.bannerImage) oldFilesToDelete.push(branding.bannerImage);
       updates.bannerImage = `/uploads/portal/${bannerImageFile.filename}`;
+    } else if (parseFormBoolean(req.body.removeBannerImage, false)) {
+      if (branding.bannerImage) oldFilesToDelete.push(branding.bannerImage);
+      updates.bannerImage = '';
     }
 
     if (bannerVideoFile) {
-      if (branding.bannerVideo) deleteUploadedFile(branding.bannerVideo);
+      if (branding.bannerVideo) oldFilesToDelete.push(branding.bannerVideo);
       updates.bannerVideo = `/uploads/portal/${bannerVideoFile.filename}`;
+    } else if (parseFormBoolean(req.body.removeBannerVideo, false)) {
+      if (branding.bannerVideo) oldFilesToDelete.push(branding.bannerVideo);
+      updates.bannerVideo = '';
     }
 
     if (footerLogoFile) {
-      if (branding.footerLogo) deleteUploadedFile(branding.footerLogo);
+      if (branding.footerLogo) oldFilesToDelete.push(branding.footerLogo);
       updates.footerLogo = `/uploads/portal/${footerLogoFile.filename}`;
+    } else if (parseFormBoolean(req.body.removeFooterLogo, false)) {
+      if (branding.footerLogo) oldFilesToDelete.push(branding.footerLogo);
+      updates.footerLogo = '';
     }
 
     Object.assign(branding, updates);
     await branding.save();
+    oldFilesToDelete.forEach(deleteUploadedFile);
 
     return res.status(200).json({
       success: true,
@@ -434,6 +511,14 @@ const addPromoGalleryItem = async (req, res) => {
     if (!['image', 'video'].includes(type)) {
       if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(400).json({ message: 'Invalid promo media type.' });
+    }
+
+    const maximumSize = type === 'video' ? PORTAL_VIDEO_MAX_SIZE : PORTAL_IMAGE_MAX_SIZE;
+    if (req.file.size > maximumSize) {
+      if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        message: type === 'video' ? 'Videos must be 50MB or smaller.' : 'Images must be 10MB or smaller.',
+      });
     }
 
     const item = {
@@ -503,6 +588,14 @@ const replacePromoGalleryItemMedia = async (req, res) => {
     if (!['image', 'video'].includes(type)) {
       if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(400).json({ message: 'Invalid promo media type.' });
+    }
+
+    const maximumSize = type === 'video' ? PORTAL_VIDEO_MAX_SIZE : PORTAL_IMAGE_MAX_SIZE;
+    if (req.file.size > maximumSize) {
+      if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        message: type === 'video' ? 'Videos must be 50MB or smaller.' : 'Images must be 10MB or smaller.',
+      });
     }
 
     const oldUrl = item.url;

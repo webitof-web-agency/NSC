@@ -11,14 +11,28 @@ if (!fs.existsSync(promoUploadDir)) {
   fs.mkdirSync(promoUploadDir, { recursive: true });
 }
 
+const mimeExtensions = {
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/ogg': '.ogv',
+  'video/quicktime': '.mov',
+};
+
+const secureFileName = (file) => {
+  const ext = mimeExtensions[file.mimetype] || '';
+  return `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+};
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, uniqueName);
+    cb(null, secureFileName(file));
   }
 });
 
@@ -27,16 +41,14 @@ const promoStorage = multer.diskStorage({
     cb(null, promoUploadDir);
   },
   filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, uniqueName);
+    cb(null, secureFileName(file));
   }
 });
 
 const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
 const BRANDING_IMAGE_MAX_SIZE = 10 * 1024 * 1024;
-const BRANDING_VIDEO_MAX_SIZE = 100 * 1024 * 1024;
+const BRANDING_VIDEO_MAX_SIZE = 50 * 1024 * 1024;
 
 const validateFileByKind = (kind, mimetype, cb) => {
   if (kind === 'video') {
@@ -105,7 +117,7 @@ const handleCustomerPortalUploadError = (err, req, res, next) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
       const requestedType = String(req.body?.type || '').trim().toLowerCase();
       const isImageRequest = String(req.body?.type || '').trim().toLowerCase() === 'image' || req.file?.fieldname === 'bannerImage' || req.file?.fieldname === 'footerLogo';
-      const maxSizeLabel = isImageRequest ? '10MB' : '100MB';
+      const maxSizeLabel = isImageRequest ? '10MB' : '50MB';
       return res.status(400).json({ success: false, message: `File too large. Maximum size is ${maxSizeLabel}.` });
     }
     return res.status(400).json({ success: false, message: `File upload error: ${err.message}` });

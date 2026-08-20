@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Constants from '@constants/api';
 import SubmitButton from '@components/admin/SubmitButton';
@@ -8,8 +8,9 @@ import type { RootState } from '@store/index';
 import { hasPermission } from '@utils/hasPermission';
 import {
     Image as ImageIcon, Video, UploadCloud, X, Monitor, Plus, Trash2, ArrowUp, ArrowDown, LoaderCircle, RefreshCw,
-    MapPin, Phone, Mail, Globe, Facebook, Instagram, Youtube,
-    MessageCircle, Layout, Eye, EyeOff, Sparkles, PlayCircle, Images
+    Phone, Mail, Globe, Facebook, Instagram, Youtube,
+    MessageCircle, Layout, EyeOff, Sparkles, PlayCircle, Images,
+    SlidersHorizontal, ShieldCheck, ShoppingBag
 } from 'lucide-react';
 
 
@@ -35,6 +36,13 @@ interface BrandingFormData {
     instagramUrl: string;
     youtubeUrl: string;
     whatsappNumber: string;
+    shopOnlineUrl: string;
+    portalAccentColor: string;
+    showPromotionalBanner: boolean;
+    showPromotionalGallery: boolean;
+    showShopOnline: boolean;
+    showSocialLinks: boolean;
+    enableCustomerHistory: boolean;
     bannerImage: File | null;
     bannerImagePreview: string;
     bannerVideo: File | null;
@@ -57,6 +65,13 @@ const initialState: BrandingFormData = {
     instagramUrl: '',
     youtubeUrl: '',
     whatsappNumber: '',
+    shopOnlineUrl: '',
+    portalAccentColor: '#A43275',
+    showPromotionalBanner: true,
+    showPromotionalGallery: true,
+    showShopOnline: true,
+    showSocialLinks: true,
+    enableCustomerHistory: false,
     bannerImage: null,
     bannerImagePreview: '',
     bannerVideo: null,
@@ -67,6 +82,13 @@ const initialState: BrandingFormData = {
 
 const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm text-gray-800 bg-white focus:outline-none focus:border-[#A43275] focus:ring-1 focus:ring-[#A43275]/20 transition placeholder-gray-400';
 const labelCls = 'block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide';
+
+const getRequestErrorMessage = (error: unknown, fallback: string) => {
+    if (axios.isAxiosError<{ message?: string }>(error)) {
+        return error.response?.data?.message || fallback;
+    }
+    return fallback;
+};
 
 /* ─── Upload Zone ─── */
 const UploadZone: React.FC<{
@@ -129,7 +151,7 @@ const UploadZone: React.FC<{
                     </div>
                     <div className="text-center">
                         <p className="text-sm font-medium text-gray-600">Click or drag to upload</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{isVideo ? 'MP4, WebM up to 100MB' : 'JPG, PNG, WebP up to 10MB'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{isVideo ? 'MP4, WebM up to 50MB' : 'JPG, PNG, WebP up to 10MB'}</p>
                     </div>
                     <div className="flex items-center gap-1.5 text-[#A43275] text-xs font-semibold">
                         <UploadCloud className="w-3.5 h-3.5" />
@@ -165,7 +187,7 @@ const SectionCard: React.FC<{ icon: React.ReactNode; title: string; description:
 );
 
 /* ─── Social Field ─── */
-const SocialField: React.FC<{ icon: React.ReactNode; label: string; name: string; value: string; placeholder: string; onChange: (e: any) => void }> = ({ icon, label, name, value, placeholder, onChange }) => (
+const SocialField: React.FC<{ icon: React.ReactNode; label: string; name: string; value: string; placeholder: string; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }> = ({ icon, label, name, value, placeholder, onChange }) => (
     <div>
         <label className={labelCls}>{label}</label>
         <div className="relative">
@@ -176,8 +198,8 @@ const SocialField: React.FC<{ icon: React.ReactNode; label: string; name: string
 );
 
 /* ─── Banner Type Toggle ─── */
-const BannerTypeToggle: React.FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => {
-    const options = [
+const BannerTypeToggle: React.FC<{ value: BrandingFormData['activeBannerType']; onChange: (v: BrandingFormData['activeBannerType']) => void }> = ({ value, onChange }) => {
+    const options: Array<{ v: BrandingFormData['activeBannerType']; icon: React.ReactNode; label: string }> = [
         { v: 'none', icon: <EyeOff className="w-4 h-4" />, label: 'None' },
         { v: 'image', icon: <ImageIcon className="w-4 h-4" />, label: 'Image' },
         { v: 'video', icon: <Video className="w-4 h-4" />, label: 'Video' },
@@ -202,11 +224,34 @@ const BannerTypeToggle: React.FC<{ value: string; onChange: (v: string) => void 
     );
 };
 
+const SettingToggle: React.FC<{
+    label: string;
+    description: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}> = ({ label, description, checked, onChange }) => (
+    <label className="flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3">
+        <span>
+            <span className="block text-sm font-semibold text-gray-800">{label}</span>
+            <span className="mt-0.5 block text-xs leading-5 text-gray-400">{description}</span>
+        </span>
+        <span className="relative mt-0.5 inline-flex shrink-0 items-center">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(event) => onChange(event.target.checked)}
+                className="peer sr-only"
+            />
+            <span className="h-6 w-11 rounded-full bg-gray-200 transition-colors peer-checked:bg-[#A43275] peer-focus-visible:ring-2 peer-focus-visible:ring-[#A43275]/40 peer-focus-visible:ring-offset-2" />
+            <span className="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
+        </span>
+    </label>
+);
+
 /* ─── Main Component ─── */
 const CustomerPortalBranding: React.FC = () => {
     const { token } = useSelector((state: RootState) => state.auth);
     const { data: systemSettings } = useSelector((state: RootState) => state.systemSettings);
-    const permissions = systemSettings?.permissions || [];
     const [formData, setFormData] = useState<BrandingFormData>(initialState);
     const [isSaving, setIsSaving] = useState(false);
     const [promoGallery, setPromoGallery] = useState<PromoGalleryItem[]>([]);
@@ -214,11 +259,15 @@ const CustomerPortalBranding: React.FC = () => {
     const [isPromoRefreshing, setIsPromoRefreshing] = useState(false);
     const [replacingPromoId, setReplacingPromoId] = useState<string | null>(null);
     const [pendingReplaceType, setPendingReplaceType] = useState<'image' | 'video' | null>(null);
+    const [removedAssets, setRemovedAssets] = useState<Array<'bannerImage' | 'bannerVideo' | 'footerLogo'>>([]);
     const imageUploadRef = useRef<HTMLInputElement>(null);
     const videoUploadRef = useRef<HTMLInputElement>(null);
     const replaceUploadRef = useRef<HTMLInputElement>(null);
 
-    const canEdit = useMemo(() => hasPermission(permissions, 'website-settings', 'edit'), [permissions]);
+    const canEdit = useMemo(
+        () => hasPermission(systemSettings?.permissions || [], 'website-settings', 'edit'),
+        [systemSettings?.permissions],
+    );
     const sortedPromoGallery = useMemo(() => [...promoGallery].sort((a, b) => a.order - b.order), [promoGallery]);
     const promoGalleryStats = useMemo(() => ({
         total: promoGallery.length,
@@ -226,7 +275,7 @@ const CustomerPortalBranding: React.FC = () => {
         videos: promoGallery.filter((item) => item.type === 'video').length,
     }), [promoGallery]);
 
-    const fetchBranding = async (showLoader = false) => {
+    const fetchBranding = useCallback(async (showLoader = false) => {
         try {
             if (showLoader) setIsPromoRefreshing(true);
             const response = await axios.get(Constants.ADMIN_CUSTOMER_PORTAL_BRANDING_URL, {
@@ -248,21 +297,29 @@ const CustomerPortalBranding: React.FC = () => {
                 instagramUrl: data.instagramUrl || '',
                 youtubeUrl: data.youtubeUrl || '',
                 whatsappNumber: data.whatsappNumber || '',
+                shopOnlineUrl: data.shopOnlineUrl || '',
+                portalAccentColor: data.portalAccentColor || '#A43275',
+                showPromotionalBanner: data.showPromotionalBanner !== false,
+                showPromotionalGallery: data.showPromotionalGallery !== false,
+                showShopOnline: data.showShopOnline !== false,
+                showSocialLinks: data.showSocialLinks !== false,
+                enableCustomerHistory: data.enableCustomerHistory === true,
                 bannerImagePreview: data.bannerImage || '',
                 bannerVideoPreview: data.bannerVideo || '',
                 footerLogoPreview: data.footerLogo || '',
             }));
             setPromoGallery(Array.isArray(data.promoGallery) ? data.promoGallery : []);
-        } catch (error) {
+            setRemovedAssets([]);
+        } catch {
             toast.error('Failed to load customer portal branding');
         } finally {
             if (showLoader) setIsPromoRefreshing(false);
         }
-    };
+    }, [token]);
 
     useEffect(() => {
         if (token) void fetchBranding();
-    }, [token]);
+    }, [fetchBranding, token]);
 
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -271,10 +328,23 @@ const CustomerPortalBranding: React.FC = () => {
     };
 
     const handleFile = (field: 'bannerImage' | 'bannerVideo' | 'footerLogo', previewField: 'bannerImagePreview' | 'bannerVideoPreview' | 'footerLogoPreview') => (file: File) => {
+        const isVideo = field === 'bannerVideo';
+        const expectedType = isVideo ? 'video/' : 'image/';
+        const maximumSizeMb = isVideo ? 50 : 10;
+        if (!file.type.startsWith(expectedType)) {
+            toast.error(isVideo ? 'Please select a valid video file.' : 'Please select a valid image file.');
+            return;
+        }
+        if (file.size > maximumSizeMb * 1024 * 1024) {
+            toast.error(`${isVideo ? 'Video' : 'Image'} must be ${maximumSizeMb}MB or smaller.`);
+            return;
+        }
+        setRemovedAssets(prev => prev.filter(item => item !== field));
         setFormData(prev => ({ ...prev, [field]: file, [previewField]: URL.createObjectURL(file) }));
     };
 
     const clearFile = (field: 'bannerImage' | 'bannerVideo' | 'footerLogo', previewField: 'bannerImagePreview' | 'bannerVideoPreview' | 'footerLogoPreview') => () => {
+        setRemovedAssets(prev => prev.includes(field) ? prev : [...prev, field]);
         setFormData(prev => ({ ...prev, [field]: null, [previewField]: '' }));
     };
 
@@ -306,8 +376,8 @@ const CustomerPortalBranding: React.FC = () => {
             });
             await fetchBranding(true);
             toast.success('Promotional media uploaded successfully');
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to upload promotional media');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to upload promotional media'));
         } finally {
             setIsPromoUploading(null);
             if (imageUploadRef.current) imageUploadRef.current.value = '';
@@ -322,8 +392,8 @@ const CustomerPortalBranding: React.FC = () => {
             });
             await fetchBranding(true);
             toast.success('Promotional media deleted successfully');
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to delete promotional media');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to delete promotional media'));
         }
     };
 
@@ -333,8 +403,8 @@ const CustomerPortalBranding: React.FC = () => {
                 headers: { Authorization: `Bearer ${token}` },
             });
             setPromoGallery(prev => prev.map(item => item.id === itemId ? { ...item, caption } : item));
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to update caption');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to update caption'));
         }
     };
 
@@ -346,8 +416,8 @@ const CustomerPortalBranding: React.FC = () => {
                 headers: { Authorization: `Bearer ${token}` },
             });
             setPromoGallery(items.map((item, index) => ({ ...item, order: index })));
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to reorder promotional media');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to reorder promotional media'));
             await fetchBranding(true);
         }
     };
@@ -382,8 +452,8 @@ const CustomerPortalBranding: React.FC = () => {
             });
             await fetchBranding(true);
             toast.success('Promotional media replaced successfully');
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to replace promotional media');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to replace promotional media'));
         } finally {
             setReplacingPromoId(null);
             setPendingReplaceType(null);
@@ -416,6 +486,16 @@ const CustomerPortalBranding: React.FC = () => {
             payload.append('instagramUrl', formData.instagramUrl);
             payload.append('youtubeUrl', formData.youtubeUrl);
             payload.append('whatsappNumber', formData.whatsappNumber);
+            payload.append('shopOnlineUrl', formData.shopOnlineUrl);
+            payload.append('portalAccentColor', formData.portalAccentColor);
+            payload.append('showPromotionalBanner', String(formData.showPromotionalBanner));
+            payload.append('showPromotionalGallery', String(formData.showPromotionalGallery));
+            payload.append('showShopOnline', String(formData.showShopOnline));
+            payload.append('showSocialLinks', String(formData.showSocialLinks));
+            payload.append('enableCustomerHistory', String(formData.enableCustomerHistory));
+            payload.append('removeBannerImage', String(removedAssets.includes('bannerImage')));
+            payload.append('removeBannerVideo', String(removedAssets.includes('bannerVideo')));
+            payload.append('removeFooterLogo', String(removedAssets.includes('footerLogo')));
             if (formData.bannerImage) payload.append('bannerImage', formData.bannerImage);
             if (formData.bannerVideo) payload.append('bannerVideo', formData.bannerVideo);
             if (formData.footerLogo) payload.append('footerLogo', formData.footerLogo);
@@ -432,9 +512,10 @@ const CustomerPortalBranding: React.FC = () => {
                 bannerVideoPreview: data.bannerVideo || prev.bannerVideoPreview,
                 footerLogoPreview: data.footerLogo || prev.footerLogoPreview,
             }));
+            setRemovedAssets([]);
             toast.success('Customer portal branding updated successfully');
-        } catch (error: any) {
-            toast.error(error?.response?.data?.message || 'Failed to update branding');
+        } catch (error: unknown) {
+            toast.error(getRequestErrorMessage(error, 'Failed to update branding'));
         } finally {
             setIsSaving(false);
         }
@@ -447,9 +528,141 @@ const CustomerPortalBranding: React.FC = () => {
             <div>
                 <h1 className="text-xl font-bold text-gray-900">Customer Portal Branding</h1>
                 <p className="text-sm text-gray-500 mt-0.5">
-                    Control the banner and footer displayed on your customer-facing portal.
+                    Control the compact public invoice portal, promotional media, shopping link, and footer.
                 </p>
             </div>
+
+            <SectionCard
+                icon={<SlidersHorizontal className="h-4 w-4" />}
+                title="Public Invoice Portal"
+                description="Choose the portal color and which configured sections customers can see"
+            >
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label className={labelCls}>Portal Accent Color</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        aria-label="Portal accent color picker"
+                                        type="color"
+                                        value={formData.portalAccentColor}
+                                        onChange={(event) => setFormData(prev => ({ ...prev, portalAccentColor: event.target.value.toUpperCase() }))}
+                                        className="h-11 w-12 cursor-pointer rounded-lg border border-gray-300 bg-white p-1"
+                                    />
+                                    <input
+                                        name="portalAccentColor"
+                                        value={formData.portalAccentColor}
+                                        onChange={handleChange}
+                                        pattern="#[0-9A-Fa-f]{6}"
+                                        maxLength={7}
+                                        className={inputCls}
+                                        placeholder="#A43275"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label className={labelCls}>Shop Online URL</label>
+                                <div className="relative">
+                                    <ShoppingBag className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                                    <input
+                                        type="url"
+                                        name="shopOnlineUrl"
+                                        value={formData.shopOnlineUrl}
+                                        onChange={handleChange}
+                                        placeholder="https://shop.example.com"
+                                        className={`${inputCls} pl-9`}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <SettingToggle
+                                label="Show promotional banner"
+                                description="Uses the selected image or video banner."
+                                checked={formData.showPromotionalBanner}
+                                onChange={(checked) => setFormData(prev => ({ ...prev, showPromotionalBanner: checked }))}
+                            />
+                            <SettingToggle
+                                label="Show promotional gallery"
+                                description="Displays the ordered swipe gallery below the invoice."
+                                checked={formData.showPromotionalGallery}
+                                onChange={(checked) => setFormData(prev => ({ ...prev, showPromotionalGallery: checked }))}
+                            />
+                            <SettingToggle
+                                label="Show Shop Online"
+                                description="Shown only when a valid shop URL is saved."
+                                checked={formData.showShopOnline}
+                                onChange={(checked) => setFormData(prev => ({ ...prev, showShopOnline: checked }))}
+                            />
+                            <SettingToggle
+                                label="Show social links"
+                                description="Only configured social handles will appear."
+                                checked={formData.showSocialLinks}
+                                onChange={(checked) => setFormData(prev => ({ ...prev, showSocialLinks: checked }))}
+                            />
+                            <div className="md:col-span-2">
+                                <SettingToggle
+                                    label="Enable customer history"
+                                    description="Saves your preference. History remains unavailable until secure customer OTP delivery is configured."
+                                    checked={formData.enableCustomerHistory}
+                                    onChange={(checked) => setFormData(prev => ({ ...prev, enableCustomerHistory: checked }))}
+                                />
+                            </div>
+                        </div>
+
+                        {formData.enableCustomerHistory && (
+                            <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
+                                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                                Secure OTP delivery is not configured, so customers will see a clear unavailable message instead of invoice history.
+                            </div>
+                        )}
+                    </div>
+
+                    <div>
+                        <p className={labelCls}>Live Mobile Preview</p>
+                        <div className="mx-auto w-full max-w-[280px] overflow-hidden rounded-[28px] border-[6px] border-gray-900 bg-[#f8f6f3] shadow-xl">
+                            <div className="mx-auto h-4 w-20 rounded-b-xl bg-gray-900" />
+                            <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2.5">
+                                {formData.footerLogoPreview ? (
+                                    <img src={formData.footerLogoPreview} alt="Portal preview logo" className="h-8 w-8 rounded-full object-contain" />
+                                ) : (
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: formData.portalAccentColor }}>N</div>
+                                )}
+                                <div>
+                                    <p className="text-[11px] font-bold text-gray-900">Customer Invoice</p>
+                                    <p className="text-[8px] uppercase tracking-wider text-gray-400">Mobile portal</p>
+                                </div>
+                            </div>
+                            <div className="space-y-2 p-2.5">
+                                {(formData.heroTitle || formData.heroSubtitle) && (
+                                    <div className="rounded-xl bg-white p-2.5">
+                                        <p className="text-xs font-bold text-gray-900">{formData.heroTitle || 'Hero title'}</p>
+                                        {formData.heroSubtitle && <p className="mt-0.5 text-[9px] text-gray-500">{formData.heroSubtitle}</p>}
+                                    </div>
+                                )}
+                                <div className="rounded-xl border border-gray-200 bg-white p-2.5">
+                                    <div className="flex justify-between gap-2">
+                                        <div><p className="text-[8px] uppercase text-gray-400">Tax invoice</p><p className="text-xs font-bold">INV-000001</p></div>
+                                        <span className="h-fit rounded-full bg-emerald-50 px-2 py-0.5 text-[8px] font-bold text-emerald-700">Paid</span>
+                                    </div>
+                                    <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                                        <p className="text-[10px] font-bold">Sample item</p>
+                                        <div className="mt-1 flex justify-between text-[9px] text-gray-500"><span>1 × ₹1,170</span><b className="text-gray-800">₹1,170</b></div>
+                                    </div>
+                                    <div className="mt-2 flex justify-between text-xs font-bold"><span>Total</span><span>₹1,170</span></div>
+                                </div>
+                                <div className="rounded-lg py-2 text-center text-[10px] font-bold" style={{ backgroundColor: formData.portalAccentColor, color: '#fff' }}>Download Invoice</div>
+                            </div>
+                            <div className="grid grid-cols-3 border-t border-gray-200 bg-white py-2 text-center text-[8px] font-semibold text-gray-500">
+                                <span style={{ color: formData.portalAccentColor }}>Invoice</span><span>History</span><span>Order Online</span>
+                            </div>
+                        </div>
+                        <p className="mt-3 text-center text-[11px] leading-4 text-gray-400">Preview reflects color and core content. Uploaded media appears in the live customer page.</p>
+                    </div>
+                </div>
+            </SectionCard>
 
             {/* ── Section 1: Banner ── */}
             <SectionCard
@@ -463,7 +676,7 @@ const CustomerPortalBranding: React.FC = () => {
                         <p className={labelCls}>Active Banner Type</p>
                         <BannerTypeToggle
                             value={formData.activeBannerType}
-                            onChange={(v) => setFormData(prev => ({ ...prev, activeBannerType: v as any }))}
+                            onChange={(v) => setFormData(prev => ({ ...prev, activeBannerType: v }))}
                         />
                         <p className="text-xs text-gray-400 mt-2">
                             Select which type of banner will be displayed. Upload both if needed, then choose which one is active.

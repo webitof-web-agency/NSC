@@ -94,6 +94,7 @@ function buildPublicInvoiceUrl(publicShareId) {
 }
 
 module.exports = {
+  generatePublicShareId: generateSecureToken,
   getOrCreatePublicShareId,
   regeneratePublicShareId,
   disablePublicShare,

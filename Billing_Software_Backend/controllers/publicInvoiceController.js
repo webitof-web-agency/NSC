@@ -1,12 +1,38 @@
 const Invoice = require('../models/Invoice');
+const InvoicePayment = require('../models/InvoicePayment');
+const Customer = require('../models/Customer');
 const CompanySettings = require('../models/CompanySettings');
+const CustomerPortalBranding = require('../models/CustomerPortalBranding');
 const { generateDocumentPdfBuffer } = require('../whatsapp-module/utils/pdfGenerator');
+const {
+  normalizePublicPortalBranding,
+  getCustomerHistoryAvailability,
+  toAbsoluteAssetUrl,
+} = require('../utils/publicInvoicePortal');
+
+const setPrivateResponseHeaders = (res) => {
+  res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+};
+
+const normalizeShareId = (value) => {
+  const shareId = String(value || '');
+  return shareId.startsWith(':id') ? shareId.substring(3) : shareId;
+};
+
+const isValidShareId = (value) => (
+  value.length >= 20 && /^[A-Za-z0-9_-]+$/.test(value)
+);
 
 function serializePublicItem(item) {
   return {
     id: item._id || item.rowId || '',
     name: item.name || item.productName || '',
     variantName: item.variantName || '',
+    designNumber: item.variantDesignNo || '',
+    color: item.variantColor || '',
+    size: item.variantSize || '',
     unit: item.unit || '',
     quantity: Number(item.qty ?? item.quantity ?? 0),
     rate: Number(item.rate ?? item.unitPrice ?? 0),
@@ -20,7 +46,13 @@ function serializePublicItem(item) {
   };
 }
 
-function serializePublicInvoice(invoice, businessSettings) {
+function serializePublicInvoice(
+  invoice,
+  businessSettings,
+  brandingSettings = {},
+  paymentSummary = {},
+  assetBaseUrl = '',
+) {
   const customer =
     invoice.billTo && typeof invoice.billTo === 'object'
       ? invoice.billTo
@@ -28,18 +60,39 @@ function serializePublicInvoice(invoice, businessSettings) {
         ? invoice.customerId
         : null;
 
-  // Return only the safe invoice fields required by the public NSC template.
+  const totalAmount = Number(invoice.TotalAmount ?? invoice.totalAmount ?? 0);
+  const subtotal = Number(invoice.taxableAmount ?? invoice.subtotal ?? 0);
+  const taxAmount = Number(invoice.vat ?? invoice.taxAmount ?? 0);
+  const discountAmount = Number(invoice.totalDiscount ?? invoice.discountAmount ?? 0);
+  const hasPaymentRecords = paymentSummary.hasPaymentRecords === true;
+  const recordedPaid = Number(paymentSummary.totalPaid || 0);
+  const totalPaid = hasPaymentRecords
+    ? recordedPaid
+    : ['PAID', 'EXCHANGE'].includes(invoice.status) ? totalAmount : 0;
+  const balanceAmount = Math.max(totalAmount - totalPaid, 0);
+  const amountBeforeRoundOff = invoice.gstType === 'Inclusive'
+    ? subtotal - discountAmount
+    : subtotal + taxAmount - discountAmount;
+  const roundOffAmount = invoice.roundOff
+    ? Number((totalAmount - amountBeforeRoundOff).toFixed(2))
+    : 0;
+  const portalBranding = normalizePublicPortalBranding(brandingSettings, assetBaseUrl);
+
+  // Return only the safe fields required by the public portal and formal print view.
   return {
     invoiceNumber: invoice.invoiceNumber,
     date: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     status: invoice.status,
     paymentMethod: invoice.payment_method || '',
-    totalAmount: Number(invoice.TotalAmount ?? invoice.totalAmount ?? 0),
-    subtotal: Number(invoice.taxableAmount ?? invoice.subtotal ?? 0),
-    taxAmount: Number(invoice.vat ?? invoice.taxAmount ?? 0),
-    discountAmount: Number(invoice.totalDiscount ?? invoice.discountAmount ?? 0),
+    taxType: invoice.taxType || 'GST',
+    gstType: invoice.gstType || 'Exclusive',
+    totalAmount,
+    subtotal,
+    taxAmount,
+    discountAmount,
     roundOff: invoice.roundOff || false,
+    roundOffAmount,
     termsAndCondition: invoice.termsAndCondition || '',
     notes: invoice.notes || '',
     customerGstin: invoice.customerGstin || '',
@@ -62,13 +115,23 @@ function serializePublicInvoice(invoice, businessSettings) {
 
     business: {
       name: businessSettings?.companyName || 'Naresh Saree Collection',
-      logo: businessSettings?.siteLogo || businessSettings?.favicon || businessSettings?.companyLogo || '',
+      logo: toAbsoluteAssetUrl(
+        businessSettings?.siteLogo || businessSettings?.favicon || businessSettings?.companyLogo || '',
+        assetBaseUrl,
+      ),
       phone: businessSettings?.phone || businessSettings?.contactNumber || '',
       email: businessSettings?.email || '',
       address: businessSettings?.address || '',
       state: businessSettings?.state || '',
       gstNumber: businessSettings?.gstin || businessSettings?.gstNumber || ''
-    }
+    },
+    payment: {
+      method: invoice.payment_method || '',
+      totalPaid,
+      balanceAmount,
+    },
+    portalBranding,
+    history: getCustomerHistoryAvailability(portalBranding),
   };
 }
 
@@ -76,39 +139,49 @@ exports.serializePublicInvoice = serializePublicInvoice;
 
 exports.getPublicInvoice = async (req, res) => {
   try {
-    let { publicShareId } = req.params;
-
-    // Handle case where Meta Template hardcodes `:id` before the dynamic parameter
-    // e.g. https://app.nareshsareecollection.com/invoice/:idABCXYZ
-    if (publicShareId && publicShareId.startsWith(':id')) {
-      publicShareId = publicShareId.substring(3);
-    }
+    setPrivateResponseHeaders(res);
+    const publicShareId = normalizeShareId(req.params.publicShareId);
 
     // Basic validation of the token (base64url is alphanumeric + hyphens + underscores)
-    if (!publicShareId || publicShareId.length < 20 || !/^[A-Za-z0-9_-]+$/.test(publicShareId)) {
+    if (!isValidShareId(publicShareId)) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
     const invoice = await Invoice.findOne({ 
       publicShareId, 
-      publicShareEnabled: true 
+      publicShareEnabled: true,
+      isDeleted: false,
     }).populate('billTo').lean();
 
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
-    // Attempt to get business settings
-    const companySettings = (await CompanySettings.findOne()
-      .sort({ createdAt: -1 })
-      .lean()) || {};
+    const ownerUserId = invoice.billTo?.userId || invoice.userId || invoice.billFrom;
+    const [companySettings, brandingSettings, paymentRows] = await Promise.all([
+      ownerUserId
+        ? CompanySettings.findOne({ userId: ownerUserId }).lean()
+        : Promise.resolve(null),
+      ownerUserId
+        ? CustomerPortalBranding.findOne({ userId: ownerUserId }).lean()
+        : Promise.resolve(null),
+      InvoicePayment.aggregate([
+        { $match: { invoiceId: invoice._id, isDeleted: { $ne: true } } },
+        { $group: { _id: '$invoiceId', totalPaid: { $sum: { $ifNull: ['$amount', 0] } }, count: { $sum: 1 } } },
+      ]),
+    ]);
 
-    const publicDto = serializePublicInvoice(invoice, companySettings);
-
-    // Set cache headers to prevent caching
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.set('Pragma', 'no-cache');
-    res.set('X-Robots-Tag', 'noindex, nofollow');
+    const assetBaseUrl = `${req.protocol}://${req.get('host')}`;
+    const publicDto = serializePublicInvoice(
+      invoice,
+      companySettings || {},
+      brandingSettings || {},
+      {
+        totalPaid: Number(paymentRows[0]?.totalPaid || 0),
+        hasPaymentRecords: Number(paymentRows[0]?.count || 0) > 0,
+      },
+      assetBaseUrl,
+    );
 
     res.json({ success: true, data: publicDto });
   } catch (err) {
@@ -117,31 +190,126 @@ exports.getPublicInvoice = async (req, res) => {
   }
 };
 
-exports.downloadPublicInvoicePdf = async (req, res) => {
+exports.listVerifiedCustomerInvoiceHistory = async (req, res) => {
   try {
-    let { publicShareId } = req.params;
+    setPrivateResponseHeaders(res);
 
-    if (publicShareId && publicShareId.startsWith(':id')) {
-      publicShareId = publicShareId.substring(3);
+    const { customerId, ownerUserId } = req.customerHistorySession;
+    const [branding, customerExists] = await Promise.all([
+      CustomerPortalBranding.findOne({ userId: ownerUserId })
+        .select('enableCustomerHistory')
+        .lean(),
+      Customer.exists({
+        _id: customerId,
+        userId: ownerUserId,
+        isDeleted: false,
+        portalEnabled: { $ne: false },
+      }),
+    ]);
+
+    if (!customerExists) {
+      return res.status(401).json({
+        success: false,
+        message: 'Customer verification is required.',
+      });
     }
 
+    if (branding?.enableCustomerHistory !== true) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invoice history is not available.',
+      });
+    }
+
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 10, 1), 20);
+    const query = {
+      billTo: customerId,
+      isDeleted: false,
+      parentInvoice: null,
+      publicShareEnabled: true,
+      publicShareId: { $type: 'string', $ne: '' },
+    };
+
+    const [total, invoices] = await Promise.all([
+      Invoice.countDocuments(query),
+      Invoice.find(query)
+        .select('_id invoiceNumber invoiceDate dueDate status TotalAmount publicShareId')
+        .sort({ invoiceDate: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    const invoiceIds = invoices.map((invoice) => invoice._id);
+    const paymentRows = invoiceIds.length
+      ? await InvoicePayment.aggregate([
+          { $match: { invoiceId: { $in: invoiceIds }, isDeleted: { $ne: true } } },
+          { $group: { _id: '$invoiceId', totalPaid: { $sum: { $ifNull: ['$amount', 0] } } } },
+        ])
+      : [];
+    const paymentMap = new Map(
+      paymentRows.map((row) => [String(row._id), Number(row.totalPaid || 0)]),
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoices: invoices.map((invoice) => {
+          const totalAmount = Number(invoice.TotalAmount || 0);
+          const recordedPaid = paymentMap.get(String(invoice._id));
+          const totalPaid = recordedPaid === undefined && invoice.status === 'PAID'
+            ? totalAmount
+            : Number(recordedPaid || 0);
+          return {
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceDate: invoice.invoiceDate,
+            dueDate: invoice.dueDate,
+            status: invoice.status,
+            totalAmount,
+            totalPaid,
+            balanceAmount: Math.max(totalAmount - totalPaid, 0),
+            publicShareId: invoice.publicShareId,
+          };
+        }),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching customer invoice history:', error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+exports.downloadPublicInvoicePdf = async (req, res) => {
+  try {
+    setPrivateResponseHeaders(res);
+    const publicShareId = normalizeShareId(req.params.publicShareId);
+
     // Basic validation of the token
-    if (!publicShareId || publicShareId.length < 20 || !/^[A-Za-z0-9_-]+$/.test(publicShareId)) {
+    if (!isValidShareId(publicShareId)) {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
 
     const invoice = await Invoice.findOne({ 
       publicShareId, 
-      publicShareEnabled: true 
+      publicShareEnabled: true,
+      isDeleted: false,
     }).populate('billTo').lean();
 
     if (!invoice) {
       return res.status(404).send('Invoice not found');
     }
 
-    const companySettings = (await CompanySettings.findOne()
-      .sort({ createdAt: -1 })
-      .lean()) || {};
+    const ownerUserId = invoice.billTo?.userId || invoice.userId || invoice.billFrom;
+    const companySettings = ownerUserId
+      ? (await CompanySettings.findOne({ userId: ownerUserId }).lean()) || {}
+      : {};
 
     const publicInvoice = serializePublicInvoice(invoice, companySettings);
 
@@ -165,11 +333,9 @@ exports.downloadPublicInvoicePdf = async (req, res) => {
 
     const pdfBuffer = await generateDocumentPdfBuffer(documentContext);
 
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.set('Pragma', 'no-cache');
-    res.set('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Invoice-${invoice.invoiceNumber}.pdf`);
+    const safeInvoiceNumber = String(invoice.invoiceNumber || 'invoice').replace(/[^A-Za-z0-9_-]/g, '-');
+    res.setHeader('Content-Disposition', `attachment; filename=Invoice-${safeInvoiceNumber}.pdf`);
     
     res.send(pdfBuffer);
   } catch (err) {
