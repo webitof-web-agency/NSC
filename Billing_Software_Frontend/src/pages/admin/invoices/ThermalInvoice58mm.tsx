@@ -5,6 +5,7 @@ import type { ProductItem } from "@models/product";
 import { useSelector } from "react-redux";
 import type { RootState } from "@store/index";
 import useDateFormatter from "@hooks/useDateFormatter";
+import { calculateThermalTaxLine } from "@utils/thermalInvoiceTax";
 
 interface InvoiceFormData {
     invoiceNumber?: string;
@@ -357,21 +358,18 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                     .forEach((item: any) => {
                                         const hsnCode = item.hsn_code || "N/A";
 
-                                        const qty = Number(item.qty) || 0;
-                                        const rate = Number(item.rate) || 0;
-                                        const discount = Number(item.discount) || 0;
-                                        const taxAmount = Number(item.tax) || 0;
-
-                                        const saleAmount = Math.max(qty * rate, 0);
-                                        const baseBeforeTax = Math.max(saleAmount - discount, 0);
-                                        const taxableValue = isInclusive
-                                            ? Math.max(baseBeforeTax - taxAmount, 0)
-                                            : baseBeforeTax;
-                                        let taxRate = Number(item.taxRate ?? item.tax_rate ?? item.total_tax_rate ?? 0) || 0;
-                                        const rateBaseAmount = isInclusive ? baseBeforeTax : taxableValue;
-                                        if (taxRate <= 0 && rateBaseAmount > 0 && taxAmount > 0) {
-                                            taxRate = Number(((taxAmount / rateBaseAmount) * 100).toFixed(2));
-                                        }
+                                        const {
+                                            taxableAmount,
+                                            taxAmount,
+                                            taxRate,
+                                        } = calculateThermalTaxLine({
+                                            qty: Number(item.qty) || 0,
+                                            rate: Number(item.rate) || 0,
+                                            discount: Number(item.discount) || 0,
+                                            taxAmount: Number(item.tax) || 0,
+                                            configuredTaxRate: Number(item.taxRate ?? item.tax_rate ?? item.total_tax_rate ?? 0) || 0,
+                                            isInclusive,
+                                        });
 
                                         const key = `${hsnCode}-${taxRate}`;
 
@@ -385,7 +383,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                         }
 
                                         const group = taxGroups.get(key);
-                                        group.taxableAmount += saleAmount;
+                                        group.taxableAmount += taxableAmount;
                                         group.taxAmount += taxAmount;
                                     });
 

@@ -247,9 +247,9 @@ const PublicInvoice = () => {
   const invoiceTemplateData = toInvoiceTemplateData(invoice);
 
   return (
-    <div className="min-h-screen bg-slate-100 px-3 py-5 text-slate-950 sm:px-6 sm:py-8">
+    <div className="min-h-screen bg-slate-100 px-2 py-3 text-slate-950 sm:px-6 sm:py-8">
       <main className="mx-auto max-w-5xl">
-        <div className="overflow-x-auto border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden border border-slate-200 bg-white shadow-sm">
           <div ref={invoiceRef}>
             <InvoiceTemplateB
               invoiceData={invoiceTemplateData}
@@ -268,7 +268,7 @@ const PublicInvoice = () => {
           <button
             type="button"
             onClick={() => handlePrint()}
-            className="inline-flex min-w-48 cursor-pointer items-center justify-center gap-2 rounded bg-primary px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+            className="inline-flex min-h-12 min-w-48 w-full cursor-pointer items-center justify-center gap-2 rounded bg-primary px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 sm:w-auto"
           >
             <Printer size={17} />
             Print / Save as PDF

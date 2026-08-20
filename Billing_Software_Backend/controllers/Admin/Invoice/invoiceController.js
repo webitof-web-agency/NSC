@@ -10,6 +10,10 @@ const Inventory = require("@models/Inventory");
 const DeliveryChallan = require("@models/DeliveryChallan");
 const BankDetail = require("@models/BankDetail");
 const ProductVariant = require("@models/ProductVariant");
+const {
+  enrichInvoicePrintItems,
+  normalizeInvoiceItems,
+} = require("@utils/invoicePrintItems");
 
 const getNextExchangeInvoiceNumberInternal = async () => {
   const prefix = "EXC-";
@@ -1653,51 +1657,57 @@ const getInvoice = async (req, res) => {
       }
       : null;
 
-    // Enrich items with variant MRP for printing
-    const normalizeItems = (items) =>
-      (items || []).map((item) =>
-        typeof item?.toObject === "function" ? item.toObject() : item
-      );
+    // Enrich invoice snapshots with current print metadata when older rows are incomplete.
+    const normalizedItems = normalizeInvoiceItems(invoice.items);
+    const normalizedExchangeItems = normalizeInvoiceItems(invoice.exchangeOriginalItems);
 
     const allVariantIds = [
-      ...normalizeItems(invoice.items).map((i) => i?.variantId).filter(Boolean),
-      ...normalizeItems(invoice.exchangeOriginalItems).map((i) => i?.variantId).filter(Boolean),
+      ...normalizedItems.map((i) => i?.variantId).filter(Boolean),
+      ...normalizedExchangeItems.map((i) => i?.variantId).filter(Boolean),
+    ];
+    const allProductIds = [
+      ...normalizedItems.map((i) => i?.product_id).filter(Boolean),
+      ...normalizedExchangeItems.map((i) => i?.product_id).filter(Boolean),
     ];
 
     const uniqueVariantIds = Array.from(
       new Set(allVariantIds.map((id) => String(id)))
     );
+    const uniqueProductIds = Array.from(
+      new Set(allProductIds.map((id) => String(id)))
+    );
 
     const variantMrpMap = new Map();
-    if (uniqueVariantIds.length > 0) {
-      const variants = await ProductVariant.find({
-        _id: { $in: uniqueVariantIds },
-      })
-        .select("_id mrp")
-        .lean();
+    const productHsnMap = new Map();
+    const [variants, products] = await Promise.all([
+      uniqueVariantIds.length > 0
+        ? ProductVariant.find({
+          _id: { $in: uniqueVariantIds },
+        })
+          .select("_id mrp")
+          .lean()
+        : [],
+      uniqueProductIds.length > 0
+        ? Product.find({ _id: { $in: uniqueProductIds } })
+          .select("_id hsn_code")
+          .lean()
+        : [],
+    ]);
 
-      variants.forEach((v) => {
-        variantMrpMap.set(String(v._id), Number(v.mrp || 0));
-      });
-    }
+    variants.forEach((v) => {
+      variantMrpMap.set(String(v._id), Number(v.mrp || 0));
+    });
+    products.forEach((product) => {
+      productHsnMap.set(String(product._id), String(product.hsn_code || "").trim());
+    });
 
-    const enrichedItems = normalizeItems(invoice.items).map((item) => ({
-      ...item,
-      variantMrp:
-        item?.variantMrp ??
-        variantMrpMap.get(String(item?.variantId || "")) ??
-        null,
-    }));
+    const printMetadata = { variantMrpMap, productHsnMap };
+    const enrichedItems = enrichInvoicePrintItems(invoice.items, printMetadata);
 
-    const enrichedExchangeItems = normalizeItems(
-      invoice.exchangeOriginalItems
-    ).map((item) => ({
-      ...item,
-      variantMrp:
-        item?.variantMrp ??
-        variantMrpMap.get(String(item?.variantId || "")) ??
-        null,
-    }));
+    const enrichedExchangeItems = enrichInvoicePrintItems(
+      invoice.exchangeOriginalItems,
+      printMetadata
+    );
 
 
     // Response object

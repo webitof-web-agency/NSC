@@ -12,6 +12,10 @@ const publicInvoiceSource = readFileSync(
   new URL("../src/pages/public/PublicInvoice.tsx", import.meta.url),
   "utf8",
 );
+const invoiceTemplateSource = readFileSync(
+  new URL("../src/pages/admin/invoices/InvoiceTemplateB.tsx", import.meta.url),
+  "utf8",
+);
 const publicInvoiceControllerSource = readFileSync(
   new URL(
     "../../Billing_Software_Backend/controllers/publicInvoiceController.js",
@@ -30,6 +34,29 @@ test("public invoice prints the rendered NSC template instead of downloading the
   assert.match(publicInvoiceSource, /useReactToPrint/);
   assert.match(publicInvoiceSource, /Print \/ Save as PDF/);
   assert.doesNotMatch(publicInvoiceSource, /\/pdf`/);
+});
+
+test("NSC invoice reflows item rows into readable labelled cards on phone screens", () => {
+  assert.match(invoiceTemplateSource, /@media screen and \(max-width: 640px\)/);
+  assert.match(invoiceTemplateSource, /\.invoice-items-table thead/);
+  assert.match(invoiceTemplateSource, /content:\s*attr\(data-label\)/);
+  assert.match(invoiceTemplateSource, /data-label="Item"/);
+  assert.match(invoiceTemplateSource, /@media print/);
+});
+
+test("mobile item cards hide redundant labels and group amounts into a compact row", () => {
+  assert.match(invoiceTemplateSource, /\.invoice-items-table td\.invoice-line-number/);
+  assert.match(invoiceTemplateSource, /grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(invoiceTemplateSource, /\.invoice-items-table td\.invoice-item-name::before\s*{\s*display:\s*none/);
+  assert.match(invoiceTemplateSource, /data-label="Rate"/);
+  assert.match(invoiceTemplateSource, /data-label="Disc"/);
+});
+
+test("public invoice contains horizontal overflow and exposes a touch-sized mobile action", () => {
+  assert.match(publicInvoiceSource, /overflow-hidden/);
+  assert.match(publicInvoiceSource, /min-h-12/);
+  assert.match(publicInvoiceSource, /w-full[^\"]*sm:w-auto/);
+  assert.doesNotMatch(publicInvoiceSource, /overflow-x-auto/);
 });
 
 test("public invoice response provides the fields required by the NSC template", () => {
