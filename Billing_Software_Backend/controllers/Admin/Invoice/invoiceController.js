@@ -699,6 +699,10 @@ const createInvoice = async (req, res) => {
       upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
     });
 
+    // Generate publicShareId eagerly so every invoice immediately has a shareable link
+    const { getOrCreatePublicShareId } = require('../../../services/publicShareService');
+    await getOrCreatePublicShareId(invoice);
+
     await invoice.save();
 
     await createCommissionRecordsForInvoiceItems({
@@ -2901,6 +2905,10 @@ const convertQuotationToInvoice = async (req, res) => {
       // store the quotation id in the invoice
       quotationId: quotation._id,
     });
+
+    // Generate publicShareId eagerly
+    const { getOrCreatePublicShareId } = require('../../../services/publicShareService');
+    await getOrCreatePublicShareId(invoice);
 
     await invoice.save();
 
