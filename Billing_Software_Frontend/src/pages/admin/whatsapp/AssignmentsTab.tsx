@@ -195,9 +195,9 @@ const AssignmentsTab = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png"];
     if (!allowedTypes.includes(file.type)) {
-      toast.error('Only JPG, JPEG, PNG, or WEBP files are allowed');
+      toast.error('Only JPG, JPEG, or PNG files are allowed');
       return;
     }
 
@@ -309,7 +309,7 @@ const AssignmentsTab = () => {
                             Change Photo
                         </button>
                     </div>
-                    <input type="file" ref={fileInputRef} className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleImageChange} />
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/jpeg,image/png" onChange={handleImageChange} />
                   </div>
                 </div>
               )}

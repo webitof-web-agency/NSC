@@ -174,13 +174,11 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
 
   let paidAmount = 0;
   let outstandingAmount = 0;
-  if (documentType !== 'quotation' && InvoicePaymentModel) {
-    const paymentAgg = await InvoicePaymentModel.aggregate([
-      { $match: { invoiceId: document._id } },
-      { $group: { _id: "$invoiceId", totalPaid: { $sum: "$amount" } } },
-    ]);
-    paidAmount = paymentAgg.length > 0 ? Number(paymentAgg[0].totalPaid) : 0;
-    outstandingAmount = Math.max((Number(document.TotalAmount || 0) - paidAmount), 0);
+  if (documentType !== 'quotation' && InvoiceModel) {
+    const { getInvoiceOutstandingAmount } = require('../../services/invoicePaymentService');
+    const result = await getInvoiceOutstandingAmount(documentId, document);
+    paidAmount = result.totalPaid;
+    outstandingAmount = result.outstandingAmount;
   }
 
   return {
@@ -347,56 +345,81 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
   }
 
   const headerComponentDef = assignment.metaTemplateId?.components?.find(c => c.type === 'HEADER');
-  const expectsImageHeader = headerComponentDef && headerComponentDef.format === 'IMAGE';
+  
+  if (headerComponentDef) {
+    if (headerComponentDef.format === 'IMAGE') {
+      const isPdfHeader = assignment.headerMapping?.sourceType === 'DOCUMENT_PDF';
+      
+      if (isPdfHeader) {
+        // Technically meta templates shouldn't have IMAGE format but use DOCUMENT for PDFs, 
+        // but if someone forced it, we should throw error.
+        throw new Error(`Assignment maps DOCUMENT_PDF but Meta template expects IMAGE header for ${assignment.messageType}`);
+      }
+      
+      let imageUrl = null;
+      if (assignment.headerMapping?.sourceType === 'IMAGE_URL' && assignment.headerMapping?.value) {
+        imageUrl = assignment.headerMapping.value;
+      } else if (context?.companySettings?.companyLogo) {
+        imageUrl = context.companySettings.companyLogo;
+      } else if (context?.companySettings?.siteLogo) {
+        imageUrl = context.companySettings.siteLogo;
+      }
 
-  if (expectsImageHeader && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF') {
-    const defaultIcon = 'https://app.nareshsareecollection.com/image/1787201065746-962894716.png';
-    let imageUrl = defaultIcon;
-    
-    if (assignment.headerMapping?.sourceType === 'IMAGE_URL' && assignment.headerMapping?.value) {
-      imageUrl = assignment.headerMapping.value;
-    } else if (context?.companySettings?.companyLogo) {
-      imageUrl = context.companySettings.companyLogo;
-    } else if (context?.companySettings?.siteLogo) {
-      imageUrl = context.companySettings.siteLogo;
-    }
+      if (!imageUrl) {
+        throw new Error(`Meta template expects IMAGE header, but no Assignment image or Company Logo fallback is available for ${assignment.messageType}`);
+      }
 
-    if (imageUrl && imageUrl.startsWith('/')) {
-      const publicBase = 'https://app.nareshsareecollection.com';
-      imageUrl = `${publicBase}${imageUrl}`;
-    }
+      const publicBase = process.env.PUBLIC_BACKEND_URL;
+      const isProduction = process.env.NODE_ENV === 'production';
 
-    if (imageUrl && (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1'))) {
-      imageUrl = imageUrl.replace(/http:\/\/(localhost|127\.0\.0\.1):\d+/, 'https://app.nareshsareecollection.com');
+      if (isProduction && !publicBase) {
+        throw new Error('PUBLIC_BACKEND_URL is required in production to resolve WhatsApp media URLs.');
+      }
+
+      const baseToUse = publicBase || 'https://server.nareshsareecollection.com';
+
+      if (imageUrl.startsWith('/')) {
+        imageUrl = `${baseToUse}${imageUrl}`;
+      } else if (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1')) {
+        imageUrl = imageUrl.replace(/http:\/\/(localhost|127\.0\.0\.1):\d+/, baseToUse);
+      }
+                       
+      components.push({
+        type: 'header',
+        parameters: [{
+          type: 'image',
+          image: {
+            link: imageUrl
+          }
+        }]
+      });
+    } else if (headerComponentDef.format === 'DOCUMENT') {
+      if (mediaId && assignment.headerMapping?.sourceType === 'DOCUMENT_PDF') {
+        components.push({
+          type: 'header',
+          parameters: [{
+            type: 'document',
+            document: {
+              id: mediaId,
+              filename: filename || 'document.pdf',
+            }
+          }]
+        });
+      } else {
+        throw new Error(`Meta template expects DOCUMENT header, but no mediaId/PDF provided for ${assignment.messageType}`);
+      }
+    } else if (headerComponentDef.format === 'VIDEO') {
+      // Implement if needed in future
+      throw new Error(`Meta template expects VIDEO header, which is not currently mapped for ${assignment.messageType}`);
+    } else if (headerComponentDef.format === 'TEXT' || !headerComponentDef.format) {
+      if (headerParams.length > 0) {
+        components.push({
+          type: 'header',
+          parameters: headerParams,
+        });
+      }
     }
-                     
-    components.push({
-      type: 'header',
-      parameters: [{
-        type: 'image',
-        image: {
-          link: imageUrl
-        }
-      }]
-    });
-  } else if (mediaId && assignment.headerMapping?.sourceType === 'DOCUMENT_PDF') {
-    components.push({
-      type: 'header',
-      parameters: [{
-        type: 'document',
-        document: {
-          id: mediaId,
-          filename: filename || 'document.pdf',
-        }
-      }]
-    });
-  } else if (headerParams.length > 0) {
-    components.push({
-      type: 'header',
-      parameters: headerParams,
-    });
   }
-
 
   if (bodyParams.length > 0) {
     components.push({

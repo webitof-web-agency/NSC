@@ -115,7 +115,12 @@ async function createCampaign(req, res) {
         whatsappMarketingOptOutAt: null
       });
     } else {
-      customers = await Customer.find({ _id: { $in: selectedCustomerIds || [] }, userId: req.user._id });
+      customers = await Customer.find({ 
+        _id: { $in: selectedCustomerIds || [] }, 
+        userId: req.user._id,
+        isDeleted: false,
+        status: 'Active'
+      });
     }
     
     // Deduplicate and filter eligible

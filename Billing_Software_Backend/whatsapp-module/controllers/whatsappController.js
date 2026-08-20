@@ -221,9 +221,36 @@ async function getMessageStats(req, res) {
 
 async function sendManual(req, res) {
   try {
-    const { documentType, documentId } = req.body;
+    let { documentType, documentId } = req.body;
     if (!documentType || !documentId) {
       return res.status(400).json({ success: false, message: 'documentType and documentId are required' });
+    }
+
+    if (String(documentType).toLowerCase() === 'invoice' || String(documentType).toLowerCase() === 'exchange') {
+      const { resolveDocumentType } = require('../../services/documentResolver');
+      const { models } = require('../services/whatsappService').getWhatsAppModuleConfig();
+      if (models && models.InvoiceModel) {
+        const invoice = await models.InvoiceModel.findById(documentId).lean();
+        if (invoice) {
+          documentType = resolveDocumentType(invoice);
+        }
+      }
+    }
+
+    if (String(documentType).toLowerCase() === 'payment_reminder') {
+      const { getInvoiceOutstandingAmount } = require('../../services/invoicePaymentService');
+      try {
+        const { outstandingAmount, isCancelled } = await getInvoiceOutstandingAmount(documentId);
+        
+        if (isCancelled) {
+          return res.status(409).json({ success: false, message: 'Cannot send payment reminder for a cancelled invoice.' });
+        }
+        if (outstandingAmount <= 0) {
+          return res.status(409).json({ success: false, message: 'This invoice has no outstanding balance.' });
+        }
+      } catch (err) {
+        return res.status(404).json({ success: false, message: 'Invoice not found for payment reminder validation.' });
+      }
     }
 
     const result = await triggerWhatsAppSend({

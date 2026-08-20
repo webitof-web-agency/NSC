@@ -3371,18 +3371,13 @@ const handleExchangePayment = async (req, res) => {
       });
     }
 
-    const paymentAgg = await InvoicePayment.aggregate([
-      { $match: { invoiceId: invoice._id } },
-      { $group: { _id: "$invoiceId", totalPaid: { $sum: "$amount" } } },
-    ]);
-    const totalPaid = paymentAgg.length > 0 ? Number(paymentAgg[0].totalPaid) : 0;
-    const invoiceTotal = toMoney(Number(invoice.TotalAmount || 0));
-    const remainingDue = Math.max(toMoney(invoiceTotal - totalPaid), 0);
+    const { getInvoiceOutstandingAmount } = require("../../../services/invoicePaymentService");
+    const { outstandingAmount: remainingDue } = await getInvoiceOutstandingAmount(invoice._id, invoice);
 
     if (remainingDue <= 0) {
       return res.status(400).json({
         success: false,
-        message: "No remaining due for this exchange",
+        message: "This invoice has already been fully paid.",
       });
     }
 
