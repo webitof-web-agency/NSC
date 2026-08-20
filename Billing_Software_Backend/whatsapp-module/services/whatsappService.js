@@ -337,7 +337,7 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
         components.push({
           type: 'button',
           sub_type: 'url',
-          index: mapping.buttonIndex || 0,
+          index: String(mapping.buttonIndex || 0),
           parameters: [{ type: 'text', text: resolvedValue }]
         });
       }
