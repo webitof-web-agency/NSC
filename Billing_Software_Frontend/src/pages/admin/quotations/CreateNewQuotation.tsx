@@ -85,6 +85,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
     const [quickAddActiveIndex, setQuickAddActiveIndex] = useState(-1);
     const quickAddRef = useRef<HTMLDivElement>(null);
     const quickAddListRef = useRef<HTMLUListElement>(null);
+    const quickAddInputRef = useRef<HTMLInputElement>(null);
     const [quickAddProducts, setQuickAddProducts] = useState<Product[]>([]);
     const debouncedQuickAddSearch = useDebounce(quickAddSearch, 400);
     const [quotationFormData, setQuotationFormData] = useState<QuotationFormData>({
@@ -332,9 +333,11 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
         value.replace(/\D/g, '').slice(0, 10);
 
     const handleCustomerSearchChange = (value: string) => {
-        const phone = sanitizeCustomerPhoneInput(value);
-        setCustomerSearchInput(phone);
-        if (selectedCustomer && sanitizeCustomerPhoneInput(selectedCustomer.phone || '') !== phone) {
+        setCustomerSearchInput(value);
+        const normalizedValue = value.trim().toLowerCase();
+        const selectedPhone = String(selectedCustomer?.phone || '').trim().toLowerCase();
+        const selectedName = String(selectedCustomer?.name || '').trim().toLowerCase();
+        if (selectedCustomer && normalizedValue !== selectedPhone && normalizedValue !== selectedName) {
             handleCustomerChange(null);
         }
     };
@@ -381,7 +384,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
             setCustomerDropdownItems((prev) => [
                 {
                     id: createdCustomer.id,
-                    name: createdCustomer.id,
+                    name: createdCustomer.name || createdCustomer.phone || 'Customer',
                     subLabel: createdCustomer.phone,
                 },
                 ...prev,
@@ -412,7 +415,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                         setCustomerDropdownItems((prev) => [
                             {
                                 id: matchedCustomer.id,
-                                name: matchedCustomer.id,
+                                name: matchedCustomer.name || matchedCustomer.phone || 'Customer',
                                 subLabel: matchedCustomer.phone,
                             },
                             ...prev.filter((customer) => customer.id !== matchedCustomer.id),
@@ -628,7 +631,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
         });
     };
 
-    const handleSaveProductDetails = (qty: number, rate: number, discount: number, discountType: 'Fixed' | 'Percentage', taxGroupId: string) => {
+    const handleSaveProductDetails = (qty: number, rate: number, discount: number) => {
         if (!pendingDetailsItem) return;
 
         if (pendingDetailsItem.type === 'edit') {
@@ -637,8 +640,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                 qty,
                 rate,
                 discount_value: discount,
-                discount_type: discountType,
-                tax_group_id: taxGroupId
+                discount_type: 'Fixed',
             };
             handleInLineItemChange(updated as ProductItem, pendingDetailsItem.item.id);
         } else {
@@ -649,6 +651,12 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
         setIsProductDetailsModalOpen(false);
         setPendingDetailsItem(null);
         setQuickAddActiveIndex(-1);
+    };
+
+    const handleCloseProductDetails = () => {
+        setIsProductDetailsModalOpen(false);
+        setPendingDetailsItem(null);
+        window.setTimeout(() => quickAddInputRef.current?.focus(), 0);
     };
 
     useEffect(() => {
@@ -785,7 +793,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                     setCustomers(fetchedCustomers);
                     const formattedCustomers = fetchedCustomers.map((c: any) => ({
                         id: c.id,
-                        name: c.id,
+                        name: c.name || c.phone || 'Customer',
                         subLabel: c.phone
                     }));
                     setCustomerDropdownItems(formattedCustomers);
@@ -1367,7 +1375,9 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
         <div className="flex flex-wrap gap-6 items-center">
             <div ref={quickAddRef} className="relative flex-1 min-w-[320px]">
                 <input
+                    ref={quickAddInputRef}
                     type="text"
+                    autoFocus
                     value={quickAddSearch}
                     onChange={(e) => {
                         setQuickAddSearch(e.target.value);
@@ -1502,8 +1512,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                 selectedItem={customerDropdownItems.find((customer) => customer.id === selectedCustomer?.id) || null}
                 addNewLabel='New Customer'
                 placeholder='Type to search customer'
-                maxLength={10}
-                sanitizeInput={sanitizeCustomerPhoneInput}
+                showItemDetails
             />
             {formErrors?.billTo && <span className="text-red-500 text-sm">{formErrors.billTo}</span>}
             {selectedCustomer && customerDetails && (
@@ -1511,6 +1520,15 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                     <CustomerCard
                         name={customerDetails.name}
                         phone={customerDetails.phone}
+                        email={customerDetails.email}
+                        variant="detailed"
+                        address={[
+                            customerDetails.billingAddress?.addressLine1,
+                            customerDetails.billingAddress?.addressLine2,
+                            customerDetails.billingAddress?.city,
+                            customerDetails.billingAddress?.state,
+                            customerDetails.billingAddress?.pincode,
+                        ].filter(Boolean).join(', ')}
                     />
                 </div>
             )}
@@ -1612,31 +1630,8 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
             <ProductDetailsModal
                 title={pendingDetailsItem?.type === "edit" ? "Edit Item" : "Add Item"}
                 isOpen={isProductDetailsModalOpen}
-                onClose={() => {
-                    setIsProductDetailsModalOpen(false);
-                    setPendingDetailsItem(null);
-                }}
-                onSave={(qty, rate, discount) => {
-                    if (!pendingDetailsItem) return;
-
-                    if (pendingDetailsItem.type === 'edit') {
-                        const updated = {
-                            ...pendingDetailsItem.item,
-                            qty,
-                            rate,
-                            discount_value: discount,
-                            discount_type: 'Fixed'
-                        };
-                        handleInLineItemChange(updated as ProductItem, pendingDetailsItem.item.id);
-                    } else {
-                        addVariantToQuotation(pendingDetailsItem.variant, pendingDetailsItem.product, qty, rate, discount);
-                    }
-
-                    setQuickAddSearch('');
-                    setIsProductDetailsModalOpen(false);
-                    setPendingDetailsItem(null);
-                    setQuickAddActiveIndex(-1);
-                }}
+                onClose={handleCloseProductDetails}
+                onSave={handleSaveProductDetails}
                 item={pendingDetailsItem?.item || null}
                 currencySymbol={systemSettings?.currency.symbol ?? '$'}
             />
@@ -1653,7 +1648,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
                 onSuccess={(newCustomer: Customer) => {
                     setCustomers(prevCustomers => [newCustomer, ...prevCustomers]);
                     setCustomerDropdownItems(prev => [
-                        { id: newCustomer.id, name: newCustomer.id, subLabel: newCustomer.phone },
+                        { id: newCustomer.id, name: newCustomer.name || newCustomer.phone || 'Customer', subLabel: newCustomer.phone },
                         ...prev
                     ]);
                     handleCustomerChange(newCustomer);

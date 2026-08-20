@@ -23,6 +23,7 @@ interface SmartDropdownProps {
     sanitizeInput?: (value: string) => string;
     label?: string;
     inputRef?: React.Ref<HTMLInputElement>;
+    showItemDetails?: boolean;
 }
 
 const SmartDropdown: React.FC<SmartDropdownProps> = ({
@@ -40,6 +41,7 @@ const SmartDropdown: React.FC<SmartDropdownProps> = ({
     sanitizeInput,
     label,
     inputRef,
+    showItemDetails = false,
 }) => {
     const [showDropdown, setShowDropdown] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
@@ -80,7 +82,7 @@ const SmartDropdown: React.FC<SmartDropdownProps> = ({
             const selected = filteredItems[activeIndex];
             if (selected) {
                 onSelect(selected);
-                setDisplayInput(selected.name);
+                setDisplayInput(selected.subLabel || selected.name);
                 setShowDropdown(false);
             }
         }
@@ -130,6 +132,7 @@ const SmartDropdown: React.FC<SmartDropdownProps> = ({
                 {selectedItem && (
                     <button
                         type="button"
+                        aria-label="Clear selection"
                         className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-red-500"
                         onClick={() => {
                             onSelect(null);
@@ -160,11 +163,22 @@ const SmartDropdown: React.FC<SmartDropdownProps> = ({
                                     }}
                                 >
                                     <div className="flex flex-col">
-                                        <span className="font-medium text-sm text-gray-600">
-                                            {/* {makeUcFirst(item.name)} */}
-                                            {/* {makeUcFirst(item.name || "")} */}
-                                            {item.subLabel || item.name}
-                                        </span>
+                                        {showItemDetails ? (
+                                            <>
+                                                <span className="text-sm font-semibold text-gray-800">
+                                                    {makeUcFirst(item.name)}
+                                                </span>
+                                                {item.subLabel && item.subLabel !== item.name && (
+                                                    <span className="mt-0.5 text-xs text-gray-500">
+                                                        {item.subLabel}
+                                                    </span>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <span className="font-medium text-sm text-gray-600">
+                                                {item.subLabel || item.name}
+                                            </span>
+                                        )}
                                     </div>
                                 </li>
                             ))

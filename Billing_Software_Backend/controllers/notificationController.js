@@ -1,4 +1,6 @@
 const Notification = require("@models/Notification");
+const Invoice = require("@models/Invoice");
+const User = require("@models/User");
 const {
   CREDIT_NOTIFICATION_TYPE,
   QUOTATION_NOTIFICATION_TYPE,
@@ -12,6 +14,53 @@ const NOTIFICATION_TYPE_FILTERS = {
   quotation: QUOTATION_NOTIFICATION_TYPE,
   credit_invoice: CREDIT_NOTIFICATION_TYPE,
   invoice_credit: CREDIT_NOTIFICATION_TYPE,
+};
+
+const buildNotificationScopeQuery = ({
+  userId,
+  notificationType = "",
+  isStaff = false,
+  staffInvoiceIds = [],
+}) => {
+  const query = {
+    userId,
+    status: "active",
+    ...(notificationType ? { type: notificationType } : {}),
+  };
+
+  if (!isStaff) return query;
+
+  if (notificationType === CREDIT_NOTIFICATION_TYPE) {
+    query.entityId = { $in: staffInvoiceIds };
+    return query;
+  }
+
+  if (!notificationType) {
+    query.$or = [
+      { type: { $ne: CREDIT_NOTIFICATION_TYPE } },
+      {
+        type: CREDIT_NOTIFICATION_TYPE,
+        entityId: { $in: staffInvoiceIds },
+      },
+    ];
+  }
+
+  return query;
+};
+
+const getNotificationScopeQuery = async (userId, notificationType = "") => {
+  const user = await User.findById(userId).select("user_type").lean();
+  const isStaff = Number(user?.user_type) === 3;
+  const staffInvoiceIds = isStaff
+    ? await Invoice.distinct("_id", { userId, isDeleted: false })
+    : [];
+
+  return buildNotificationScopeQuery({
+    userId,
+    notificationType,
+    isStaff,
+    staffInvoiceIds,
+  });
 };
 
 const fireAndForgetNotificationSyncForUser = (userId) => {
@@ -33,11 +82,7 @@ const listNotifications = async (req, res) => {
 
     fireAndForgetNotificationSyncForUser(userId);
 
-    const query = {
-      userId,
-      status: "active",
-      ...(notificationType ? { type: notificationType } : {}),
-    };
+    const query = await getNotificationScopeQuery(userId, notificationType);
 
     const notifications = await Notification.find(query)
       .sort({ createdAt: -1, updatedAt: -1 })
@@ -69,11 +114,8 @@ const getUnreadNotificationCount = async (req, res) => {
 
     fireAndForgetNotificationSyncForUser(userId);
 
-    const unreadCount = await Notification.countDocuments({
-      userId,
-      status: "active",
-      isRead: false,
-    });
+    const query = await getNotificationScopeQuery(userId);
+    const unreadCount = await Notification.countDocuments({ ...query, isRead: false });
 
     return res.status(200).json({
       success: true,
@@ -94,10 +136,10 @@ const getUnreadNotificationCount = async (req, res) => {
 const markNotificationRead = async (req, res) => {
   try {
     const userId = req.user;
+    const query = await getNotificationScopeQuery(userId);
     const notification = await Notification.findOne({
+      ...query,
       _id: req.params.id,
-      userId,
-      status: "active",
     });
 
     if (!notification) {
@@ -129,12 +171,10 @@ const markAllNotificationsRead = async (req, res) => {
   try {
     const userId = req.user;
 
+    const query = await getNotificationScopeQuery(userId);
+
     await Notification.updateMany(
-      {
-        userId,
-        status: "active",
-        isRead: false,
-      },
+      { ...query, isRead: false },
       {
         $set: {
           isRead: true,
@@ -175,6 +215,8 @@ const runNotificationCheck = async (req, res) => {
 };
 
 module.exports = {
+  CREDIT_NOTIFICATION_TYPE,
+  buildNotificationScopeQuery,
   listNotifications,
   getUnreadNotificationCount,
   markNotificationRead,

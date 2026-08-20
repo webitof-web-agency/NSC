@@ -524,7 +524,21 @@ const CreateDebitNote: React.FC<CreateDebitNoteProps> = ({ editId }) => {
         setDebitNoteFormData(prev => ({ ...prev, billFrom: user.id }));
     };
 
-    const handleSupplierChange = async (user: OptionType) => {
+    const handleSupplierChange = async (user: OptionType | null) => {
+        if (!user) {
+            setSelectedSupplier(null);
+            setSupplierDetails(null);
+            setSelectedSupplierRawMeta(null);
+            setSupplierSearchInput('');
+            setPurchaseSupplierSearchInput('');
+            setDebitNoteFormData(prev => ({
+                ...prev,
+                billTo: '',
+                purchaseId: '',
+            }));
+            return;
+        }
+
         setSelectedSupplier(user);
         setDebitNoteFormData(prev => ({ ...prev, billTo: user.id }));
         const meta = supplierMetaByUserId[user.id];
@@ -588,15 +602,7 @@ const CreateDebitNote: React.FC<CreateDebitNoteProps> = ({ editId }) => {
 
     const handleTopSupplierSelection = async (supplier: OptionType | null) => {
         if (!supplier) {
-            setSelectedSupplier(null);
-            setSupplierDetails(null);
-            setSelectedSupplierRawMeta(null);
-            setPurchaseSupplierSearchInput('');
-            setDebitNoteFormData((prev) => ({
-                ...prev,
-                billTo: '',
-                purchaseId: '',
-            }));
+            await handleSupplierChange(null);
             return;
         }
 
@@ -1388,7 +1394,7 @@ const CreateDebitNote: React.FC<CreateDebitNoteProps> = ({ editId }) => {
                                     items={suppliers}
                                     value={supplierSearchInput}
                                     onChange={setSupplierSearchInput}
-                                    onSelect={(item) => handleSupplierChange(item as OptionType)}
+                                    onSelect={(item) => handleTopSupplierSelection(item as OptionType | null)}
                                     selectedItem={selectedSupplier}
                                     placeholder="Type to search supplier..."
                                     onAddNew={() => setIsSupplierModalOpen(true)}

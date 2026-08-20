@@ -1846,7 +1846,6 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
     setInvoiceFormData((prev) => ({
       ...prev,
       items: [
-        ...prev.items,
         {
           id: newId,
           product_id: "",
@@ -1862,6 +1861,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
           staffId: selectedStaffId || null,
           staffName: selectedStaffName || "",
         },
+        ...prev.items,
       ],
     }));
 
@@ -1989,7 +1989,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
 
        setInvoiceFormData((prev) => ({
          ...prev,
-         items: [...prev.items, recalculatedNewItem],
+         items: [recalculatedNewItem, ...prev.items],
        }));
        toast.success("Item added successfully");
     }
