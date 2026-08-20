@@ -181,13 +181,27 @@ router.get('/sync-token', async (req, res) => {
 
 router.post('/sync-token', async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, user } = req.body;
     if (token) {
       await LocalConfig.findOneAndUpdate(
         { key: 'syncToken' },
         { value: token },
         { upsert: true }
       );
+      if (user && user.email) {
+        try {
+          const User = mongoose.model('User');
+          const userData = { ...user };
+          delete userData._id;
+          await User.findOneAndUpdate(
+            { email: user.email },
+            { $set: userData },
+            { upsert: true, $ignoreOutbox: true }
+          );
+        } catch (uErr) {
+          console.warn('[Sync Token] Could not cache user locally:', uErr.message);
+        }
+      }
       res.json({ success: true, message: 'Token securely cached for offline sync' });
     } else {
       res.status(400).json({ success: false, message: 'Token required' });

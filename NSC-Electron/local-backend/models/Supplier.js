@@ -56,7 +56,6 @@ const supplierSchema = new mongoose.Schema(
       required: false,
       trim: true,
       lowercase: true,
-      unique: true,
     },
     phone_number: {
       type: String,

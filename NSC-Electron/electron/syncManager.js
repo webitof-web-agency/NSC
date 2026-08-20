@@ -301,7 +301,9 @@ class SyncManager {
         }
       );
 
-      const { events, nextCursor } = remoteRes.data;
+      const responseData = remoteRes.data?.data || remoteRes.data;
+      const events = responseData?.events || [];
+      const nextCursor = responseData?.nextCursor || cursor;
 
       if (!events || events.length === 0) {
         console.log('📥 Pull Sync: No new events from cloud.');
@@ -316,7 +318,7 @@ class SyncManager {
         { timeout: 30000 }
       );
 
-      if (localRes.data.success) {
+      if (localRes.data?.success) {
         this._setCursor(nextCursor);
         console.log(`✅ Pull Sync complete. Cursor updated to ${nextCursor}`);
       }
@@ -345,7 +347,9 @@ class SyncManager {
         }
       );
 
-      const { snapshot, cursor } = remoteRes.data;
+      const responseData = remoteRes.data?.data || remoteRes.data;
+      const snapshot = responseData?.snapshot;
+      const cursor = responseData?.cursor;
 
       if (!snapshot) {
         console.warn('⚠️  Cloud returned empty snapshot.');
@@ -364,7 +368,7 @@ class SyncManager {
         { timeout: 120000 }
       );
 
-      if (localRes.data.success) {
+      if (localRes.data?.success) {
         this._setCursor(cursor);
         console.log(`✅ Bootstrap complete! Cursor set to ${cursor}`);
       }

@@ -805,7 +805,7 @@ const DashboardPage: React.FC = () => {
                                 columns={[
                                     invoice.invoiceNumber,
                                     <ProfileCard
-                                        phone={invoice.customer.phone}
+                                        phone={invoice.customer?.phone || invoice.billTo?.phone || invoice.customerPhone || "N/A"}
                                     />,
                                     format(invoice.totalAmount),
                                     <InvoiceStatusBadge status={invoice.status} />,
@@ -857,7 +857,7 @@ const DashboardPage: React.FC = () => {
                                 row={customer}
                                 index={index + 1}
                                 columns={[
-                                    customer.phone,
+                                    customer?.phone || "N/A",
                                     formatDate(customer.createdAt, systemSettings?.dateFormat.format || 'd-m-Y'),
                                 ]}
                             />

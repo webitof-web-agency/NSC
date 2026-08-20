@@ -56,8 +56,6 @@ const supplierSchema = new mongoose.Schema(
       required: false,
       trim: true,
       lowercase: true,
-      unique: true,
-      sparse: true,
     },
     phone_number: {
       type: String,
@@ -118,6 +116,6 @@ const supplierSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-accountDetailsSchema.plugin(offlineSyncPlugin);
+supplierSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('Supplier', supplierSchema);

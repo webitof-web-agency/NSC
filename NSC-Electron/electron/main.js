@@ -64,16 +64,27 @@ function startLocalBackend() {
     const envFile = path.join(backendDir, '.env.local');
 
     // ── Node modules path ─────────────────────────────────────────────
-    // In production: node_modules is inside app.asar (ASAR virtual filesystem)
-    // We must tell Node.js where to find them via NODE_PATH so the
-    // module resolver doesn't fail when walking up past resources/
-    const appPath = app.getAppPath(); // dev: project dir, prod: resources/app.asar
-    const nodeModulesPath = path.join(appPath, 'node_modules');
+    // In dev: project root node_modules
+    // In production: unpacked node_modules outside ASAR
+    const unpackedModules = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules');
+    const asarModules = path.join(app.getAppPath(), 'node_modules');
+    const localBackendModules = path.join(backendDir, 'node_modules');
+
+    const nodeModulesPath = isDev
+      ? path.join(__dirname, '../node_modules')
+      : (fs.existsSync(unpackedModules) ? unpackedModules : asarModules);
+
+    const fullNodePath = [
+      nodeModulesPath,
+      localBackendModules,
+      unpackedModules,
+      asarModules
+    ].filter(Boolean).join(path.delimiter);
 
     console.log('📂 Backend dir:', backendDir);
     console.log('📄 Server script:', serverScript);
     console.log('📄 Env file:', envFile);
-    console.log('📦 node_modules path:', nodeModulesPath);
+    console.log('📦 node_modules path:', fullNodePath);
 
     // ── Use Electron's bundled Node.js executable ─────────────────────
     // This ensures the app works on machines that DON'T have Node.js installed
@@ -92,8 +103,7 @@ function startLocalBackend() {
           ENV_FILE_PATH: envFile,
           ELECTRON_RUN_AS_NODE: '1',
           // Tell Node.js where node_modules are (critical for production)
-          // In prod, app.asar/node_modules contains all dependencies
-          NODE_PATH: nodeModulesPath,
+          NODE_PATH: fullNodePath,
         },
         cwd: backendDir,
         stdio: ['ignore', 'pipe', 'pipe'],

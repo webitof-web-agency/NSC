@@ -40,7 +40,7 @@ export const loginUser = createAsyncThunk(
             // when syncing offline data to Atlas (fire-and-forget — don't block login)
             if (typeof window !== 'undefined' && 'electronAPI' in window) {
                 const localPort = (window as any).__electronLocalBackendPort || 3002;
-                axios.post(`http://localhost:${localPort}/api/local/sync-token`, { token })
+                axios.post(`http://localhost:${localPort}/api/local/sync-token`, { token, user })
                     .then(() => {
                         // Token is now cached — safe to trigger sync
                         // SyncManager will pick up the token and push any pending offline records
@@ -92,7 +92,7 @@ export const authSlice = createSlice({
                     // Ensure local backend has the sync token cached when restoring session
                     if (typeof window !== 'undefined' && 'electronAPI' in window) {
                         const localPort = (window as any).__electronLocalBackendPort || 3002;
-                        axios.post(`http://localhost:${localPort}/api/local/sync-token`, { token })
+                        axios.post(`http://localhost:${localPort}/api/local/sync-token`, { token, user: state.user })
                             .catch(() => {});
                     }
                 } catch (e) {

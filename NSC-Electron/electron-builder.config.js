@@ -16,6 +16,11 @@ module.exports = {
   productName: 'NSCBilling',
   copyright: `Copyright © ${new Date().getFullYear()} Naresh Saree Collection`,
 
+  asar: true,
+  asarUnpack: [
+    '**/node_modules/**/*',
+  ],
+
   // ─────────────────────────────────────────────
   // Files to include in the ASAR package
   // NOTE: local-backend is NOT here — it's in extraResources below

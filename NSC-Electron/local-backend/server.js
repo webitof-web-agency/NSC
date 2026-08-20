@@ -5,6 +5,11 @@
 
 'use strict';
 
+// Ensure NODE_PATH directories are added to module search paths
+if (process.env.NODE_PATH) {
+  require('module').Module._initPaths();
+}
+
 // ── Module Aliases ──────────────────────────────────────────
 // __dirname always points to the local-backend/ directory regardless of how
 // server.js is launched (dev: node local-backend/server.js, prod: spawn from extraResources)

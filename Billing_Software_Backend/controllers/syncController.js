@@ -65,6 +65,17 @@ exports.getBootstrapSnapshot = async (req, res) => {
     const User = require('@models/User');
     const Attendance = require('@models/Attendance');
     const StaffSalary = require('@models/StaffSalary');
+    const Product = require('@models/Product');
+    const ProductVariant = require('@models/ProductVariant');
+    const Category = require('@models/Category');
+    const Brand = require('@models/Brand');
+    const Unit = require('@models/Unit');
+    const TaxGroup = require('@models/TaxGroup');
+    const TaxRate = require('@models/TaxRate');
+    const CompanySettings = require('@models/CompanySettings');
+    const BankDetail = require('@models/BankDetail');
+    const Signature = require('@models/Signature');
+    const PaymentMode = require('@models/PaymentMode');
     
     // Only fetch non-deleted records for the bootstrap snapshot
     const baseQuery = { isDeleted: false };
@@ -80,18 +91,40 @@ exports.getBootstrapSnapshot = async (req, res) => {
       supplierPayments,
       users,
       attendance,
-      staffSalary
+      staffSalary,
+      products,
+      productVariants,
+      categories,
+      brands,
+      units,
+      taxGroups,
+      taxRates,
+      companySettings,
+      bankDetails,
+      signatures,
+      paymentModes
     ] = await Promise.all([
-      Customer.find(baseQuery).lean(),
-      Invoice.find(baseQuery).lean(),
-      Quotation.find(baseQuery).lean(),
-      Supplier.find(baseQuery).lean(),
-      Purchase.find(baseQuery).lean(),
-      CreditNote.find(baseQuery).lean(),
-      SupplierPayment.find(baseQuery).lean(),
-      User.find(baseQuery).lean(),
-      Attendance.find(baseQuery).lean(),
-      StaffSalary.find(baseQuery).lean()
+      Customer.find(baseQuery).lean().catch(() => []),
+      Invoice.find(baseQuery).lean().catch(() => []),
+      Quotation.find(baseQuery).lean().catch(() => []),
+      Supplier.find(baseQuery).lean().catch(() => []),
+      Purchase.find(baseQuery).lean().catch(() => []),
+      CreditNote.find(baseQuery).lean().catch(() => []),
+      SupplierPayment.find(baseQuery).lean().catch(() => []),
+      User.find(baseQuery).lean().catch(() => []),
+      Attendance.find({}).lean().catch(() => []),
+      StaffSalary.find({}).lean().catch(() => []),
+      Product.find(baseQuery).lean().catch(() => []),
+      ProductVariant.find(baseQuery).lean().catch(() => []),
+      Category.find(baseQuery).lean().catch(() => []),
+      Brand.find(baseQuery).lean().catch(() => []),
+      Unit.find(baseQuery).lean().catch(() => []),
+      TaxGroup.find({}).lean().catch(() => []),
+      TaxRate.find({}).lean().catch(() => []),
+      CompanySettings.find({}).lean().catch(() => []),
+      BankDetail.find(baseQuery).lean().catch(() => []),
+      Signature.find(baseQuery).lean().catch(() => []),
+      PaymentMode.find({}).lean().catch(() => [])
     ]);
 
     const snapshot = {
@@ -104,7 +137,18 @@ exports.getBootstrapSnapshot = async (req, res) => {
       'supplier-payments': supplierPayments,
       users,
       attendance,
-      'staff-salary': staffSalary
+      'staff-salary': staffSalary,
+      products,
+      'product-variants': productVariants,
+      categories,
+      brands,
+      units,
+      'tax-groups': taxGroups,
+      'tax-rates': taxRates,
+      'company-details': companySettings,
+      'bank-details': bankDetails,
+      signatures,
+      'payment-modes': paymentModes
     };
 
     res.status(200).json({
@@ -144,7 +188,7 @@ exports.pushSyncEvents = async (req, res) => {
     const SyncConflict = require('@models/SyncConflict');
     const { resolveReferences } = require('../utils/referenceResolver');
 
-    // Mapping of collection names to Cloud Models (all 10 syncable collections)
+    // Mapping of collection names to Cloud Models (all syncable collections)
     const COLLECTION_MAP = {
       'customers': require('@models/Customer'),
       'invoices': require('@models/Invoice'),
@@ -155,7 +199,18 @@ exports.pushSyncEvents = async (req, res) => {
       'supplier-payments': require('@models/SupplierPayment'),
       'users': require('@models/User'),
       'attendance': require('@models/Attendance'),
-      'staff-salary': require('@models/StaffSalary')
+      'staff-salary': require('@models/StaffSalary'),
+      'products': require('@models/Product'),
+      'product-variants': require('@models/ProductVariant'),
+      'categories': require('@models/Category'),
+      'brands': require('@models/Brand'),
+      'units': require('@models/Unit'),
+      'tax-groups': require('@models/TaxGroup'),
+      'tax-rates': require('@models/TaxRate'),
+      'company-details': require('@models/CompanySettings'),
+      'bank-details': require('@models/BankDetail'),
+      'signatures': require('@models/Signature'),
+      'payment-modes': require('@models/PaymentMode')
     };
 
     const processedEvents = [];
