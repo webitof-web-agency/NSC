@@ -228,12 +228,10 @@ async function sendManual(req, res) {
 
     if (String(documentType).toLowerCase() === 'invoice' || String(documentType).toLowerCase() === 'exchange') {
       const { resolveDocumentType } = require('../../services/documentResolver');
-      const { models } = require('../services/whatsappService').getWhatsAppModuleConfig();
-      if (models && models.InvoiceModel) {
-        const invoice = await models.InvoiceModel.findById(documentId).lean();
-        if (invoice) {
-          documentType = resolveDocumentType(invoice);
-        }
+      const InvoiceModel = require('../../models/Invoice');
+      const invoice = await InvoiceModel.findById(documentId).lean();
+      if (invoice) {
+        documentType = resolveDocumentType(invoice);
       }
     }
 
