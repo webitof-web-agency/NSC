@@ -128,13 +128,14 @@ function formatDocumentDate(documentType, document) {
   return rawDate ? new Date(rawDate).toLocaleDateString('en-IN') : '';
 }
 
-async function resolveDocumentContextFromModels({ documentType, documentId, userId }) {
+async function resolveDocumentContextFromModels({ documentType, documentId, userId, resolvePublicUrl = true }) {
   const { models } = getWhatsAppModuleConfig();
   const {
     CustomerModel,
     InvoiceModel,
     QuotationModel,
     CompanySettingsModel,
+    InvoicePaymentModel,
   } = models;
 
   const DocumentModel = documentType === 'quotation' ? QuotationModel : InvoiceModel;
@@ -161,6 +162,27 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
     : null;
   const companySettings = await CompanySettingsModel.findOne({ userId }).lean();
 
+  let publicShareUrl = '';
+  if (resolvePublicUrl && (documentType === 'invoice' || documentType === 'exchange' || documentType === 'payment_reminder')) {
+    const publicShareService = require('../../services/publicShareService');
+    const invoiceModelInstance = await InvoiceModel.findOne({ _id: documentId, userId, isDeleted: false });
+    if (invoiceModelInstance) {
+      const publicShareId = await publicShareService.getOrCreatePublicShareId(invoiceModelInstance);
+      publicShareUrl = publicShareService.buildPublicInvoiceUrl(publicShareId);
+    }
+  }
+
+  let paidAmount = 0;
+  let outstandingAmount = 0;
+  if (documentType !== 'quotation' && InvoicePaymentModel) {
+    const paymentAgg = await InvoicePaymentModel.aggregate([
+      { $match: { invoiceId: document._id } },
+      { $group: { _id: "$invoiceId", totalPaid: { $sum: "$amount" } } },
+    ]);
+    paidAmount = paymentAgg.length > 0 ? Number(paymentAgg[0].totalPaid) : 0;
+    outstandingAmount = Math.max((Number(document.TotalAmount || 0) - paidAmount), 0);
+  }
+
   return {
     document,
     customer,
@@ -168,13 +190,26 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
     customerId: customer?._id || null,
     customerName: customer?.name || 'Customer',
     customerPhone: customer?.phone || '',
+    companyName: companySettings?.companyName || 'Your Company',
+    companyPhone: companySettings?.phone || '',
+    companyEmail: companySettings?.email || '',
     documentNumber: getDocumentNumber(documentType, document),
     amount: Number(document.TotalAmount || 0),
     date: formatDocumentDate(documentType, document),
     items: Array.isArray(document.items) ? document.items : [],
     status: document.status || '',
-    companyName: companySettings?.companyName || 'Your Company',
     documentLabel: getDocumentLabel(documentType),
+    paidAmount,
+    outstandingAmount,
+    dueDate: document.dueDate ? formatDocumentDate(documentType, { invoiceDate: document.dueDate }) : '',
+    invoicePublicUrl: publicShareUrl,
+    exchangePublicUrl: publicShareUrl,
+    
+    // Exchange specific fields
+    exchangeOldTotal: document.exchangeOldTotal || 0,
+    exchangeNewTotal: document.exchangeNewTotal || 0,
+    amountDifference: document.amountDifference || 0,
+    returnedAmount: document.returned_amount || 0,
   };
 }
 
@@ -277,7 +312,7 @@ async function fetchConversationReplies() {
   return [];
 }
 
-function buildTemplateComponents(assignment, context, mediaId = null, filename = null) {
+function buildTemplateComponents(assignment, context, mediaId = null, filename = null, documentType = '') {
   const components = [];
 
   // Group variables by component type
@@ -315,16 +350,32 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
   const expectsImageHeader = headerComponentDef && headerComponentDef.format === 'IMAGE';
 
   if (expectsImageHeader && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF') {
-    let fallbackImageUrl = 'https://app.nareshsareecollection.com/landing/assets/img/apple-icon.png';
-    if (headerComponentDef.example && headerComponentDef.example.header_handle && headerComponentDef.example.header_handle.length > 0) {
-      fallbackImageUrl = headerComponentDef.example.header_handle[0];
+    const defaultIcon = 'https://app.nareshsareecollection.com/image/1787201065746-962894716.png';
+    let imageUrl = defaultIcon;
+    
+    if (assignment.headerMapping?.sourceType === 'IMAGE_URL' && assignment.headerMapping?.value) {
+      imageUrl = assignment.headerMapping.value;
+    } else if (context?.companySettings?.companyLogo) {
+      imageUrl = context.companySettings.companyLogo;
+    } else if (context?.companySettings?.siteLogo) {
+      imageUrl = context.companySettings.siteLogo;
     }
+
+    if (imageUrl && imageUrl.startsWith('/')) {
+      const publicBase = 'https://app.nareshsareecollection.com';
+      imageUrl = `${publicBase}${imageUrl}`;
+    }
+
+    if (imageUrl && (imageUrl.includes('localhost') || imageUrl.includes('127.0.0.1'))) {
+      imageUrl = imageUrl.replace(/http:\/\/(localhost|127\.0\.0\.1):\d+/, 'https://app.nareshsareecollection.com');
+    }
+                     
     components.push({
       type: 'header',
       parameters: [{
         type: 'image',
         image: {
-          link: fallbackImageUrl
+          link: imageUrl
         }
       }]
     });
@@ -346,18 +397,6 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
     });
   }
 
-  // Force button parameter to use publicShareId for invoices to prevent broken links
-  if (documentType === 'invoice' && context.publicShareId) {
-    const nonButtonComponents = components.filter(c => c.type !== 'button');
-    nonButtonComponents.push({
-      type: 'button',
-      sub_type: 'url',
-      index: 0,
-      parameters: [{ type: 'text', text: context.publicShareId }]
-    });
-    components.length = 0;
-    components.push(...nonButtonComponents);
-  }
 
   if (bodyParams.length > 0) {
     components.push({
@@ -473,7 +512,7 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
         mediaId = mediaUpload.id || '';
       }
 
-      const components = buildTemplateComponents(assignment, context, mediaId, filename);
+      const components = buildTemplateComponents(assignment, context, mediaId, filename, documentType);
 
       const response = await sendTemplateMessage({
         config,

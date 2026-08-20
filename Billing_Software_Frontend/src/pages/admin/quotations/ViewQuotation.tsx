@@ -40,6 +40,29 @@ const ViewQuotation: React.FC = () => {
     }, [quotationId, token]);
 
     const navigate = useNavigate();
+
+    const handleSendWhatsAppClick = async () => {
+        if (!quotationDetails?.customerPhone && !quotationDetails?.phone) {
+            toast.error('No phone number attached to this quotation');
+            return;
+        }
+
+        try {
+            await axios.post(
+                Constants.WHATSAPP_SEND_MANUAL_URL,
+                {
+                    documentId: quotationDetails.id,
+                    documentType: 'quotation'
+                },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            toast.success('WhatsApp send requested successfully');
+        } catch (error: any) {
+            console.error('Failed to send quotation on WhatsApp:', error);
+            toast.error(error.response?.data?.message || 'Failed to send WhatsApp message');
+        }
+    };
+
     const componentRef = useRef<HTMLDivElement>(null);
     const handlePrint = useReactToPrint({
         contentRef: componentRef,
@@ -97,6 +120,15 @@ const ViewQuotation: React.FC = () => {
                     setShowPrintDialog(false);
                     window.setTimeout(() => handlePrint(), 80);
                 }}
+                onWhatsApp={async () => {
+                    await handleSendWhatsAppClick();
+                    setShowPrintDialog(false);
+                }}
+                onPrintAndWhatsApp={async () => {
+                    await handleSendWhatsAppClick();
+                    setShowPrintDialog(false);
+                    window.setTimeout(() => handlePrint(), 80);
+                }}
                 title="Print Quotation"
                 documentName={quotationDetails?.quotationNumber || "Quotation"}
                 documentType="Quotation"
@@ -125,6 +157,14 @@ const ViewQuotation: React.FC = () => {
                 >
                     Print / Save as PDF
                 </button>
+                {token && (
+                    <button
+                        onClick={handleSendWhatsAppClick}
+                        className="mr-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded cursor-pointer"
+                    >
+                        Send on WhatsApp
+                    </button>
+                )}
                 {token && (
                     <button
                         onClick={() => navigate("/admin/quotations")}

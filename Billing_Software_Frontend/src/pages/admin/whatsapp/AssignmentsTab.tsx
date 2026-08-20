@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
+import { UploadCloud } from 'lucide-react';
 import SubmitButton from '@components/admin/SubmitButton';
 import LoaderSpinner from '@components/admin/LoaderSpinner';
 import Constants from '@constants/api';
@@ -65,6 +66,10 @@ const AssignmentsTab = () => {
   const [assignment, setAssignment] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [headerImagePreview, setHeaderImagePreview] = useState<string | null>(null);
+  const [headerImageFile, setHeaderImageFile] = useState<File | null>(null);
 
   const loadData = async () => {
     try {
@@ -75,6 +80,8 @@ const AssignmentsTab = () => {
       ]);
       setMetaTemplates(metaRes.data?.data || []);
       setAssignment(assignRes.data?.data || { isEnabled: true, variableMappings: [], headerMapping: { sourceType: 'NONE' } });
+      setHeaderImagePreview(assignRes.data?.data?.headerMapping?.value || null);
+      setHeaderImageFile(null);
     } catch (error) {
       toast.error('Failed to load assignments');
     } finally {
@@ -93,8 +100,6 @@ const AssignmentsTab = () => {
     const tmpl = approvedTemplates.find(t => t._id === templateId);
     if (!tmpl) return;
 
-    // Detect variables needed by parsing body text like {{1}}, {{2}}
-    // For a real implementation, we inspect tmpl.components
     const bodyComponent = tmpl.components.find(c => c.type === 'BODY');
     const headerComponent = tmpl.components.find(c => c.type === 'HEADER');
     const buttonsComponent = tmpl.components.find(c => c.type === 'BUTTONS');
@@ -112,7 +117,6 @@ const AssignmentsTab = () => {
       sourceValue: varsForType[0]?.value || '',
     }));
 
-    // Detect URL buttons with dynamic variables
     if (buttonsComponent && buttonsComponent.buttons) {
       buttonsComponent.buttons.forEach((btn: { type?: string; url?: string }, idx: number) => {
         if (btn.type === 'URL' && btn.url && btn.url.includes('{{1}}')) {
@@ -133,17 +137,45 @@ const AssignmentsTab = () => {
       metaTemplateName: tmpl.name,
       languageCode: tmpl.language,
       headerMapping: {
-        sourceType: headerComponent?.format === 'DOCUMENT' ? 'DOCUMENT_PDF' : 'NONE',
+        sourceType: headerComponent?.format === 'DOCUMENT' ? 'DOCUMENT_PDF' : (headerComponent?.format === 'IMAGE' ? 'IMAGE_URL' : 'NONE'),
+        value: ''
       },
       variableMappings: newMappings,
     });
   };
 
   const handleSave = async () => {
+    if (!assignment?.metaTemplateId) {
+      toast.error('Please select a template');
+      return;
+    }
+
+    const invalidMapping = assignment.variableMappings?.find((m: any) => !m.sourceValue);
+    if (invalidMapping) {
+      toast.error('Please map all variables before saving');
+      return;
+    }
+
     try {
       setIsSaving(true);
-      await axios.put(`${Constants.BASE_URL}/api/admin/whatsapp/template-assignments/${activeType}`, assignment, {
-        headers: { Authorization: `Bearer ${token}` },
+      
+      const formData = new FormData();
+      formData.append('isEnabled', assignment.isEnabled);
+      formData.append('metaTemplateId', typeof assignment.metaTemplateId === 'object' ? assignment.metaTemplateId._id : assignment.metaTemplateId);
+      formData.append('metaTemplateName', assignment.metaTemplateName || '');
+      formData.append('languageCode', assignment.languageCode || 'en');
+      formData.append('headerMapping', JSON.stringify(assignment.headerMapping || {}));
+      formData.append('variableMappings', JSON.stringify(assignment.variableMappings || []));
+      
+      if (headerImageFile) {
+        formData.append('headerImage', headerImageFile);
+      }
+
+      await axios.put(`${Constants.BASE_URL}/api/admin/whatsapp/template-assignments/${activeType}`, formData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data'
+        }
       });
       toast.success('Assignment saved successfully');
     } catch (error) {
@@ -157,6 +189,33 @@ const AssignmentsTab = () => {
     const newMappings = [...assignment.variableMappings];
     newMappings[index].sourceValue = value;
     setAssignment({ ...assignment, variableMappings: newMappings });
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Only JPG, JPEG, PNG, or WEBP files are allowed');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('File size must be less than 2MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setHeaderImagePreview(reader.result as string);
+      setHeaderImageFile(file);
+      setAssignment((prev: any) => ({
+        ...prev,
+        headerMapping: { ...prev.headerMapping, sourceType: 'IMAGE_URL' }
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   if (isLoading) return <div className="flex justify-center p-12"><LoaderSpinner /></div>;
@@ -222,6 +281,39 @@ const AssignmentsTab = () => {
                 </div>
               )}
 
+              {approvedTemplates.find(t => t._id === (typeof assignment?.metaTemplateId === "object" ? assignment?.metaTemplateId?._id : assignment?.metaTemplateId))?.components?.find((c: any) => c.type === 'HEADER')?.format === 'IMAGE' && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF' && (
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase mb-2">HEADER MAPPING</p>
+                  <div className="bg-white p-4 rounded border border-gray-100 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <h3 className="font-semibold text-gray-950 text-sm">Header Image</h3>
+                        <p className="text-xs text-gray-500 font-medium mt-1">Upload a custom image. If empty, your Company Logo will be used.</p>
+                    </div>
+                    {headerImagePreview ? (
+                        <img src={headerImagePreview} alt="Header Preview" className="w-32 h-auto rounded-md object-contain max-h-32 bg-gray-50 border border-gray-200" />
+                    ) : (
+                        <div className="relative w-32 h-24 bg-gray-50 rounded-md border border-gray-200 flex items-center justify-center overflow-hidden">
+                            <img src="/image/1787201065746-962894716.png" alt="Default Company Logo" className="w-full h-full object-contain opacity-60" />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/5">
+                                <span className="text-gray-600 text-[10px] font-bold text-center uppercase tracking-wide bg-white/80 px-2 py-1 rounded shadow-sm">Default</span>
+                            </div>
+                        </div>
+                    )}
+                    <div className="text-right">
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            type="button" 
+                            className="inline-flex items-center justify-center px-4 py-2 bg-emerald-600 text-white font-semibold text-sm rounded-md shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-colors"
+                        >
+                            <UploadCloud size={16} className="mr-2" />
+                            Change Photo
+                        </button>
+                    </div>
+                    <input type="file" ref={fileInputRef} className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleImageChange} />
+                  </div>
+                </div>
+              )}
+
               {assignment.variableMappings?.filter((m: any) => m.component === 'BODY').length > 0 && (
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-gray-500 uppercase mb-2">BODY MAPPINGS</p>
@@ -271,7 +363,7 @@ const AssignmentsTab = () => {
                 </div>
               )}
 
-              {(!assignment.variableMappings || assignment.variableMappings.length === 0) && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF' && (
+              {(!assignment.variableMappings || assignment.variableMappings.length === 0) && assignment.headerMapping?.sourceType !== 'DOCUMENT_PDF' && approvedTemplates.find(t => t._id === (typeof assignment?.metaTemplateId === "object" ? assignment?.metaTemplateId?._id : assignment?.metaTemplateId))?.components?.find((c: any) => c.type === 'HEADER')?.format !== 'IMAGE' && (
                 <p className="text-sm text-gray-500">This template does not require any variables.</p>
               )}
             </div>

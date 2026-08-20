@@ -3,6 +3,7 @@ const protect = require('../../middleware/authMiddleware');
 const whatsappController = require('../controllers/whatsappController');
 const metaTemplateController = require('../controllers/whatsappMetaTemplateController');
 const assignmentController = require('../controllers/whatsappTemplateAssignmentController');
+const upload = require('../../middleware/upload');
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ router.post('/meta-templates/sync', protect, metaTemplateController.syncMetaTemp
 // Template Assignments
 router.get('/template-assignments', protect, assignmentController.getAssignments);
 router.get('/template-assignments/:messageType', protect, assignmentController.getAssignmentByType);
-router.put('/template-assignments/:messageType', protect, assignmentController.upsertAssignment);
+router.put('/template-assignments/:messageType', protect, upload.single('headerImage'), assignmentController.upsertAssignment);
 
 // Campaigns
 const campaignController = require('../controllers/whatsappCampaignController');

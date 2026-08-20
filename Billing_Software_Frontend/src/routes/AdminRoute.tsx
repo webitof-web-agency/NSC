@@ -98,7 +98,6 @@ import WhatsAppMarketing from '@pages/admin/whatsapp/WhatsAppMarketing';
 import WhatsAppMessages from '@pages/admin/whatsapp/WhatsAppMessages';
 import WhatsAppDelivered from '@pages/admin/whatsapp/WhatsAppDelivered';
 import WhatsAppRead from '@pages/admin/whatsapp/WhatsAppRead';
-import WhatsAppReplies from '@pages/admin/whatsapp/WhatsAppReplies';
 
 const AdminRoute = () => {
     return (
@@ -217,7 +216,6 @@ const AdminRoute = () => {
                     <Route path="/whatsapp/messages" element={<><Seo title="WhatsApp Messages" /><WhatsAppMessages /></>} />
                     <Route path="/whatsapp/delivered" element={<><Seo title="Delivered Messages" /><WhatsAppDelivered /></>} />
                     <Route path="/whatsapp/read" element={<><Seo title="Read Messages" /><WhatsAppRead /></>} />
-                    <Route path="/whatsapp/replies" element={<><Seo title="Reply Rate" /><WhatsAppReplies /></>} />
                 </Route>
 
                 {/* Finance Settings */}

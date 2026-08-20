@@ -146,7 +146,7 @@ const ViewInvoice: React.FC = () => {
                 Constants.WHATSAPP_SEND_MANUAL_URL,
                 {
                     documentId: invoiceDetails.id,
-                    documentType: 'invoice'
+                    documentType: invoiceDetails.status === 'EXCHANGE' || invoiceDetails.isExchange ? 'exchange' : 'invoice'
                 },
                 { headers: { Authorization: `Bearer ${token}` } }
             );
@@ -154,6 +154,28 @@ const ViewInvoice: React.FC = () => {
         } catch (error: any) {
             console.error('Failed to send invoice on WhatsApp:', error);
             toast.error(error.response?.data?.message || 'Failed to send WhatsApp message');
+        }
+    };
+
+    const handleSendPaymentReminderClick = async () => {
+        if (!invoiceDetails?.billTo?.phone) {
+            toast.error('No phone number attached to this invoice');
+            return;
+        }
+
+        try {
+            await axios.post(
+                Constants.WHATSAPP_SEND_MANUAL_URL,
+                {
+                    documentId: invoiceDetails.id,
+                    documentType: 'payment_reminder'
+                },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            toast.success('Payment Reminder requested successfully');
+        } catch (error: any) {
+            console.error('Failed to send payment reminder:', error);
+            toast.error(error.response?.data?.message || 'Failed to send Payment Reminder');
         }
     };
 
@@ -258,6 +280,14 @@ const ViewInvoice: React.FC = () => {
                 >
                     Print / Save as PDF
                 </button>
+                {invoiceDetails && ((invoiceDetails.TotalAmount || 0) - (invoiceDetails.totalPaid || 0) > 0) && invoiceDetails.status !== 'CANCELLED' && (
+                    <button
+                        onClick={handleSendPaymentReminderClick}
+                        className="mr-4 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded cursor-pointer"
+                    >
+                        Send Payment Reminder
+                    </button>
+                )}
                 <button
                     onClick={() => navigate("/admin/invoices")}
                     className="bg-gray-300 hover:bg-gray-400 text-gray-950 px-4 py-2 rounded cursor-pointer"

@@ -118,12 +118,11 @@ const WhatsAppDashboard = () => {
       />
       <WhatsAppTabs />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         {[
           { label: 'Total Sent', value: stats.sent, tone: 'text-emerald-700 bg-emerald-50' },
           { label: 'Delivered %', value: `${rates.delivered}%`, tone: 'text-sky-700 bg-sky-50' },
           { label: 'Read %', value: `${rates.read}%`, tone: 'text-indigo-700 bg-indigo-50' },
-          { label: 'Reply Rate', value: `${rates.replied}%`, tone: 'text-amber-700 bg-amber-50' },
         ].map((card) => (
           <div key={card.label} className={`${pageCardClass} p-5`}>
             <div className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${card.tone}`}>{card.label}</div>

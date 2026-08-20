@@ -432,12 +432,7 @@ const navItems: NavItemType[] = [
                 title: "WhatsApp Read",
                 slug: "website-settings",
             },
-            {
-                type: "link",
-                to: "/admin/whatsapp/replies",
-                title: "WhatsApp Reply Rate",
-                slug: "website-settings",
-            },
+
         ],
     },
     {

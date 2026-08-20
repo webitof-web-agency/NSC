@@ -40,6 +40,7 @@ configureWhatsAppModule({
     QuotationModel: Quotation,
     CustomerModel: Customer,
     CompanySettingsModel: CompanySettings,
+    InvoicePaymentModel: require('@models/InvoicePayment'),
   },
 });
 

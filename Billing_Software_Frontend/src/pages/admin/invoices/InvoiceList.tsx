@@ -896,6 +896,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                 onClick: () => handleSendWhatsAppClick(item),
                 hideWhen: ['CANCELLED']
             },
+            ...( ((item.TotalAmount || 0) - (item.totalPaid || 0) > 0 && item.status !== 'CANCELLED') ? [{
+                label: 'Payment Reminder',
+                icon: <MessageCircle size={14} />,
+                onClick: () => handleSendPaymentReminderClick(item),
+            }] : []),
             {
                 label: 'Print Bill',
                 icon: <Printer size={14} />,
@@ -1001,6 +1006,21 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
         } catch (error: any) {
             console.error('Failed to send invoice on WhatsApp:', error);
             toast.error(error.response?.data?.message || 'Failed to send WhatsApp message');
+        }
+    }
+
+    const handleSendPaymentReminderClick = async (item: Invoice) => {
+        try {
+            await axios.post(Constants.WHATSAPP_SEND_MANUAL_URL, {
+                documentType: 'payment_reminder',
+                documentId: item.id,
+            }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            toast.success('Payment Reminder requested successfully');
+        } catch (error: any) {
+            console.error('Failed to send payment reminder:', error);
+            toast.error(error.response?.data?.message || 'Failed to send Payment Reminder');
         }
     }
 

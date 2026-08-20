@@ -64,7 +64,6 @@ const tabs = [
   { to: '/admin/whatsapp/messages', label: 'Messages', icon: MessagesSquare },
   { to: '/admin/whatsapp/delivered', label: 'Delivered', icon: CheckCheck },
   { to: '/admin/whatsapp/read', label: 'Read', icon: Eye },
-  { to: '/admin/whatsapp/replies', label: 'Reply Rate', icon: Reply },
 ];
 
 export const defaultTemplates: Record<WhatsAppDocumentType, WhatsAppTemplateData> = {
@@ -97,7 +96,8 @@ export const defaultTemplates: Record<WhatsAppDocumentType, WhatsAppTemplateData
 export const pageCardClass = 'rounded-xl border border-gray-200 bg-white shadow-sm';
 
 export const statusBadgeClass = (status: WhatsAppMessageLog['status']) => {
-  switch (status) {
+  const normalizedStatus = (status || '').toLowerCase();
+  switch (normalizedStatus) {
     case 'sent':
       return 'bg-sky-100 text-sky-700';
     case 'delivered':

@@ -28,7 +28,19 @@ exports.getAssignmentByType = async (req, res) => {
 exports.upsertAssignment = async (req, res) => {
   try {
     const { messageType } = req.params;
-    const { isEnabled, metaTemplateId, metaTemplateName, languageCode, headerMapping, variableMappings } = req.body;
+    let { isEnabled, metaTemplateId, metaTemplateName, languageCode, headerMapping, variableMappings } = req.body;
+
+    if (typeof headerMapping === 'string') {
+      try { headerMapping = JSON.parse(headerMapping); } catch(e) {}
+    }
+    if (typeof variableMappings === 'string') {
+      try { variableMappings = JSON.parse(variableMappings); } catch(e) {}
+    }
+
+    if (req.file && headerMapping) {
+      const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+      headerMapping.value = `${baseUrl}/${req.file.path.replace(/\\/g, '/')}`;
+    }
 
     const assignment = await WhatsAppTemplateAssignment.findOneAndUpdate(
       { userId: req.user, messageType },

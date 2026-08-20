@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
 import Constants from '@constants/api';
 import type { RootState } from '@store/index';
-import { pageCardClass } from './WhatsAppShared';
+import { pageCardClass, WhatsAppSectionHeader, WhatsAppTabs } from './WhatsAppShared';
 
 export interface MetaTemplate {
   _id: string;
@@ -33,7 +33,10 @@ const WhatsAppMarketing = () => {
   
   const [customers, setCustomers] = useState<EligibleCustomer[]>([]);
   const [stats, setStats] = useState<any>(null);
+  
+  const [audienceTarget, setAudienceTarget] = useState<'all' | 'selected'>('all');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   
   const [variableMappings, setVariableMappings] = useState<any[]>([]);
   
@@ -107,11 +110,16 @@ const WhatsAppMarketing = () => {
   };
 
   const handleSend = async () => {
-    if (!campaignName || !selectedTemplateId || selectedCustomerIds.length === 0) {
+    if (!campaignName || !selectedTemplateId) {
       return toast.error('Please complete all steps');
     }
+    
+    if (audienceTarget === 'selected' && selectedCustomerIds.length === 0) {
+      return toast.error('Please select at least one customer');
+    }
 
-    const confirmed = window.confirm(`Send WhatsApp Marketing campaign to ${selectedCustomerIds.length} eligible customers?`);
+    const targetCount = audienceTarget === 'all' ? (stats?.eligible || 0) : selectedCustomerIds.length;
+    const confirmed = window.confirm(`Send WhatsApp Marketing campaign to ${targetCount} eligible customers?`);
     if (!confirmed) return;
 
     try {
@@ -119,7 +127,8 @@ const WhatsAppMarketing = () => {
       await axios.post(`${Constants.BASE_URL}/api/admin/whatsapp/campaigns`, {
         name: campaignName,
         metaTemplateId: selectedTemplateId,
-        selectedCustomerIds,
+        sendToAllEligible: audienceTarget === 'all',
+        selectedCustomerIds: audienceTarget === 'selected' ? selectedCustomerIds : [],
         variableMappings
       }, {
         headers: { Authorization: `Bearer ${token}` }
@@ -145,6 +154,12 @@ const WhatsAppMarketing = () => {
 
   return (
     <div className="space-y-6">
+      <WhatsAppSectionHeader
+        title="WhatsApp Marketing"
+        subtitle="Broadcast promotional templates and bulk messages to eligible customers."
+      />
+      <WhatsAppTabs />
+
       <div className="grid md:grid-cols-[2fr_1fr] gap-6">
         <div className={`${pageCardClass} p-6 space-y-6`}>
           <h2 className="text-xl font-semibold text-gray-900">New Marketing Campaign</h2>
@@ -227,12 +242,79 @@ const WhatsAppMarketing = () => {
               </div>
             )}
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Audience Targeting</label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="audience" value="all" checked={audienceTarget === 'all'} onChange={() => setAudienceTarget('all')} className="accent-emerald-600" />
+                  <span className="text-sm text-gray-800">All Eligible Customers ({stats?.eligible || 0})</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="audience" value="selected" checked={audienceTarget === 'selected'} onChange={() => setAudienceTarget('selected')} className="accent-emerald-600" />
+                  <span className="text-sm text-gray-800">Selected Customers</span>
+                </label>
+              </div>
+            </div>
+
+            {audienceTarget === 'selected' && (
+              <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Search customers..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                    className="flex-1 text-sm border-b border-gray-200 pb-2 outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      const visibleIds = customers
+                        .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.phone.includes(searchTerm))
+                        .map(c => c._id);
+                      setSelectedCustomerIds(Array.from(new Set([...selectedCustomerIds, ...visibleIds])));
+                    }}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
+                  >
+                    Select Visible
+                  </button>
+                  <button
+                    onClick={() => setSelectedCustomerIds([])}
+                    className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
+                  >
+                    Clear All
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2">
+                  {customers
+                    .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.phone.includes(searchTerm))
+                    .map(c => (
+                    <label key={c._id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
+                      <input 
+                        type="checkbox" 
+                        className="accent-emerald-600"
+                        checked={selectedCustomerIds.includes(c._id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedCustomerIds([...selectedCustomerIds, c._id]);
+                          else setSelectedCustomerIds(selectedCustomerIds.filter(id => id !== c._id));
+                        }}
+                      />
+                      <span>{c.name} ({c.phone})</span>
+                    </label>
+                  ))}
+                  {customers.length === 0 && <p className="text-xs text-gray-500">No eligible customers found.</p>}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {selectedCustomerIds.length} customer(s) selected
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleSend}
-              disabled={isSending || !selectedTemplate || selectedCustomerIds.length === 0}
+              disabled={isSending || !selectedTemplate || (audienceTarget === 'selected' && selectedCustomerIds.length === 0)}
               className="w-full bg-emerald-600 text-white rounded-lg px-4 py-3 font-medium hover:bg-emerald-700 disabled:opacity-50"
             >
-              {isSending ? 'Starting Campaign...' : `Send Campaign to ${selectedCustomerIds.length} Customers`}
+              {isSending ? 'Starting Campaign...' : `Send Campaign to ${audienceTarget === 'all' ? (stats?.eligible || 0) : selectedCustomerIds.length} Customers`}
             </button>
           </div>
         </div>

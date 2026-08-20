@@ -82,6 +82,7 @@ async function createCampaign(req, res) {
       name, 
       metaTemplateId, 
       selectedCustomerIds, 
+      sendToAllEligible,
       variableMappings, 
       headerMapping, 
       buttonMappings
@@ -104,7 +105,18 @@ async function createCampaign(req, res) {
       return res.status(400).json({ success: false, message: 'Only MARKETING templates can be used for campaigns.' });
     }
 
-    const customers = await Customer.find({ _id: { $in: selectedCustomerIds }, userId: req.user._id });
+    let customers = [];
+    if (sendToAllEligible) {
+      customers = await Customer.find({ 
+        userId: req.user._id,
+        isDeleted: false,
+        status: 'Active',
+        whatsappMarketingOptIn: true,
+        whatsappMarketingOptOutAt: null
+      });
+    } else {
+      customers = await Customer.find({ _id: { $in: selectedCustomerIds || [] }, userId: req.user._id });
+    }
     
     // Deduplicate and filter eligible
     const uniquePhones = new Set();
@@ -138,7 +150,7 @@ async function createCampaign(req, res) {
         category: template.category
       },
       status: 'QUEUED',
-      totalSelected: selectedCustomerIds.length,
+      totalSelected: sendToAllEligible ? finalEligibleCustomers.length : (selectedCustomerIds?.length || 0),
       totalEligible: finalEligibleCustomers.length,
       totalExcluded: excludedCount,
       queuedCount: finalEligibleCustomers.length,
