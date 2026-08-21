@@ -35,6 +35,10 @@ function offlineSyncPlugin(schema) {
       type: Date,
       default: null,
     },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
     // ────────────────────────────────────────
 
     // Flag: was this record created offline and synced here?

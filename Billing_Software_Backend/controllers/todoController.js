@@ -100,7 +100,7 @@ const listTodoTasks = async (req, res) => {
     }
     const status = String(req.query.status || "all").toLowerCase();
 
-    const filters = {};
+    const filters = { isDeleted: { $ne: true } };
     if (!isAdminUser(authUser)) {
       filters.userId = userId;
     }
@@ -139,7 +139,7 @@ const getTodoTaskSummary = async (req, res) => {
     if (!userId) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
-    const filters = { status: "pending" };
+    const filters = { status: "pending", isDeleted: { $ne: true } };
     if (!isAdminUser(authUser)) {
       filters.userId = userId;
     }
@@ -239,7 +239,7 @@ const updateTodoTask = async (req, res) => {
       return res.status(400).json({ success: false, message: "Due date cannot be before create date" });
     }
 
-    const taskFilters = { _id: id };
+    const taskFilters = { _id: id, isDeleted: { $ne: true } };
     if (!isAdminUser(authUser)) {
       taskFilters.userId = userId;
     }
@@ -288,7 +288,7 @@ const markTodoTaskCompleted = async (req, res) => {
     }
     const { id } = req.params;
 
-    const taskFilters = { _id: id };
+    const taskFilters = { _id: id, isDeleted: { $ne: true } };
     if (!isAdminUser(authUser)) {
       taskFilters.userId = userId;
     }
@@ -329,12 +329,16 @@ const deleteTodoTask = async (req, res) => {
     }
     const { id } = req.params;
 
-    const taskFilters = { _id: id };
+    const taskFilters = { _id: id, isDeleted: { $ne: true } };
     if (!isAdminUser(authUser)) {
       taskFilters.userId = userId;
     }
 
-    const task = await TodoTask.findOneAndDelete(taskFilters);
+    const task = await TodoTask.findOneAndUpdate(
+      taskFilters,
+      { $set: { isDeleted: true, deletedAt: new Date() } },
+      { new: true },
+    );
 
     if (!task) {
       return res.status(404).json({

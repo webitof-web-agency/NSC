@@ -42,3 +42,4 @@ lerna-debug.log*
 .cache
 .temp
 *.log
+dist.zip

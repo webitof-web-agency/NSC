@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const categorySchema = new mongoose.Schema(
   {
@@ -45,4 +46,6 @@ categorySchema.virtual('categoryImageUrl').get(function () {
   }
   return "";
 });
+categorySchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Category', categorySchema);

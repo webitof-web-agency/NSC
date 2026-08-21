@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const syncJournalSchema = new mongoose.Schema({
   cursor: {
     type: String,
-    required: true,
+    default: () => new mongoose.Types.ObjectId().toString(),
     unique: true,
     index: true // Efficient chronological pulls
   },

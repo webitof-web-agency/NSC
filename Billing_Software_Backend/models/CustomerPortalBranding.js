@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const customerPortalPromoGalleryItemSchema = new mongoose.Schema({
     type: {
@@ -160,5 +161,7 @@ const customerPortalBrandingSchema = new mongoose.Schema({
         }
     }
 });
+
+customerPortalBrandingSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('CustomerPortalBranding', customerPortalBrandingSchema);

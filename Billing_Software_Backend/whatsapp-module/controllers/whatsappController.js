@@ -7,6 +7,7 @@ const { normalizePhoneNumber } = require('../utils/phoneFormatter');
 const { encryptValue, maskSecret } = require('../utils/credentialCrypto');
 const {
   mergeConfig,
+  buildDocumentLookup,
   sendTextMessage,
   triggerWhatsAppSend,
 } = require('../services/whatsappService');
@@ -157,7 +158,16 @@ async function updateTemplate(req, res) {
 async function listMessages(req, res) {
   try {
     const query = { userId: req.user };
-    if (req.query.status) query.status = req.query.status;
+    if (req.query.status) {
+      const normalizedStatus = String(req.query.status).trim().toUpperCase();
+      if (normalizedStatus === 'DELIVERED') {
+        query.status = { $in: ['DELIVERED', 'READ', 'REPLIED'] };
+      } else if (normalizedStatus === 'READ') {
+        query.status = { $in: ['READ', 'REPLIED'] };
+      } else {
+        query.status = normalizedStatus;
+      }
+    }
     if (req.query.documentType) query.documentType = req.query.documentType;
     if (req.query.customerId) query.customerId = req.query.customerId;
     if (req.query.dateFrom || req.query.dateTo) {
@@ -194,11 +204,11 @@ async function getMessageStats(req, res) {
         $group: {
           _id: null,
           total: { $sum: 1 },
-          sent: { $sum: { $cond: [{ $in: ['$status', ['sent', 'delivered', 'read', 'replied']] }, 1, 0] } },
-          delivered: { $sum: { $cond: [{ $in: ['$status', ['delivered', 'read', 'replied']] }, 1, 0] } },
-          read: { $sum: { $cond: [{ $in: ['$status', ['read', 'replied']] }, 1, 0] } },
-          replied: { $sum: { $cond: [{ $eq: ['$status', 'replied'] }, 1, 0] } },
-          failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+          sent: { $sum: { $cond: [{ $in: ['$status', ['SENT', 'DELIVERED', 'READ', 'REPLIED']] }, 1, 0] } },
+          delivered: { $sum: { $cond: [{ $in: ['$status', ['DELIVERED', 'READ', 'REPLIED']] }, 1, 0] } },
+          read: { $sum: { $cond: [{ $in: ['$status', ['READ', 'REPLIED']] }, 1, 0] } },
+          replied: { $sum: { $cond: [{ $eq: ['$status', 'REPLIED'] }, 1, 0] } },
+          failed: { $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] } },
         },
       },
     ]);
@@ -229,7 +239,7 @@ async function sendManual(req, res) {
     if (String(documentType).toLowerCase() === 'invoice' || String(documentType).toLowerCase() === 'exchange') {
       const { resolveDocumentType } = require('../../services/documentResolver');
       const InvoiceModel = require('../../models/Invoice');
-      const invoice = await InvoiceModel.findById(documentId).lean();
+      const invoice = await InvoiceModel.findOne(buildDocumentLookup(documentId, req.user)).lean();
       if (invoice) {
         documentType = resolveDocumentType(invoice);
       }
@@ -238,7 +248,10 @@ async function sendManual(req, res) {
     if (String(documentType).toLowerCase() === 'payment_reminder') {
       const { getInvoiceOutstandingAmount } = require('../../services/invoicePaymentService');
       try {
-        const { outstandingAmount, isCancelled } = await getInvoiceOutstandingAmount(documentId);
+        const InvoiceModel = require('../../models/Invoice');
+        const invoice = await InvoiceModel.findOne(buildDocumentLookup(documentId, req.user)).lean();
+        if (!invoice) throw new Error('Invoice not found');
+        const { outstandingAmount, isCancelled } = await getInvoiceOutstandingAmount(invoice._id, invoice);
         
         if (isCancelled) {
           return res.status(409).json({ success: false, message: 'Cannot send payment reminder for a cancelled invoice.' });

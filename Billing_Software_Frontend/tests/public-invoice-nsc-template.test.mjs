@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
-import * as publicInvoicePortalUtils from "../src/pages/public/publicInvoicePortalUtils.ts";
+import * as publicInvoicePortalUtils from "../src/pages/public/publicDocumentPortalUtils.ts";
 import {
   getFooterAddressLines,
   getSafeHttpUrl,
   getUniquePhoneNumbers,
   getValidEmail,
   getWhatsAppNumber,
-} from "../src/pages/public/publicInvoicePortalUtils.ts";
+} from "../src/pages/public/publicDocumentPortalUtils.ts";
 
 const require = createRequire(import.meta.url);
 const publicInvoiceController = require(
@@ -21,7 +21,11 @@ const publicInvoiceSource = readFileSync(
   "utf8",
 );
 const portalSource = readFileSync(
-  new URL("../src/pages/public/PublicInvoicePortal.tsx", import.meta.url),
+  new URL("../src/pages/public/PublicDocumentPortal.tsx", import.meta.url),
+  "utf8",
+);
+const publicDetailsSource = readFileSync(
+  new URL("../src/pages/public/PublicInvoiceDetails.tsx", import.meta.url),
   "utf8",
 );
 const invoiceTemplateSource = readFileSync(
@@ -51,8 +55,8 @@ const publicPortalUtilitySource = readFileSync(
 );
 
 test("public route renders a compact customer portal while retaining the formal template only for print", () => {
-  assert.match(publicInvoiceSource, /import PublicInvoicePortal,/);
-  assert.match(publicInvoiceSource, /<PublicInvoicePortal/);
+  assert.match(publicInvoiceSource, /import PublicDocumentPortal,/);
+  assert.match(publicInvoiceSource, /<PublicDocumentPortal/);
   assert.match(publicInvoiceSource, /import InvoiceTemplateB from/);
   assert.match(publicInvoiceSource, /portal-print-document/);
   assert.match(publicInvoiceSource, /useReactToPrint/);
@@ -60,14 +64,14 @@ test("public route renders a compact customer portal while retaining the formal 
 });
 
 test("portal provides compact line items, totals, payment details and authenticated navigation", () => {
-  assert.match(portalSource, /Item details/);
-  assert.match(portalSource, /Design/);
-  assert.match(portalSource, /Size/);
-  assert.match(portalSource, /HSN/);
-  assert.match(portalSource, /Amount paid/);
-  assert.match(portalSource, /Amount due/);
+  assert.match(publicDetailsSource, /Item details/);
+  assert.match(publicDetailsSource, /Design/);
+  assert.match(publicDetailsSource, /Size/);
+  assert.match(publicDetailsSource, /HSN/);
+  assert.match(publicDetailsSource, /Amount paid/);
+  assert.match(publicDetailsSource, /Amount due/);
   assert.match(portalSource, /aria-label="Customer invoice navigation"/);
-  assert.match(portalSource, />Invoice</);
+  assert.match(portalSource, /documentType === 'INVOICE' \? 'Invoice'/);
   assert.match(portalSource, />History</);
   assert.match(portalSource, />Login</);
   assert.match(portalSource, /to="\/customer\/profile"/);
@@ -133,7 +137,8 @@ test("history uses the saved customer Bearer token and never the invoice share t
   assert.match(portalSource, /isTokenExpired\(token\)/);
   assert.match(portalSource, /CUSTOMER_PORTAL_INVOICES_URL/);
   assert.match(portalSource, /Authorization: `Bearer \$\{token\}`/);
-  assert.match(portalSource, /\/customer\/invoices\/\$\{historyInvoice\.id\}/);
+  assert.match(portalSource, /<CustomerInvoiceAccordion/);
+  assert.doesNotMatch(portalSource, /\/customer\/invoices\/\$\{historyInvoice\.id\}/);
   assert.doesNotMatch(portalSource, /publicShareId/);
   assert.match(publicPortalUtilitySource, /OTP_DELIVERY_NOT_CONFIGURED/);
   assert.match(publicRoutesSource, /requireCustomerHistorySession/);
@@ -151,6 +156,13 @@ test("public invoice keeps no-index and private no-store protections", () => {
 test("formal NSC invoice remains responsive and printable", () => {
   assert.match(invoiceTemplateSource, /@media screen and \(max-width: 640px\)/);
   assert.match(invoiceTemplateSource, /@media print/);
+});
+
+test("formal NSC invoice renders saved multiline terms without an empty numbered row", () => {
+  assert.match(invoiceTemplateSource, /termsAndConditions/);
+  assert.match(invoiceTemplateSource, /split\(\/\\r\?\\n\//);
+  assert.match(invoiceTemplateSource, /termsAndConditions\.length > 0/);
+  assert.match(invoiceTemplateSource, /termsAndConditions\.map/);
 });
 
 test("public serializer maps compact portal, payment and branding data", () => {

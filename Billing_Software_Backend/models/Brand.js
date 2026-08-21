@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const brandSchema = new mongoose.Schema(
   {
@@ -34,4 +35,6 @@ brandSchema.virtual('brandImageUrl').get(function () {
   }
   return "";
 });
+brandSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Brand', brandSchema);

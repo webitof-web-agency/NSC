@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const productVariantSchema = new mongoose.Schema({
     productId: {
@@ -24,5 +25,7 @@ const productVariantSchema = new mongoose.Schema({
 });
 
 productVariantSchema.index({ barcode: 1 });
+
+productVariantSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('ProductVariant', productVariantSchema);

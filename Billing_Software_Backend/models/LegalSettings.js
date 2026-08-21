@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const legalSettingsSchema = new mongoose.Schema({
   privacyPolicy: {
@@ -14,5 +15,7 @@ const legalSettingsSchema = new mongoose.Schema({
     default: ''
   }
 }, { timestamps: true });
+
+legalSettingsSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('LegalSettings', legalSettingsSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const bankDetailSchema = new mongoose.Schema({
     accountHoldername: {
@@ -79,8 +80,9 @@ const bankDetailSchema = new mongoose.Schema({
 
 // Indexes
 bankDetailSchema.index({ userId: 1 });
-bankDetailSchema.index({ accountNumber: 1 }, { unique: true });
 bankDetailSchema.index({ isDeleted: 1 });
 bankDetailSchema.index({ status: 1 });
+
+bankDetailSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('BankDetail', bankDetailSchema);

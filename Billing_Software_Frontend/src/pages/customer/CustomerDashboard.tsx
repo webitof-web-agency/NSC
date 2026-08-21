@@ -4,8 +4,8 @@ import Constants from "@constants/api";
 import { useSelector } from "react-redux";
 import type { RootState } from "@store/index";
 import LoaderSpinner from "@components/admin/LoaderSpinner";
+import CustomerInvoiceAccordion from "@components/customer/CustomerInvoiceAccordion";
 import { useCurrencyFormatter } from "@hooks/useCurrencyFormatter";
-import useDateFormatter from "@hooks/useDateFormatter";
 import { useNavigate } from "react-router-dom";
 import {
     FileText, IndianRupee, CheckCircle2, Clock, XCircle,
@@ -40,24 +40,19 @@ interface PromoGalleryItem {
     caption: string;
     order: number;
 }
-
-/* ─── Status helpers ─── */
-const statusConfig = (status: string) => {
-    switch (status?.toUpperCase()) {
-        case "PAID":
-            return { label: "Paid", chip: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-400", icon: <CheckCircle2 className="w-3.5 h-3.5" /> };
-        case "PARTIAL":
-        case "PARTIALLY PAID":
-            return { label: "Partial", chip: "bg-amber-100 text-amber-700", dot: "bg-amber-400", icon: <Clock className="w-3.5 h-3.5" /> };
-        default:
-            return { label: "Unpaid", chip: "bg-red-100 text-red-700", dot: "bg-red-400", icon: <XCircle className="w-3.5 h-3.5" /> };
-    }
-};
+interface CustomerPortalBranding {
+    activeBannerType?: "none" | "image" | "video";
+    bannerImage?: string;
+    bannerVideo?: string;
+    heroTitle?: string;
+    heroSubtitle?: string;
+    promoGallery?: PromoGalleryItem[];
+}
 
 /* ═══════════════════════════════════════
    PromoBanner  (unchanged logic)
 ═══════════════════════════════════════ */
-const PromoBanner: React.FC<{ branding: any; firstName: string }> = ({ branding, firstName }) => {
+const PromoBanner: React.FC<{ branding?: CustomerPortalBranding; firstName: string }> = ({ branding, firstName }) => {
     const hasMedia = branding?.activeBannerType === "image" || branding?.activeBannerType === "video";
     const hasTitle = branding?.heroTitle || branding?.heroSubtitle;
     if (!hasMedia && !hasTitle) return null;
@@ -302,7 +297,7 @@ const PromoMediaPreviewModal: React.FC<{
 /* ═══════════════════════════════════════
    Promotions Section — Reels + Images
 ═══════════════════════════════════════ */
-const PromotionsSection: React.FC<{ branding: any }> = ({ branding }) => {
+const PromotionsSection: React.FC<{ branding?: CustomerPortalBranding }> = ({ branding }) => {
     const reelsRef = useRef<HTMLDivElement>(null);
     const imagesRef = useRef<HTMLDivElement>(null);
     const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -432,15 +427,16 @@ const CustomerDashboard: React.FC = () => {
     const { token, customer } = useSelector((state: RootState) => state.customerAuth);
     const { data: systemSettings } = useSelector((state: RootState) => state.systemSettings);
     const { format } = useCurrencyFormatter();
-    const { formatDate } = useDateFormatter();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
     const [summary, setSummary] = useState<DashboardSummary | null>(null);
     const [recentInvoices, setRecentInvoices] = useState<RecentInvoice[]>([]);
 
-    const displayName = (customer as any)?.name || (customer as any)?.phone || "Customer";
+    const customerDetails = customer as { name?: string; phone?: string } | null;
+    const displayName = customerDetails?.name || customerDetails?.phone || "Customer";
     const firstName = displayName.split(" ")[0];
-    const branding = (systemSettings as any)?.company?.customerPortalBranding;
+    const branding = (systemSettings as { company?: { customerPortalBranding?: CustomerPortalBranding } } | null)
+        ?.company?.customerPortalBranding;
 
     useEffect(() => {
         const fetchDashboard = async () => {
@@ -567,7 +563,7 @@ const CustomerDashboard: React.FC = () => {
                     </div>
                     <button
                         onClick={() => navigate("/customer/invoices")}
-                        className="flex items-center gap-1 rounded-lg bg-white/20 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/30"
+                        className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-white/20 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/30"
                     >
                         View all <ArrowRight className="h-3 w-3" />
                     </button>
@@ -575,88 +571,12 @@ const CustomerDashboard: React.FC = () => {
 
                 {recentInvoices.length > 0 ? (
                     <>
-                        {/* Mobile list */}
-                        <div className="divide-y divide-gray-50 lg:hidden">
-                            {recentInvoices.map((invoice) => {
-                                const cfg = statusConfig(invoice.status);
-                                return (
-                                    <div key={invoice.id}
-                                        onClick={() => navigate(`/customer/invoices/${invoice.id}`)}
-                                        className="flex cursor-pointer items-center gap-3 px-4 py-3.5 active:bg-[#fce6f4]/30">
-                                        <div className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${cfg.dot}`} />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="truncate text-sm font-bold text-[#A43275]">{invoice.invoiceNumber}</span>
-                                                <span className="flex-shrink-0 text-sm font-bold text-gray-800">{format(invoice.totalAmount)}</span>
-                                            </div>
-                                            <div className="mt-0.5 flex items-center justify-between gap-2">
-                                                <span className="text-[11px] text-gray-400">
-                                                    {formatDate(invoice.invoiceDate, (systemSettings as any)?.dateFormat?.format || "d-m-Y")}
-                                                </span>
-                                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${cfg.chip}`}>
-                                                    {cfg.icon} {cfg.label}
-                                                </span>
-                                            </div>
-                                            {invoice.balanceAmount > 0 && (
-                                                <p className="mt-0.5 text-[10px] font-medium text-rose-500">Balance: {format(invoice.balanceAmount)}</p>
-                                            )}
-                                        </div>
-                                        <ChevronRight className="h-4 w-4 flex-shrink-0 text-gray-300" />
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* Desktop table */}
-                        <div className="hidden overflow-x-auto lg:block">
-                            <table className="min-w-full text-sm">
-                                <thead>
-                                    <tr className="border-b border-gray-100 bg-gray-50/60">
-                                        <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Invoice</th>
-                                        <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Date</th>
-                                        <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Amount</th>
-                                        <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Paid</th>
-                                        <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Balance</th>
-                                        <th className="px-5 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50">
-                                    {recentInvoices.map((invoice) => {
-                                        const cfg = statusConfig(invoice.status);
-                                        return (
-                                            <tr key={invoice.id}
-                                                onClick={() => navigate(`/customer/invoices/${invoice.id}`)}
-                                                className="group cursor-pointer transition-colors duration-150 hover:bg-[#fce6f4]/30">
-                                                <td className="px-5 py-4">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${cfg.dot}`} />
-                                                        <span className="font-semibold text-[#A43275] group-hover:underline">{invoice.invoiceNumber}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-5 py-4 text-xs text-gray-500">
-                                                    {formatDate(invoice.invoiceDate, (systemSettings as any)?.dateFormat?.format || "d-m-Y")}
-                                                </td>
-                                                <td className="px-5 py-4 text-right font-semibold text-gray-800">{format(invoice.totalAmount)}</td>
-                                                <td className="px-5 py-4 text-right font-medium text-emerald-600">{format(invoice.totalPaid)}</td>
-                                                <td className="px-5 py-4 text-right font-medium text-rose-600">{format(invoice.balanceAmount)}</td>
-                                                <td className="px-5 py-4">
-                                                    <div className="flex justify-center">
-                                                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold ${cfg.chip}`}>
-                                                            {cfg.icon}{cfg.label}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
+                        <CustomerInvoiceAccordion invoices={recentInvoices} />
 
                         <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-4 py-3 lg:px-5">
                             <p className="text-[11px] text-gray-400">Showing last {recentInvoices.length} invoices</p>
                             <button onClick={() => navigate("/customer/invoices")}
-                                className="flex items-center gap-1 text-xs font-semibold text-[#A43275] hover:underline">
+                                className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs font-semibold text-[#A43275] hover:underline">
                                 View all <ArrowRight className="h-3 w-3" />
                             </button>
                         </div>

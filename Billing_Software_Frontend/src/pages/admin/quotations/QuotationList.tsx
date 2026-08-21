@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
+import { syncBeforeCloudAction } from "@utils/syncBeforeCloudAction";
 
 interface Quotation {
     id: string;
@@ -251,6 +252,7 @@ const QuotationList: React.FC = () => {
     }
     const handleSendWhatsAppClick = async (item: Quotation) => {
         try {
+            await syncBeforeCloudAction();
             await axios.post(Constants.WHATSAPP_SEND_MANUAL_URL, {
                 documentType: 'quotation',
                 documentId: item.id,

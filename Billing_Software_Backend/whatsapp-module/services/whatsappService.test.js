@@ -40,6 +40,9 @@ test('manual invoice send uses the assigned Meta template and mapped values', as
       items: [],
       status: 'PAID',
       companyName: 'NARESH KIDS WEAR',
+      companySettings: {
+        siteLogo: 'https://app.nareshsareecollection.com/landing/assets/img/apple-icon.png',
+      },
       documentLabel: 'Invoice',
     }),
     models: {
@@ -60,32 +63,43 @@ test('manual invoice send uses the assigned Meta template and mapped values', as
   WhatsAppTemplate.findOne = () => {
     throw new Error('The legacy local template must not be read');
   };
-  WhatsAppTemplateAssignment.findOne = () => ({
-    populate() {
-      return this;
-    },
-    async lean() {
-      return {
-        _id: 'assignment-id',
-        isEnabled: true,
-        metaTemplateName: 'invoice_template',
-        languageCode: 'en',
-        metaTemplateId: {
-          _id: 'meta-template-id',
-          status: 'APPROVED',
-          components: [{ type: 'HEADER', format: 'IMAGE' }],
-        },
-        headerMapping: { sourceType: 'NONE' },
-        variableMappings: [
-          { component: 'BODY', parameterIndex: 1, sourceType: 'VARIABLE', sourceValue: 'customerName' },
-          { component: 'BODY', parameterIndex: 2, sourceType: 'VARIABLE', sourceValue: 'documentNumber' },
-          { component: 'BODY', parameterIndex: 3, sourceType: 'VARIABLE', sourceValue: 'amount' },
-          { component: 'BODY', parameterIndex: 4, sourceType: 'VARIABLE', sourceValue: 'companyName' },
-          { component: 'BUTTONS', parameterIndex: 1, sourceType: 'VARIABLE', sourceValue: 'publicShareId', buttonIndex: 0 },
-        ],
-      };
-    },
-  });
+  WhatsAppTemplateAssignment.findOne = (query) => {
+    assert.equal(query.messageType, 'INVOICE');
+    return ({
+      populate() {
+        return this;
+      },
+      async lean() {
+        return {
+          _id: 'assignment-id',
+          isEnabled: true,
+          metaTemplateName: 'invoice_template',
+          languageCode: 'en',
+          metaTemplateId: {
+            _id: 'meta-template-id',
+            status: 'APPROVED',
+            components: [
+              { type: 'HEADER', format: 'IMAGE' },
+              { type: 'BODY', text: 'Dear {{1}}, invoice {{2}} for {{3}} from {{4}}.' },
+              {
+                type: 'BUTTONS',
+                buttons: [{ type: 'URL', url: 'https://app.nareshsareecollection.com/invoice/{{1}}' }],
+              },
+            ],
+          },
+          headerMapping: { sourceType: 'NONE' },
+          variableMappings: [
+            { component: 'BODY', parameterIndex: 1, sourceType: 'VARIABLE', sourceValue: 'customerName' },
+            { component: 'BODY', parameterIndex: 2, sourceType: 'VARIABLE', sourceValue: 'documentNumber' },
+            { component: 'BODY', parameterIndex: 3, sourceType: 'VARIABLE', sourceValue: 'amount' },
+            { component: 'BODY', parameterIndex: 4, sourceType: 'VARIABLE', sourceValue: 'companyName' },
+            { component: 'BODY', parameterIndex: 5, sourceType: 'VARIABLE', sourceValue: 'companyName' },
+            { component: 'BUTTONS', parameterIndex: 1, sourceType: 'VARIABLE', sourceValue: 'publicShareId', buttonIndex: 0 },
+          ],
+        };
+      },
+    });
+  };
 
   let createdLog;
   let updatedLog;
@@ -123,6 +137,7 @@ test('manual invoice send uses the assigned Meta template and mapped values', as
   assert.equal(requests.length, 1, 'a template without a document header must not invoke PDF/media upload');
 
   const requestBody = JSON.parse(requests[0].options.body);
+  assert.equal(requestBody.to, '917582898186');
   assert.equal(requestBody.type, 'template');
   assert.equal(requestBody.template.name, 'invoice_template');
   assert.equal(requestBody.template.language.code, 'en');
@@ -152,7 +167,7 @@ test('manual invoice send uses the assigned Meta template and mapped values', as
     {
       type: 'button',
       sub_type: 'url',
-      index: 0,
+      index: '0',
       parameters: [{ type: 'text', text: 'public-share-id' }],
     }
   );
@@ -198,4 +213,92 @@ test('manual invoice send reports a missing Meta assignment instead of falling b
     }),
     /No active Meta Template assignment found for INVOICE/
   );
+});
+
+test('failed Meta sends keep the normalized country-code recipient in the log', async (t) => {
+  const originalSettingsFindOne = WhatsAppSettings.findOne;
+  const originalLogCreate = WhatsAppMessageLog.create;
+  const originalLogUpdate = WhatsAppMessageLog.findByIdAndUpdate;
+  const originalAssignmentFindOne = WhatsAppTemplateAssignment.findOne;
+  const originalFetch = global.fetch;
+
+  t.after(() => {
+    WhatsAppSettings.findOne = originalSettingsFindOne;
+    WhatsAppMessageLog.create = originalLogCreate;
+    WhatsAppMessageLog.findByIdAndUpdate = originalLogUpdate;
+    WhatsAppTemplateAssignment.findOne = originalAssignmentFindOne;
+    global.fetch = originalFetch;
+  });
+
+  configureWhatsAppModule({
+    resolveDocumentContext: async () => ({
+      document: { publicShareId: 'share-id' },
+      customerId: 'customer-id',
+      customerName: 'Customer',
+      customerPhone: '7582898186',
+      documentNumber: 'INV_27-26_000069',
+      amount: 1320,
+      date: '21/08/2026',
+      items: [],
+      status: 'PAID',
+      companyName: 'NARESH KIDS WEAR',
+      companySettings: {},
+      documentLabel: 'Invoice',
+    }),
+    models: {},
+  });
+
+  WhatsAppSettings.findOne = async () => ({
+    isEnabled: true,
+    accessToken: 'test-access-token',
+    phoneNumberId: 'phone-number-id',
+    businessAccountId: 'business-account-id',
+    webhookVerifyToken: 'verify-token',
+    apiVersion: 'v25.0',
+  });
+  WhatsAppTemplateAssignment.findOne = () => ({
+    populate() {
+      return this;
+    },
+    async lean() {
+      return {
+        _id: 'assignment-id',
+        isEnabled: true,
+        metaTemplateName: 'invoice_bill_v2',
+        languageCode: 'en',
+        metaTemplateId: {
+          status: 'APPROVED',
+          components: [{ type: 'BODY', text: 'Your invoice is ready.' }],
+        },
+        headerMapping: { sourceType: 'NONE' },
+        variableMappings: [],
+      };
+    },
+  });
+  WhatsAppMessageLog.create = async () => ({ _id: 'message-log-id' });
+
+  let failedUpdate;
+  WhatsAppMessageLog.findByIdAndUpdate = async (_id, update) => {
+    if (update.$set.status === 'FAILED') failedUpdate = update.$set;
+  };
+  global.fetch = async () => ({
+    ok: false,
+    status: 400,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ error: { message: 'Template rejected', code: 132001 } }),
+  });
+
+  const { triggerWhatsAppSend } = require('./whatsappService');
+  await assert.rejects(
+    triggerWhatsAppSend({
+      documentType: 'invoice',
+      documentId: 'invoice-id',
+      userId: 'user-id',
+      manual: true,
+    }),
+    /Template rejected/
+  );
+
+  assert.equal(failedUpdate.status, 'FAILED');
+  assert.equal(failedUpdate.customerPhone, '917582898186');
 });

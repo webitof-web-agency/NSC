@@ -29,6 +29,8 @@ import ThermalInvoice58mm from "./ThermalInvoice58mm";
 import { formatVariantDisplay, getBrandName } from "@utils/formatVariantDisplay";
 import AiDocumentScanModal from "@components/admin/AiDocumentScanModal";
 import ProfessionalPrintDialog from "@components/admin/ProfessionalPrintDialog";
+import { resolveInvoiceWhatsAppTarget } from "./invoiceWhatsAppTarget";
+import { syncBeforeCloudAction } from "@utils/syncBeforeCloudAction";
 
 interface InvoiceFormData {
   invoiceNumber: string;
@@ -608,15 +610,22 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
       toast.error('No phone number attached to this invoice');
       return;
     }
-    const targetInvoiceId = isEditMode ? invoiceId : createdInvoiceId;
-    if (!targetInvoiceId) {
+    const target = resolveInvoiceWhatsAppTarget({
+      isEditMode,
+      isExchangeDocument: isExchangeCreate || invoiceFormData.status === "EXCHANGE",
+      invoiceId,
+      createdInvoiceId,
+      exchangeSourceInvoiceId,
+    });
+    if (!target.documentId) {
       toast.error('Invoice ID not found. Please save first.');
       return;
     }
     try {
+      await syncBeforeCloudAction();
       await axios.post(
         Constants.WHATSAPP_SEND_MANUAL_URL,
-        { documentId: targetInvoiceId, documentType: 'invoice' },
+        target,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       toast.success('WhatsApp send requested successfully');
@@ -2640,24 +2649,20 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
         );
 
         const exchangeData = response.data?.exchangeData;
-        if (exchangeData?.requiresPayment) {
-          setIsExchangePaymentMode(true);
-          setExchangePaymentAmount(Number(exchangeData.amountDifference || 0));
-          setExchangeInvoiceId(exchangeSourceInvoiceId);
-          const draft = new FormData();
-          draft.set("invoiceNumber", invoiceFormData.invoiceNumber || "");
-          draft.set("billFrom", companyDetails?.companyName || "Business");
-          setInvoiceDraft(draft);
-          setShowPaymentModal(true);
-          return;
-        }
-
-        toast.success("Exchange completed successfully.");
-        handlePrintBill(() => {
-          setTimeout(() => {
-            reloadExchangeCreatePage();
-          }, 800);
-        });
+        // Always show payment modal for exchange so staff can record the payment method.
+        // Use the frontend-computed difference (already shown in the summary) — backend
+        // exchangeData.amountDifference can be null if exchange detection was skipped.
+        // amountDifference > 0 → extra payment needed
+        // amountDifference < 0 → refund
+        // amountDifference === 0 → same value, still need to confirm method
+        setIsExchangePaymentMode(true);
+        setExchangePaymentAmount(exchangeAmountDifference);
+        setExchangeInvoiceId(exchangeSourceInvoiceId);
+        const draft = new FormData();
+        draft.set("invoiceNumber", invoiceFormData.invoiceNumber || "");
+        draft.set("billFrom", companyDetails?.companyName || "Business");
+        setInvoiceDraft(draft);
+        setShowPaymentModal(true);
         return;
       }
 

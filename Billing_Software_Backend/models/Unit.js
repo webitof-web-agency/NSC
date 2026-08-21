@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const unitSchema = new mongoose.Schema({
   unit_name: {
@@ -19,5 +20,7 @@ const unitSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+unitSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('Unit', unitSchema);

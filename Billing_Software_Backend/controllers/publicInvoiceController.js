@@ -9,6 +9,8 @@ const {
   getCustomerHistoryAvailability,
   toAbsoluteAssetUrl,
 } = require('../utils/publicInvoicePortal');
+const { resolveDocumentType } = require('../services/documentResolver');
+
 
 const setPrivateResponseHeaders = (res) => {
   res.set('Cache-Control', 'private, no-store, no-cache, must-revalidate');
@@ -153,9 +155,10 @@ exports.getPublicInvoice = async (req, res) => {
       isDeleted: false,
     }).populate('billTo').lean();
 
-    if (!invoice) {
+    if (!invoice || resolveDocumentType(invoice) !== 'invoice') {
       return res.status(404).json({ success: false, message: 'Invoice not found' });
     }
+
 
     const ownerUserId = invoice.billTo?.userId || invoice.userId || invoice.billFrom;
     const [companySettings, brandingSettings, paymentRows] = await Promise.all([
@@ -302,9 +305,10 @@ exports.downloadPublicInvoicePdf = async (req, res) => {
       isDeleted: false,
     }).populate('billTo').lean();
 
-    if (!invoice) {
+    if (!invoice || resolveDocumentType(invoice) !== 'invoice') {
       return res.status(404).send('Invoice not found');
     }
+
 
     const ownerUserId = invoice.billTo?.userId || invoice.userId || invoice.billFrom;
     const companySettings = ownerUserId

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const companySettingsSchema = new mongoose.Schema({
     companyName: {
@@ -100,5 +101,7 @@ const companySettingsSchema = new mongoose.Schema({
 });
 
 companySettingsSchema.index({ userId: 1 }, { unique: true });
+
+companySettingsSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('CompanySettings', companySettingsSchema);

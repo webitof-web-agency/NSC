@@ -2,6 +2,32 @@
 
 const mongoose = require('mongoose');
 const SyncJournal = require('../models/SyncJournal');
+const ZERO_SYNC_CURSOR = '000000000000000000000000';
+
+const missingSyncIdQuery = {
+  $or: [
+    { syncId: { $exists: false } },
+    { syncId: null },
+    { syncId: '' },
+  ],
+};
+
+/**
+ * Existing cloud rows predate desktop synchronization. Give them a stable,
+ * deterministic identity before returning a bootstrap snapshot so every PC
+ * upserts the same local record instead of creating duplicates.
+ */
+async function backfillMissingSyncIds(models) {
+  await Promise.all(models.map((Model) => Model.collection.updateMany(
+    missingSyncIdQuery,
+    [{
+      $set: {
+        syncId: { $concat: ['mongo:', { $toString: '$_id' }] },
+        version: { $ifNull: ['$version', 1] },
+      },
+    }],
+  )));
+}
 
 // GET /api/sync/pull?cursor=XYZ
 exports.pullSyncEvents = async (req, res) => {
@@ -51,7 +77,7 @@ exports.getBootstrapSnapshot = async (req, res) => {
     
     // 1. Capture the latest cursor from SyncJournal
     const latestEvent = await SyncJournal.findOne().sort({ _id: -1 }).select('_id').lean();
-    const cursor = latestEvent ? latestEvent._id.toString() : null;
+    const cursor = latestEvent ? latestEvent._id.toString() : ZERO_SYNC_CURSOR;
 
     // 2. Fetch active records for all syncable collections for this user
     // (Importing models inline to avoid cyclic dependencies if any)
@@ -76,79 +102,128 @@ exports.getBootstrapSnapshot = async (req, res) => {
     const BankDetail = require('@models/BankDetail');
     const Signature = require('@models/Signature');
     const PaymentMode = require('@models/PaymentMode');
+    const CustomerPortalBranding = require('@models/CustomerPortalBranding');
+    const LegalSettings = require('@models/LegalSettings');
+    const QrSettings = require('@models/QrSettings');
+    const Notification = require('@models/Notification');
+    const TodoTask = require('@models/TodoTask');
     
-    // Only fetch non-deleted records for the bootstrap snapshot
-    const baseQuery = { isDeleted: false };
+    await backfillMissingSyncIds([
+      User,
+      Customer,
+      Supplier,
+      Product,
+      ProductVariant,
+      Category,
+      Brand,
+      Unit,
+      TaxGroup,
+      TaxRate,
+      CompanySettings,
+      BankDetail,
+      Signature,
+      PaymentMode,
+      Invoice,
+      Quotation,
+      CreditNote,
+      Purchase,
+      SupplierPayment,
+      Attendance,
+      StaffSalary,
+      CustomerPortalBranding,
+      LegalSettings,
+      QrSettings,
+      Notification,
+      TodoTask,
+    ]);
+
+    // Include legacy rows where isDeleted did not exist yet.
+    const baseQuery = { isDeleted: { $ne: true } };
     
     // Using Promise.all to fetch in parallel
     const [
-      customers,
-      invoices,
-      quotations,
-      suppliers,
-      purchases,
-      creditNotes,
-      supplierPayments,
       users,
-      attendance,
-      staffSalary,
-      products,
-      productVariants,
       categories,
       brands,
       units,
-      taxGroups,
       taxRates,
+      taxGroups,
+      products,
+      productVariants,
+      customers,
+      suppliers,
       companySettings,
       bankDetails,
       signatures,
-      paymentModes
+      paymentModes,
+      invoices,
+      quotations,
+      purchases,
+      creditNotes,
+      supplierPayments,
+      attendance,
+      staffSalary,
+      customerPortalBranding,
+      legalSettings,
+      qrSettings,
+      notifications,
+      todoTasks,
     ] = await Promise.all([
-      Customer.find(baseQuery).lean().catch(() => []),
-      Invoice.find(baseQuery).lean().catch(() => []),
-      Quotation.find(baseQuery).lean().catch(() => []),
-      Supplier.find(baseQuery).lean().catch(() => []),
-      Purchase.find(baseQuery).lean().catch(() => []),
-      CreditNote.find(baseQuery).lean().catch(() => []),
-      SupplierPayment.find(baseQuery).lean().catch(() => []),
       User.find(baseQuery).lean().catch(() => []),
-      Attendance.find({}).lean().catch(() => []),
-      StaffSalary.find({}).lean().catch(() => []),
-      Product.find(baseQuery).lean().catch(() => []),
-      ProductVariant.find(baseQuery).lean().catch(() => []),
       Category.find(baseQuery).lean().catch(() => []),
       Brand.find(baseQuery).lean().catch(() => []),
       Unit.find(baseQuery).lean().catch(() => []),
-      TaxGroup.find({}).lean().catch(() => []),
-      TaxRate.find({}).lean().catch(() => []),
-      CompanySettings.find({}).lean().catch(() => []),
+      TaxRate.find(baseQuery).lean().catch(() => []),
+      TaxGroup.find(baseQuery).lean().catch(() => []),
+      Product.find(baseQuery).lean().catch(() => []),
+      ProductVariant.find(baseQuery).lean().catch(() => []),
+      Customer.find(baseQuery).lean().catch(() => []),
+      Supplier.find(baseQuery).lean().catch(() => []),
+      CompanySettings.find(baseQuery).lean().catch(() => []),
       BankDetail.find(baseQuery).lean().catch(() => []),
       Signature.find(baseQuery).lean().catch(() => []),
-      PaymentMode.find({}).lean().catch(() => [])
+      PaymentMode.find(baseQuery).lean().catch(() => []),
+      Invoice.find(baseQuery).lean().catch(() => []),
+      Quotation.find(baseQuery).lean().catch(() => []),
+      Purchase.find(baseQuery).lean().catch(() => []),
+      CreditNote.find(baseQuery).lean().catch(() => []),
+      SupplierPayment.find(baseQuery).lean().catch(() => []),
+      Attendance.find(baseQuery).lean().catch(() => []),
+      StaffSalary.find(baseQuery).lean().catch(() => []),
+      CustomerPortalBranding.find(baseQuery).lean().catch(() => []),
+      LegalSettings.find(baseQuery).lean().catch(() => []),
+      QrSettings.find(baseQuery).lean().catch(() => []),
+      Notification.find(baseQuery).lean().catch(() => []),
+      TodoTask.find(baseQuery).lean().catch(() => []),
     ]);
 
     const snapshot = {
-      customers,
-      invoices,
-      quotations,
-      suppliers,
-      purchases,
-      'credit-notes': creditNotes,
-      'supplier-payments': supplierPayments,
       users,
-      attendance,
-      'staff-salary': staffSalary,
-      products,
-      'product-variants': productVariants,
       categories,
       brands,
       units,
-      'tax-groups': taxGroups,
       'tax-rates': taxRates,
+      'tax-groups': taxGroups,
+      products,
+      'product-variants': productVariants,
+      customers,
+      suppliers,
       'company-details': companySettings,
       'bank-details': bankDetails,
       signatures,
-      'payment-modes': paymentModes
+      'payment-modes': paymentModes,
+      invoices,
+      quotations,
+      purchases,
+      'credit-notes': creditNotes,
+      'supplier-payments': supplierPayments,
+      attendance,
+      'staff-salary': staffSalary,
+      'customer-portal-branding': customerPortalBranding,
+      'legal-settings': legalSettings,
+      'qr-settings': qrSettings,
+      notifications,
+      'todo-tasks': todoTasks,
     };
 
     res.status(200).json({
@@ -210,7 +285,12 @@ exports.pushSyncEvents = async (req, res) => {
       'company-details': require('@models/CompanySettings'),
       'bank-details': require('@models/BankDetail'),
       'signatures': require('@models/Signature'),
-      'payment-modes': require('@models/PaymentMode')
+      'payment-modes': require('@models/PaymentMode'),
+      'customer-portal-branding': require('@models/CustomerPortalBranding'),
+      'legal-settings': require('@models/LegalSettings'),
+      'qr-settings': require('@models/QrSettings'),
+      'notifications': require('@models/Notification'),
+      'todo-tasks': require('@models/TodoTask')
     };
 
     const processedEvents = [];

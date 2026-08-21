@@ -164,7 +164,18 @@ const quotationSchema = new mongoose.Schema({
     type: String,
     enum: ['quotation', 'invoice', 'purchase'],
     default: 'quotation'
-  }
+  },
+  publicShareId: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
+  publicShareEnabled: {
+    type: Boolean,
+    default: true,
+  },
+  publicShareCreatedAt: Date,
+  publicShareRegeneratedAt: Date
 }, {
   timestamps: true
 });

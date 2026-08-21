@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+let resolveInvoiceWhatsAppTarget;
+try {
+  ({ resolveInvoiceWhatsAppTarget } = await import(
+    "../src/pages/admin/invoices/invoiceWhatsAppTarget.ts"
+  ));
+} catch {
+  resolveInvoiceWhatsAppTarget = undefined;
+}
+
 const readSource = (relativePath) =>
   readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
@@ -84,4 +93,30 @@ test("debit-note supplier clear accepts null and clears both supplier searches",
   );
   assert.match(supplierHandler, /setSupplierSearchInput\(''\)/);
   assert.match(supplierHandler, /setPurchaseSupplierSearchInput\(''\)/);
+});
+
+test("a newly saved exchange sends WhatsApp using the persisted source invoice ID", () => {
+  assert.equal(typeof resolveInvoiceWhatsAppTarget, "function");
+  const whatsappHandler = between(
+    createInvoiceSource,
+    "const handleSendWhatsAppClick",
+    "const executePrintBill",
+  );
+  assert.match(whatsappHandler, /resolveInvoiceWhatsAppTarget/);
+  assert.match(whatsappHandler, /isExchangeCreate\s*\|\|\s*invoiceFormData\.status\s*===\s*["']EXCHANGE["']/);
+  assert.match(whatsappHandler, /WHATSAPP_SEND_MANUAL_URL,[\s\S]*target,/);
+
+  assert.deepEqual(
+    resolveInvoiceWhatsAppTarget({
+      isEditMode: false,
+      isExchangeDocument: true,
+      invoiceId: undefined,
+      createdInvoiceId: null,
+      exchangeSourceInvoiceId: "source-invoice-id",
+    }),
+    {
+      documentId: "source-invoice-id",
+      documentType: "exchange",
+    },
+  );
 });

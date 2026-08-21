@@ -295,6 +295,13 @@ router.get('/localizations', protect, localizationController.getLocalization);
 router.get('/settings-dropdown', localizationController.getSettingsDropdownList);
 
 //Quotation
+const quotationPublicLinkController = require('@controllers/Admin/Quotation/quotationPublicLinkController');
+
+// --- Quotation Public Link Routes ---
+router.post('/quotations/:id/public-link', protect, quotationPublicLinkController.getOrCreatePublicLink);
+router.post('/quotations/:id/public-link/regenerate', protect, quotationPublicLinkController.regeneratePublicLink);
+router.delete('/quotations/:id/public-link', protect, quotationPublicLinkController.disablePublicLink);
+
 router.post('/quotations', protect, upload.single('signatureImage'), quotationValidator, quotationController.createQuotation);
 router.get('/quotations', protect, quotationController.listQuotations);
 router.get('/quotations/:id', quotationController.getQuotationById);
@@ -325,6 +332,7 @@ router.get('/invoices/:id', protect, invoiceController.getInvoice);
 router.get('/invoices/details/:id', invoiceController.getInvoice);
 router.put('/invoices/:id', protect, upload.single('signatureImage'), invoiceController.updateInvoice);
 router.delete('/invoices/:id', protect, invoiceController.deleteInvoice);
+
 const invoicePublicLinkController = require('@controllers/Admin/Invoice/invoicePublicLinkController');
 
 router.post('/invoices/bulk-delete', protect, invoiceController.bulkDeleteInvoices);

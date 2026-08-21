@@ -209,6 +209,10 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData, companyD
         invoiceData?.shippingAddress &&
         Object.values(invoiceData.shippingAddress).some((value) => String(value || "").trim() !== "")
     );
+    const termsAndConditions = String(invoiceData?.termsAndCondition || "")
+        .split(/\r?\n/)
+        .map((term) => term.trim())
+        .filter(Boolean);
     const companyName = companyDetails?.name || systemSettings?.company?.companyName || cachedSettings?.company?.companyName || "N/A";
     const companyAddress = companyDetails?.address || systemSettings?.company?.address || cachedSettings?.company?.address || "N/A";
     const companyPhone = companyDetails?.phone || systemSettings?.company?.phone || cachedSettings?.company?.phone || "N/A";
@@ -454,12 +458,16 @@ const InvoiceTemplateB: React.FC<InvoiceDetailsProps> = ({ invoiceData, companyD
             </footer>
 
             {/* Terms and Conditions */}
-            <section className="mt-4">
-                <h3 className="font-semibold mb-2">Terms & Conditions :</h3>
-                <ol className="list-decimal list-inside text-xs text-gray-600 space-y-1">
-                    <li>{invoiceData?.termsAndCondition}</li>
-                </ol>
-            </section>
+            {termsAndConditions.length > 0 && (
+                <section className="mt-4">
+                    <h3 className="font-semibold mb-2">Terms & Conditions :</h3>
+                    <ol className="list-decimal list-inside text-xs text-gray-600 space-y-1">
+                        {termsAndConditions.map((term, index) => (
+                            <li key={`${index}-${term}`}>{term}</li>
+                        ))}
+                    </ol>
+                </section>
+            )}
 
             <div className="mt-2 pt-4 pb-4 text-center text-sm text-gray-500 border-t border-b border-gray-200">
                 <p>Thanks for your Business</p>

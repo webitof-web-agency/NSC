@@ -420,19 +420,6 @@ const navItems: NavItemType[] = [
                 title: "WhatsApp Messages",
                 slug: "website-settings",
             },
-            {
-                type: "link",
-                to: "/admin/whatsapp/delivered",
-                title: "WhatsApp Delivered",
-                slug: "website-settings",
-            },
-            {
-                type: "link",
-                to: "/admin/whatsapp/read",
-                title: "WhatsApp Read",
-                slug: "website-settings",
-            },
-
         ],
     },
     {

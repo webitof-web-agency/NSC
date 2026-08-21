@@ -3376,7 +3376,7 @@ const handleExchangePayment = async (req, res) => {
     }
 
     // Validate this is an exchange invoice (or still pending exchange)
-    if (!["EXCHANGE", "PARTIALLY_PAID", "PAID", "PENDING"].includes(invoice.status)) {
+    if (!["EXCHANGE", "PARTIALLY_PAID", "PAID", "PENDING", "UNPAID"].includes(invoice.status)) {
       return res.status(400).json({
         success: false,
         message: "This endpoint is only for exchange invoices",
@@ -3409,12 +3409,17 @@ const handleExchangePayment = async (req, res) => {
       });
     }
 
-    // Update existing payment record (do not create a new one)
-    const existingPayment = await InvoicePayment.findOne({ invoiceId: invoice._id });
+    // Find or create a payment record
+    let existingPayment = await InvoicePayment.findOne({ invoiceId: invoice._id });
     if (!existingPayment) {
-      return res.status(404).json({
-        success: false,
-        message: "Original payment record not found",
+      // Original invoice had no payment (UNPAID/CREDIT) — create a fresh record
+      existingPayment = await InvoicePayment.create({
+        invoiceId: invoice._id,
+        userId: invoice.userId,
+        payment_method,
+        amount: 0,
+        received_on: new Date(),
+        notes: 'Exchange payment record created',
       });
     }
 
@@ -3428,6 +3433,9 @@ const handleExchangePayment = async (req, res) => {
         : payment_method === "CASH" || payment_method === "CARD"
           ? payAmount
           : 0;
+
+    const invoiceTotal = toMoney(Number(invoice.grandTotal || invoice.total || 0));
+    const totalPaid = toMoney(Number(invoice.totalPaid || existingPayment.amount || 0));
 
     const newTotalPaid = toMoney(totalPaid + effectivePaid);
     const newRemainingDue = Math.max(toMoney(invoiceTotal - newTotalPaid), 0);

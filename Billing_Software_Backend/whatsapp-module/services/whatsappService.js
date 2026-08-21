@@ -117,15 +117,23 @@ function getDocumentLabel(documentType) {
 
 function getDocumentNumber(documentType, document) {
   if (documentType === 'quotation') {
-    return document.quotationId || document.referenceNo || String(document._id);
+    return document.quotationId || document.referenceNo || '';
   }
 
-  return document.invoiceNumber || document.referenceNo || String(document._id);
+  return document.invoiceNumber || document.referenceNo || '';
 }
 
 function formatDocumentDate(documentType, document) {
   const rawDate = documentType === 'quotation' ? document.quotationDate : document.invoiceDate;
   return rawDate ? new Date(rawDate).toLocaleDateString('en-IN') : '';
+}
+
+function buildDocumentLookup(documentId, userId) {
+  const normalizedId = String(documentId || '').trim();
+  const identity = /^[a-f\d]{24}$/i.test(normalizedId)
+    ? { _id: normalizedId }
+    : { syncId: normalizedId };
+  return { ...identity, userId, isDeleted: false };
 }
 
 async function resolveDocumentContextFromModels({ documentType, documentId, userId, resolvePublicUrl = true }) {
@@ -150,7 +158,7 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
     throw new Error('WhatsApp module is missing a Quotation model adapter.');
   }
 
-  const document = await DocumentModel.findOne({ _id: documentId, userId, isDeleted: false }).lean();
+  const document = await DocumentModel.findOne(buildDocumentLookup(documentId, userId)).lean();
 
   if (!document) {
     throw new Error(`${getDocumentLabel(documentType)} not found`);
@@ -165,10 +173,13 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
   let publicShareUrl = '';
   if (resolvePublicUrl && (documentType === 'invoice' || documentType === 'exchange' || documentType === 'payment_reminder')) {
     const publicShareService = require('../../services/publicShareService');
-    const invoiceModelInstance = await InvoiceModel.findOne({ _id: documentId, userId, isDeleted: false });
+    const invoiceModelInstance = await InvoiceModel.findOne({ _id: document._id, userId, isDeleted: false });
     if (invoiceModelInstance) {
       const publicShareId = await publicShareService.getOrCreatePublicShareId(invoiceModelInstance);
-      publicShareUrl = publicShareService.buildPublicInvoiceUrl(publicShareId);
+      publicShareUrl = publicShareService.buildPublicDocumentUrl(
+        publicShareId,
+        documentType === 'exchange' ? 'EXCHANGE' : 'INVOICE',
+      );
     }
   }
 
@@ -176,7 +187,7 @@ async function resolveDocumentContextFromModels({ documentType, documentId, user
   let outstandingAmount = 0;
   if (documentType !== 'quotation' && InvoiceModel) {
     const { getInvoiceOutstandingAmount } = require('../../services/invoicePaymentService');
-    const result = await getInvoiceOutstandingAmount(documentId, document);
+    const result = await getInvoiceOutstandingAmount(document._id, document);
     paidAmount = result.totalPaid;
     outstandingAmount = result.outstandingAmount;
   }
@@ -223,6 +234,54 @@ async function resolveDocumentContext(params) {
   }
 
   return resolveDocumentContextFromModels(params);
+}
+
+const PUBLIC_SHARE_CONTEXT_KEYS = {
+  invoice: 'publicShareId',
+  quotation: 'quotationPublicShareId',
+  exchange: 'exchangePublicShareId',
+};
+
+const PUBLIC_SHARE_MAPPING_SOURCES = new Set([
+  'publicShareId',
+  'quotationPublicShareId',
+  'exchangePublicShareId',
+]);
+
+async function ensurePublicShareMappingContext({ documentType, documentId, userId, assignment, context }) {
+  const normalizedType = String(documentType || '').toLowerCase();
+  const contextKey = PUBLIC_SHARE_CONTEXT_KEYS[normalizedType];
+  const needsPublicShareId = assignment.variableMappings?.some(
+    (mapping) => PUBLIC_SHARE_MAPPING_SOURCES.has(mapping.sourceValue),
+  );
+
+  if (!needsPublicShareId || !contextKey) return context;
+
+  let publicShareId = context.document?.publicShareEnabled !== false
+    ? String(context.document?.publicShareId || '')
+    : '';
+
+  if (!publicShareId) {
+    const { InvoiceModel, QuotationModel } = getWhatsAppModuleConfig().models;
+    const DocumentModel = normalizedType === 'quotation' ? QuotationModel : InvoiceModel;
+
+    if (!DocumentModel) {
+      throw new Error(`${getDocumentLabel(normalizedType)} model is unavailable while preparing the WhatsApp template link`);
+    }
+
+    const documentModelInstance = await DocumentModel.findOne(buildDocumentLookup(documentId, userId));
+    if (!documentModelInstance) {
+      throw new Error(`${getDocumentLabel(normalizedType)} not found while preparing the WhatsApp template link`);
+    }
+
+    const publicShareService = require('../../services/publicShareService');
+    publicShareId = await publicShareService.getOrCreatePublicShareId(documentModelInstance);
+  }
+
+  // Keep the legacy invoice source working while exposing document-specific sources.
+  context.publicShareId = publicShareId;
+  context[contextKey] = publicShareId;
+  return context;
 }
 
 async function uploadMediaToWhatsApp({ config, pdfBuffer, filename }) {
@@ -310,6 +369,33 @@ async function fetchConversationReplies() {
   return [];
 }
 
+function isMappingUsedByMetaTemplate(mapping, metaTemplate) {
+  const components = Array.isArray(metaTemplate?.components) ? metaTemplate.components : [];
+  const parameterToken = `{{${Number(mapping.parameterIndex)}}}`;
+
+  if (mapping.component === 'BODY') {
+    return components.some((component) => (
+      component.type === 'BODY' && String(component.text || '').includes(parameterToken)
+    ));
+  }
+
+  if (mapping.component === 'HEADER') {
+    return components.some((component) => (
+      component.type === 'HEADER'
+      && component.format === 'TEXT'
+      && String(component.text || '').includes(parameterToken)
+    ));
+  }
+
+  if (mapping.component === 'BUTTONS') {
+    const buttonsComponent = components.find((component) => component.type === 'BUTTONS');
+    const button = buttonsComponent?.buttons?.[Number(mapping.buttonIndex || 0)];
+    return button?.type === 'URL' && String(button.url || '').includes(parameterToken);
+  }
+
+  return false;
+}
+
 function buildTemplateComponents(assignment, context, mediaId = null, filename = null, documentType = '') {
   const components = [];
 
@@ -318,7 +404,9 @@ function buildTemplateComponents(assignment, context, mediaId = null, filename =
   const headerParams = [];
 
   if (assignment.variableMappings && assignment.variableMappings.length > 0) {
-    const sortedMappings = [...assignment.variableMappings].sort((a, b) => a.parameterIndex - b.parameterIndex);
+    const sortedMappings = assignment.variableMappings
+      .filter((mapping) => isMappingUsedByMetaTemplate(mapping, assignment.metaTemplateId))
+      .sort((a, b) => a.parameterIndex - b.parameterIndex);
 
     for (const mapping of sortedMappings) {
       let resolvedValue = '';
@@ -464,17 +552,29 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
   }
 
   const context = await resolveDocumentContext({ documentType, documentId, userId });
+  await ensurePublicShareMappingContext({ documentType, documentId, userId, assignment, context });
 
-  // Ensure we have a publicShareId if needed by the template
-  const needsPublicShareId = assignment.variableMappings?.some(m => m.sourceValue === 'publicShareId');
-  if (needsPublicShareId && context.document && documentType === 'invoice') {
-    const publicShareService = require('../../services/publicShareService');
-    const InvoiceModel = getWhatsAppModuleConfig().models.InvoiceModel;
-    const invoiceModelInstance = InvoiceModel ? await InvoiceModel.findById(documentId) : null;
-    if (!invoiceModelInstance) {
-      throw new Error('Invoice not found while preparing the WhatsApp template link');
+  // Resolve the actual body text for the log by substituting variable mappings
+  const metaComponents = Array.isArray(assignment.metaTemplateId?.components)
+    ? assignment.metaTemplateId.components
+    : [];
+  const bodyComponentDef = metaComponents.find((c) => c.type === 'BODY');
+  const footerComponentDef = metaComponents.find((c) => c.type === 'FOOTER');
+  const buttonsComponentDef = metaComponents.find((c) => c.type === 'BUTTONS');
+  const headerComponentDef2 = metaComponents.find((c) => c.type === 'HEADER');
+
+  let resolvedBodyText = bodyComponentDef?.text || '';
+  if (resolvedBodyText && assignment.variableMappings?.length) {
+    for (const mapping of assignment.variableMappings) {
+      if (mapping.component !== 'BODY') continue;
+      const value = mapping.sourceType === 'FIXED'
+        ? mapping.sourceValue
+        : String(context[mapping.sourceValue] ?? '');
+      resolvedBodyText = resolvedBodyText.replace(
+        new RegExp(`\\{\\{${mapping.parameterIndex}\\}\\}`, 'g'),
+        value
+      );
     }
-    context.publicShareId = await publicShareService.getOrCreatePublicShareId(invoiceModelInstance);
   }
 
   const log = await WhatsAppMessageLog.create({
@@ -482,19 +582,30 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
     customerId: context.customerId,
     customerPhone: context.customerPhone || '',
     customerName: context.customerName,
-    documentType, // Keeping this field as it matches messageType mostly
-    documentId,
+    documentType,
+    documentId: context.document._id,
     documentNumber: context.documentNumber,
     status: 'QUEUED',
-    renderedMessage: `Template: ${assignment.metaTemplateName}`,
+    renderedMessage: resolvedBodyText || `Template: ${assignment.metaTemplateName}`,
     amount: context.amount,
     lastAttemptAt: new Date(),
     metadata: {
       manual,
       assignmentId: assignment._id,
       templateName: assignment.metaTemplateName,
+      templateComponents: {
+        headerFormat: headerComponentDef2?.format || null,
+        headerText: headerComponentDef2?.text || null,
+        body: resolvedBodyText || null,
+        footer: footerComponentDef?.text || null,
+        buttons: (buttonsComponentDef?.buttons || []).map((btn) => ({
+          type: btn.type,
+          text: btn.text || null,
+        })),
+      },
     },
   });
+  let normalizedCustomerPhone = '';
 
   try {
     if (!config.isEnabled && manual) {
@@ -513,6 +624,7 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
     }
 
     const phone = normalizePhoneNumber(context.customerPhone);
+    normalizedCustomerPhone = phone;
     const sendOutcome = await withRetry(async () => {
       let mediaId = null;
       let filename = null;
@@ -572,6 +684,7 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
   } catch (error) {
     await WhatsAppMessageLog.findByIdAndUpdate(log._id, {
       $set: {
+        customerPhone: normalizedCustomerPhone || context.customerPhone || '',
         status: 'FAILED',
         errorMessage: error.message,
         lastAttemptAt: new Date(),
@@ -585,6 +698,8 @@ async function triggerWhatsAppSend({ documentType, documentId, userId, manual = 
 module.exports = {
   MAX_SEND_RETRIES,
   mergeConfig,
+  getDocumentNumber,
+  buildDocumentLookup,
   resolveDocumentContext,
   resolveDocumentContextFromModels,
   uploadMediaToWhatsApp,
@@ -594,5 +709,7 @@ module.exports = {
   getMessageStatus,
   fetchConversationReplies,
   isRetryableWhatsAppError,
+  buildTemplateComponents,
+  ensurePublicShareMappingContext,
   triggerWhatsAppSend,
 };

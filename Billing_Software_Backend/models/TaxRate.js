@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const taxRateSchema = new mongoose.Schema(
     {
@@ -20,5 +21,7 @@ const taxRateSchema = new mongoose.Schema(
         timestamps: true,
     }
 );
+
+taxRateSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('TaxRate', taxRateSchema);

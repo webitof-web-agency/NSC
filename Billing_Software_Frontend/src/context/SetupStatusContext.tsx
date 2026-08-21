@@ -15,43 +15,12 @@ interface SetupContextProps {
 
 const SetupStatusContext = createContext<SetupContextProps | undefined>(undefined);
 
-// Live backend URL — injected by Vite at build time from .env
-const LIVE_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://server.nareshsareecollection.com';
-const LIVE_VERSION_URL = `${LIVE_BASE_URL}/api/admin/app-version`;
-
 /**
- * fetchSetupStatus — Self-detecting online/offline, no race conditions.
- *
- * Browser:  calls Constants.APP_VERSION_URL (standard flow, unchanged)
- * Electron: tries live backend with 3s timeout
- *             responds  -> ONLINE  -> returns live backend result (Login page)
- *             times out -> OFFLINE -> falls back to local backend
- *
- * Eliminates all race conditions with NetworkMonitor / ElectronStatusBar timing.
+ * Browser uses the configured live API. Electron is local-first and therefore
+ * reads setup status from the embedded backend in both online and offline modes.
  */
 async function fetchSetupStatus(): Promise<SetupStatus> {
-    const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
-
-    if (!isElectron) {
-        const res = await axios.get(Constants.APP_VERSION_URL, { timeout: 10000 });
-        return res.data.data;
-    }
-
-    // Electron: try live backend first (3s timeout)
-    try {
-        console.log('[SetupStatus] Trying live backend ->', LIVE_VERSION_URL);
-        const res = await axios.get(LIVE_VERSION_URL, { timeout: 3000 });
-        console.log('[SetupStatus] Live backend OK -> ONLINE');
-        return res.data.data;
-    } catch {
-        console.log('[SetupStatus] Live backend unreachable -> OFFLINE, using local backend');
-    }
-
-    // Fallback: local backend (offline mode)
-    const localPort = (window as any).__electronLocalBackendPort || 3002;
-    const localUrl = `http://localhost:${localPort}/api/admin/app-version`;
-    console.log('[SetupStatus] Calling local backend ->', localUrl);
-    const res = await axios.get(localUrl, { timeout: 5000 });
+    const res = await axios.get(Constants.APP_VERSION_URL, { timeout: 10000 });
     return res.data.data;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
@@ -13,77 +13,111 @@ export interface MetaTemplate {
   language: string;
   category: string;
   status: string;
-  components: any[];
+  components: Array<{
+    type: string;
+    text?: string;
+    format?: string;
+  }>;
 }
 
-export interface EligibleCustomer {
+type EligibilityStatus = 'ELIGIBLE' | 'INVALID_PHONE';
+
+export interface MarketingCustomer {
   _id: string;
   name: string;
   phone: string;
   companyName: string;
+  eligible: boolean;
+  eligibilityStatus: EligibilityStatus;
+}
+
+interface EligibilityStats {
+  total: number;
+  eligible: number;
+  invalidPhone: number;
+}
+
+interface VariableMapping {
+  component: 'BODY';
+  parameterIndex: number;
+  sourceType: 'VARIABLE' | 'FIXED';
+  sourceValue: string;
+}
+
+interface CampaignSummary {
+  _id: string;
+  name: string;
+  status: string;
+  totalEligible: number;
+  acceptedCount: number;
+  sentCount: number;
+  failedCount: number;
 }
 
 const WhatsAppMarketing = () => {
   const { token } = useSelector((state: RootState) => state.auth);
-  const [step, setStep] = useState(1);
   const [campaignName, setCampaignName] = useState('');
   
   const [templates, setTemplates] = useState<MetaTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   
-  const [customers, setCustomers] = useState<EligibleCustomer[]>([]);
-  const [stats, setStats] = useState<any>(null);
+  const [customers, setCustomers] = useState<MarketingCustomer[]>([]);
+  const [stats, setStats] = useState<EligibilityStats | null>(null);
   
   const [audienceTarget, setAudienceTarget] = useState<'all' | 'selected'>('all');
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
-  const [variableMappings, setVariableMappings] = useState<any[]>([]);
+  const [variableMappings, setVariableMappings] = useState<VariableMapping[]>([]);
   
   const [isSending, setIsSending] = useState(false);
-  const [campaignHistory, setCampaignHistory] = useState<any[]>([]);
+  const [campaignHistory, setCampaignHistory] = useState<CampaignSummary[]>([]);
 
-  useEffect(() => {
-    loadTemplates();
-    loadEligibleCustomers();
-    loadCampaignHistory();
-  }, [token]);
-
-  const loadTemplates = async () => {
+  const loadTemplates = useCallback(async () => {
     try {
       const response = await axios.get(`${Constants.BASE_URL}/api/admin/whatsapp/meta-templates`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const valid = (response.data?.data || []).filter((t: MetaTemplate) => t.status === 'APPROVED' && t.category === 'MARKETING');
       setTemplates(valid);
-    } catch (e) {
+    } catch {
       toast.error('Failed to load marketing templates');
     }
-  };
+  }, [token]);
 
-  const loadEligibleCustomers = async () => {
+  const loadEligibleCustomers = useCallback(async () => {
     try {
       const response = await axios.get(`${Constants.BASE_URL}/api/admin/whatsapp/campaigns/eligible-customers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setCustomers(response.data?.eligibleCustomers || []);
+      const loadedCustomers: MarketingCustomer[] = response.data?.customers || response.data?.eligibleCustomers || [];
+      const eligibleCustomerIds = loadedCustomers
+        .filter((customer) => customer.eligible)
+        .map((customer) => customer._id);
+      setCustomers(loadedCustomers);
       setStats(response.data?.stats);
-      setSelectedCustomerIds(response.data?.eligibleCustomers?.map((c: any) => c._id) || []);
-    } catch (e) {
+      setSelectedCustomerIds(eligibleCustomerIds);
+    } catch {
       toast.error('Failed to load eligible customers');
     }
-  };
+  }, [token]);
 
-  const loadCampaignHistory = async () => {
+  const loadCampaignHistory = useCallback(async () => {
     try {
       const response = await axios.get(`${Constants.BASE_URL}/api/admin/whatsapp/campaigns`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setCampaignHistory(response.data?.data || []);
-    } catch (e) {
+    } catch {
       // optional
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    void loadTemplates();
+    void loadEligibleCustomers();
+    void loadCampaignHistory();
+  }, [loadCampaignHistory, loadEligibleCustomers, loadTemplates]);
 
   const selectedTemplate = useMemo(() => templates.find(t => t._id === selectedTemplateId), [templates, selectedTemplateId]);
 
@@ -99,7 +133,7 @@ const WhatsAppMarketing = () => {
       if (matches) requiredVarsCount = matches.length;
     }
 
-    const newMappings = Array.from({ length: requiredVarsCount }).map((_, i) => ({
+    const newMappings: VariableMapping[] = Array.from({ length: requiredVarsCount }).map((_, i) => ({
       component: 'BODY',
       parameterIndex: i + 1,
       sourceType: 'VARIABLE',
@@ -109,8 +143,10 @@ const WhatsAppMarketing = () => {
     setVariableMappings(newMappings);
   };
 
+  const targetCount = audienceTarget === 'all' ? (stats?.eligible || 0) : selectedCustomerIds.length;
+
   const handleSend = async () => {
-    if (!campaignName || !selectedTemplateId) {
+    if (!campaignName.trim() || !selectedTemplate) {
       return toast.error('Please complete all steps');
     }
     
@@ -118,15 +154,18 @@ const WhatsAppMarketing = () => {
       return toast.error('Please select at least one customer');
     }
 
-    const targetCount = audienceTarget === 'all' ? (stats?.eligible || 0) : selectedCustomerIds.length;
+    if (targetCount === 0) {
+      return toast.error('No eligible customers are available for this campaign');
+    }
+
     const confirmed = window.confirm(`Send WhatsApp Marketing campaign to ${targetCount} eligible customers?`);
     if (!confirmed) return;
 
     try {
       setIsSending(true);
       await axios.post(`${Constants.BASE_URL}/api/admin/whatsapp/campaigns`, {
-        name: campaignName,
-        metaTemplateId: selectedTemplateId,
+        name: campaignName.trim(),
+        metaTemplateId: selectedTemplate.metaId,
         sendToAllEligible: audienceTarget === 'all',
         selectedCustomerIds: audienceTarget === 'selected' ? selectedCustomerIds : [],
         variableMappings
@@ -135,21 +174,46 @@ const WhatsAppMarketing = () => {
       });
       
       toast.success('Campaign queued successfully');
-      setStep(1);
       setCampaignName('');
       setSelectedTemplateId('');
-      loadCampaignHistory();
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to start campaign');
+      setVariableMappings([]);
+      await loadCampaignHistory();
+    } catch (error: unknown) {
+      const message = axios.isAxiosError(error) ? error.response?.data?.message : '';
+      toast.error(message || 'Failed to start campaign');
     } finally {
       setIsSending(false);
     }
   };
 
-  const updateMapping = (index: number, field: string, value: string) => {
-    const next = [...variableMappings];
-    next[index][field] = value;
-    setVariableMappings(next);
+  const updateMapping = (
+    index: number,
+    updates: Partial<Pick<VariableMapping, 'sourceType' | 'sourceValue'>>,
+  ) => {
+    setVariableMappings((current) => current.map((mapping, mappingIndex) => (
+      mappingIndex === index ? { ...mapping, ...updates } : mapping
+    )));
+  };
+
+  const visibleCustomers = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return customers;
+    return customers.filter((customer) => (
+      customer.name.toLowerCase().includes(normalizedSearch)
+      || customer.phone.includes(normalizedSearch)
+    ));
+  }, [customers, searchTerm]);
+
+  const selectVisibleCustomers = () => {
+    const visibleIds = visibleCustomers
+      .filter((customer) => customer.eligible)
+      .map((customer) => customer._id);
+    setSelectedCustomerIds(Array.from(new Set([...selectedCustomerIds, ...visibleIds])));
+  };
+
+  const eligibilityLabel: Record<EligibilityStatus, string> = {
+    ELIGIBLE: 'Eligible',
+    INVALID_PHONE: 'Invalid phone',
   };
 
   return (
@@ -198,7 +262,7 @@ const WhatsAppMarketing = () => {
                     <span className="font-mono text-sm text-gray-600 w-12">{`{{${m.parameterIndex}}}`}</span>
                     <select
                       value={m.sourceType}
-                      onChange={e => updateMapping(i, 'sourceType', e.target.value)}
+                      onChange={e => updateMapping(i, { sourceType: e.target.value as VariableMapping['sourceType'] })}
                       className="border border-gray-300 rounded px-2 py-1 text-sm"
                     >
                       <option value="VARIABLE">Customer Field</option>
@@ -207,7 +271,7 @@ const WhatsAppMarketing = () => {
                     {m.sourceType === 'VARIABLE' ? (
                       <select
                         value={m.sourceValue}
-                        onChange={e => updateMapping(i, 'sourceValue', e.target.value)}
+                        onChange={e => updateMapping(i, { sourceValue: e.target.value })}
                         className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
                       >
                         <option value="customerName">Customer Name</option>
@@ -218,7 +282,7 @@ const WhatsAppMarketing = () => {
                       <input
                         type="text"
                         value={m.sourceValue}
-                        onChange={e => updateMapping(i, 'sourceValue', e.target.value)}
+                        onChange={e => updateMapping(i, { sourceValue: e.target.value })}
                         placeholder="Enter value"
                         className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm outline-none"
                       />
@@ -236,8 +300,6 @@ const WhatsAppMarketing = () => {
                   <li>Total Customers: {stats.total}</li>
                   <li>Eligible for WhatsApp Marketing: <span className="font-bold">{stats.eligible}</span></li>
                   <li>Invalid/Missing Phone: {stats.invalidPhone}</li>
-                  <li>No Opt-in: {stats.notOptedIn}</li>
-                  <li>Opted Out: {stats.optedOut}</li>
                 </ul>
               </div>
             )}
@@ -256,65 +318,91 @@ const WhatsAppMarketing = () => {
               </div>
             </div>
 
-            {audienceTarget === 'selected' && (
-              <div className="border border-gray-200 rounded-lg p-4 space-y-3">
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Search customers..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="flex-1 text-sm border-b border-gray-200 pb-2 outline-none"
-                  />
-                  <button
-                    onClick={() => {
-                      const visibleIds = customers
-                        .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.phone.includes(searchTerm))
-                        .map(c => c._id);
-                      setSelectedCustomerIds(Array.from(new Set([...selectedCustomerIds, ...visibleIds])));
-                    }}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
+            <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Customer Selection</h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Customers with a valid phone number can receive a marketing campaign.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Search customers..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="min-w-56 flex-1 text-sm border-b border-gray-200 pb-2 outline-none"
+                />
+                {audienceTarget === 'selected' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={selectVisibleCustomers}
+                      className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
+                    >
+                      Select Visible
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCustomerIds([])}
+                      className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
+                    >
+                      Clear All
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-2">
+                {visibleCustomers.map((customer) => (
+                  <div
+                    key={customer._id}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 p-2 text-sm hover:bg-gray-50"
                   >
-                    Select Visible
-                  </button>
-                  <button
-                    onClick={() => setSelectedCustomerIds([])}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded text-gray-700"
-                  >
-                    Clear All
-                  </button>
-                </div>
-                <div className="max-h-48 overflow-y-auto space-y-2">
-                  {customers
-                    .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.phone.includes(searchTerm))
-                    .map(c => (
-                    <label key={c._id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded">
-                      <input 
-                        type="checkbox" 
+                    {audienceTarget === 'selected' && (
+                      <input
+                        type="checkbox"
                         className="accent-emerald-600"
-                        checked={selectedCustomerIds.includes(c._id)}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedCustomerIds([...selectedCustomerIds, c._id]);
-                          else setSelectedCustomerIds(selectedCustomerIds.filter(id => id !== c._id));
+                        disabled={!customer.eligible}
+                        checked={customer.eligible && selectedCustomerIds.includes(customer._id)}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            setSelectedCustomerIds([...selectedCustomerIds, customer._id]);
+                          } else {
+                            setSelectedCustomerIds(selectedCustomerIds.filter(id => id !== customer._id));
+                          }
                         }}
                       />
-                      <span>{c.name} ({c.phone})</span>
-                    </label>
-                  ))}
-                  {customers.length === 0 && <p className="text-xs text-gray-500">No eligible customers found.</p>}
-                </div>
+                    )}
+                    <div className="min-w-44 flex-1">
+                      <p className="font-medium text-gray-900">{customer.name || 'Customer'}</p>
+                      <p className="text-xs text-gray-500">{customer.phone || 'No phone'}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-xs font-medium ${
+                      customer.eligible
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {eligibilityLabel[customer.eligibilityStatus]}
+                    </span>
+                  </div>
+                ))}
+                {visibleCustomers.length === 0 && (
+                  <p className="py-3 text-center text-xs text-gray-500">No customers match this search.</p>
+                )}
+              </div>
+              {audienceTarget === 'selected' && (
                 <div className="text-xs text-gray-500">
                   {selectedCustomerIds.length} customer(s) selected
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <button
               onClick={handleSend}
-              disabled={isSending || !selectedTemplate || (audienceTarget === 'selected' && selectedCustomerIds.length === 0)}
+              disabled={isSending || !selectedTemplate || targetCount === 0}
               className="w-full bg-emerald-600 text-white rounded-lg px-4 py-3 font-medium hover:bg-emerald-700 disabled:opacity-50"
             >
-              {isSending ? 'Starting Campaign...' : `Send Campaign to ${audienceTarget === 'all' ? (stats?.eligible || 0) : selectedCustomerIds.length} Customers`}
+              {isSending ? 'Starting Campaign...' : `Send Campaign to ${targetCount} Customers`}
             </button>
           </div>
         </div>

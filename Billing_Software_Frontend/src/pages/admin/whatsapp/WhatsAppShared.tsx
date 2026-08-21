@@ -4,9 +4,6 @@ import {
   Settings2,
   LayoutDashboard,
   FileText,
-  CheckCheck,
-  Eye,
-  Reply,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
@@ -45,7 +42,17 @@ export interface WhatsAppMessageLog {
   documentType: WhatsAppDocumentType;
   documentNumber: string;
   amount: number;
-  status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | 'replied';
+  status:
+    | 'QUEUED'
+    | 'PROCESSING'
+    | 'ACCEPTED'
+    | 'SENT'
+    | 'DELIVERED'
+    | 'READ'
+    | 'FAILED'
+    | 'REPLIED'
+    | 'SKIPPED'
+    | 'DELIVERY_UNKNOWN';
   renderedMessage: string;
   errorMessage?: string;
   replyText?: string;
@@ -54,6 +61,16 @@ export interface WhatsAppMessageLog {
   readAt?: string | null;
   repliedAt?: string | null;
   createdAt: string;
+  metadata?: {
+    templateName?: string;
+    templateComponents?: {
+      headerFormat?: string | null;
+      headerText?: string | null;
+      body?: string | null;
+      footer?: string | null;
+      buttons?: { type: string; text: string | null }[];
+    };
+  };
 }
 
 const tabs = [
@@ -62,8 +79,6 @@ const tabs = [
   { to: '/admin/whatsapp/templates', label: 'Templates', icon: FileText },
   { to: '/admin/whatsapp/marketing', label: 'Marketing', icon: FileText },
   { to: '/admin/whatsapp/messages', label: 'Messages', icon: MessagesSquare },
-  { to: '/admin/whatsapp/delivered', label: 'Delivered', icon: CheckCheck },
-  { to: '/admin/whatsapp/read', label: 'Read', icon: Eye },
 ];
 
 export const defaultTemplates: Record<WhatsAppDocumentType, WhatsAppTemplateData> = {

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const qrSettingsSchema = new mongoose.Schema(
   {
@@ -73,5 +74,7 @@ const qrSettingsSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+qrSettingsSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model("QrSettings", qrSettingsSchema);

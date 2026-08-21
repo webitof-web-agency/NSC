@@ -6,12 +6,12 @@ import { useReactToPrint } from "react-to-print";
 import Constants from "@constants/api";
 import type { InvoiceData, Item } from "@models/invoice";
 import InvoiceTemplateB from "@pages/admin/invoices/InvoiceTemplateB";
-import PublicInvoicePortal, {
+import PublicDocumentPortal, {
   type PublicAddress,
-  type PublicInvoiceData,
-  type PublicInvoiceItem,
+  type PublicDocumentData,
+  type PublicDocumentItem,
   type PublicPortalBranding,
-} from "./PublicInvoicePortal";
+} from "./PublicDocumentPortal";
 
 const defaultPortalBranding: PublicPortalBranding = {
   activeBannerType: "none",
@@ -40,7 +40,7 @@ const defaultPortalBranding: PublicPortalBranding = {
   promoGallery: [],
 };
 
-const normalizePortalInvoice = (invoice: PublicInvoiceData): PublicInvoiceData => ({
+const normalizePortalInvoice = (invoice: PublicDocumentData): PublicDocumentData => ({
   ...invoice,
   payment: invoice.payment || {
     method: invoice.paymentMethod || "",
@@ -77,7 +77,7 @@ const toTemplateAddress = (
   ...address,
 });
 
-const toTemplateItem = (item: PublicInvoiceItem, index: number, prefix: string): Item => ({
+const toTemplateItem = (item: PublicDocumentItem, index: number, prefix: string): Item => ({
   id: item.id || `${prefix}-${index}`,
   name: item.name || "N/A",
   variantName: item.variantName || "-",
@@ -92,7 +92,7 @@ const toTemplateItem = (item: PublicInvoiceItem, index: number, prefix: string):
   amount: Number(item.amount || 0),
 });
 
-const toInvoiceTemplateData = (invoice: PublicInvoiceData): InvoiceData => {
+const toInvoiceTemplateData = (invoice: PublicDocumentData): InvoiceData => {
   const billingAddress = toTemplateAddress(invoice.customer.billingAddress);
 
   return {
@@ -152,7 +152,7 @@ const toInvoiceTemplateData = (invoice: PublicInvoiceData): InvoiceData => {
 
 const PublicInvoice = () => {
   const { publicShareId } = useParams<{ publicShareId: string }>();
-  const [invoice, setInvoice] = useState<PublicInvoiceData | null>(null);
+  const [invoice, setInvoice] = useState<PublicDocumentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
@@ -252,7 +252,7 @@ const PublicInvoice = () => {
 
   return (
     <div className="min-h-[100dvh] overflow-x-hidden bg-[#eeeae5]">
-      <PublicInvoicePortal invoice={invoice} onDownload={() => handlePrint()} />
+      <PublicDocumentPortal documentType="INVOICE" documentData={invoice} onDownload={() => handlePrint()} />
 
       <div
         ref={invoiceRef}

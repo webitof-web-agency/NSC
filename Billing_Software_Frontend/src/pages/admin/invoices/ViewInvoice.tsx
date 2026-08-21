@@ -12,6 +12,7 @@ import { useSelector } from "react-redux";
 import type { RootState } from "@store/index";
 import { toast } from "react-toastify";
 import { Link2, Copy, RefreshCw, EyeOff } from "lucide-react";
+import { syncBeforeCloudAction } from "@utils/syncBeforeCloudAction";
 
 const ViewInvoice: React.FC = () => {
     const { id: invoiceId } = useParams<{ id: string }>();
@@ -142,6 +143,7 @@ const ViewInvoice: React.FC = () => {
         }
 
         try {
+            await syncBeforeCloudAction();
             await axios.post(
                 Constants.WHATSAPP_SEND_MANUAL_URL,
                 {
@@ -164,6 +166,7 @@ const ViewInvoice: React.FC = () => {
         }
 
         try {
+            await syncBeforeCloudAction();
             await axios.post(
                 Constants.WHATSAPP_SEND_MANUAL_URL,
                 {

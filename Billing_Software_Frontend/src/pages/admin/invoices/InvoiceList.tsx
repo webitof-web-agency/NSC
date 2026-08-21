@@ -32,6 +32,7 @@ import InvoicePaymentSummary from "@components/admin/InvoicePaymentSummary";
 import ProfessionalPrintDialog from "@components/admin/ProfessionalPrintDialog";
 import { formatLocalDateTime } from "@utils/converters";
 import { useDebouncedSearchParam } from "@hooks/useDebouncedSearchParam";
+import { syncBeforeCloudAction } from "@utils/syncBeforeCloudAction";
 
 interface Invoice {
     id: string;
@@ -996,6 +997,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
 
     const handleSendWhatsAppClick = async (item: Invoice) => {
         try {
+            await syncBeforeCloudAction();
             await axios.post(Constants.WHATSAPP_SEND_MANUAL_URL, {
                 documentType: item.status === 'EXCHANGE' || item.isExchange ? 'exchange' : 'invoice',
                 documentId: item.id,
@@ -1011,6 +1013,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
 
     const handleSendPaymentReminderClick = async (item: Invoice) => {
         try {
+            await syncBeforeCloudAction();
             await axios.post(Constants.WHATSAPP_SEND_MANUAL_URL, {
                 documentType: 'payment_reminder',
                 documentId: item.id,

@@ -119,16 +119,32 @@ function getReferencePaths(schema, basePath = '') {
 // Map collection names to Model names
 function getModelNameFromCollection(collectionName) {
   const map = {
+    'users': 'User',
     'customers': 'Customer',
+    'suppliers': 'Supplier',
+    'products': 'Product',
+    'product-variants': 'ProductVariant',
+    'categories': 'Category',
+    'brands': 'Brand',
+    'units': 'Unit',
+    'tax-groups': 'TaxGroup',
+    'tax-rates': 'TaxRate',
+    'company-details': 'CompanySettings',
+    'bank-details': 'BankDetail',
+    'signatures': 'Signature',
+    'payment-modes': 'PaymentMode',
     'invoices': 'Invoice',
     'quotations': 'Quotation',
     'credit-notes': 'CreditNote',
     'purchases': 'Purchase',
-    'suppliers': 'Supplier',
     'supplier-payments': 'SupplierPayment',
-    'users': 'User',
     'attendance': 'Attendance',
-    'staff-salary': 'StaffSalary'
+    'staff-salary': 'StaffSalary',
+    'customer-portal-branding': 'CustomerPortalBranding',
+    'legal-settings': 'LegalSettings',
+    'qr-settings': 'QrSettings',
+    'notifications': 'Notification',
+    'todo-tasks': 'TodoTask'
   };
   return map[collectionName];
 }

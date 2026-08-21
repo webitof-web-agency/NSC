@@ -88,9 +88,19 @@ async function enablePublicShare(invoice) {
   return regeneratePublicShareId(invoice);
 }
 
-function buildPublicInvoiceUrl(publicShareId) {
+function buildPublicDocumentUrl(publicShareId, type = 'INVOICE') {
   const baseUrl = process.env.FRONTEND_URL || 'https://app.nareshsareecollection.com';
-  return `${baseUrl.replace(/\/$/, '')}/invoice/${publicShareId}`;
+  const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+  
+  const typeMap = {
+    INVOICE: 'invoice',
+    QUOTATION: 'quotation',
+    EXCHANGE: 'exchange'
+  };
+
+  const routeType = typeMap[type] || 'invoice';
+
+  return `${cleanBaseUrl}/${routeType}/${publicShareId}`;
 }
 
 module.exports = {
@@ -99,5 +109,5 @@ module.exports = {
   regeneratePublicShareId,
   disablePublicShare,
   enablePublicShare,
-  buildPublicInvoiceUrl
+  buildPublicDocumentUrl
 };

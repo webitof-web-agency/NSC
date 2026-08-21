@@ -141,6 +141,9 @@ const PaymentModal: React.FC<Props> = ({
   ) => {
     // For exchange payment, use different endpoint
     if (isExchangePayment && invoiceId) {
+      // Zero or negative difference means same-value or refund — no extra API call needed
+      if (amount <= 0) return invoiceId;
+
       await axios.post(
         `${Constants.EXCHANGE_INVOICE_PAYMENT_URL}/${invoiceId}/exchange-payment`,
         {

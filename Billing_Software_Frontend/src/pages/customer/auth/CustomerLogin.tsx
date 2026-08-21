@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { AppDispatch, RootState } from "@store/index";
@@ -18,7 +18,7 @@ const CustomerLogin: React.FC = () => {
 
     useEffect(() => {
         if (isAuthenticated) {
-            const target = (location.state as any)?.from || "/customer/dashboard";
+            const target = (location.state as { from?: string } | null)?.from || "/customer/dashboard";
             navigate(target, { replace: true });
         }
     }, [isAuthenticated, location.state, navigate]);
@@ -48,9 +48,10 @@ const CustomerLogin: React.FC = () => {
 
     return (
         <div className="min-h-screen flex flex-col lg:flex-row">
-            {/* ── Branded top section on mobile / Left panel on desktop ── */}
+            {/* ── Branded information panel — desktop only ── */}
             <div
-                className="flex flex-col lg:w-[45%] lg:justify-between p-6 lg:p-12 relative overflow-hidden"
+                data-testid="customer-login-info"
+                className="hidden lg:flex lg:w-[45%] lg:flex-col lg:justify-between lg:p-12 relative overflow-hidden"
                 style={{ background: "linear-gradient(135deg, #A43275 0%, #c0428e 60%, #d4589f 100%)" }}
             >
                 {/* Decorative blobs */}
@@ -98,7 +99,7 @@ const CustomerLogin: React.FC = () => {
                 </p>
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-start lg:justify-center bg-gray-50 px-5 py-6 lg:px-6 lg:py-12">
+            <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 px-5 py-6 lg:px-6 lg:py-12">
                 <div className="w-full max-w-md">
                     <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/60 border border-gray-100 p-6 lg:p-10">
                         {/* Header */}
@@ -127,7 +128,7 @@ const CustomerLogin: React.FC = () => {
                                         placeholder="Enter your 10-digit phone"
                                         maxLength={10}
                                         className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition"
-                                        style={{ "--tw-ring-color": "#A4327540" } as any}
+                                        style={{ "--tw-ring-color": "#A4327540" } as CSSProperties}
                                         onFocus={(e) => {
                                             e.target.style.borderColor = "#A43275";
                                             e.target.style.boxShadow = "0 0 0 3px #A4327520";

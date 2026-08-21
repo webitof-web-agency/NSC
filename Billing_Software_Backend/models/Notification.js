@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const notificationSchema = new mongoose.Schema(
   {
@@ -100,5 +101,7 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ userId: 1, status: 1, isRead: 1 });
 notificationSchema.index({ type: 1, entityId: 1, status: 1 });
 notificationSchema.index({ dedupeKey: 1, status: 1 }, { unique: true });
+
+notificationSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model("Notification", notificationSchema);

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 
 const productSchema = new mongoose.Schema(
@@ -64,5 +65,7 @@ const productSchema = new mongoose.Schema(
   }
 );
 
+
+productSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model("Product", productSchema);

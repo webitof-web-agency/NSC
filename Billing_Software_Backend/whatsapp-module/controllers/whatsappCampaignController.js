@@ -1,4 +1,5 @@
 const Customer = require('../../models/Customer');
+const CompanySettings = require('../../models/CompanySettings');
 const WhatsAppCampaign = require('../models/WhatsAppCampaign');
 const WhatsAppMessageLog = require('../models/WhatsAppMessageLog');
 const WhatsAppMetaTemplate = require('../models/WhatsAppMetaTemplate');
@@ -13,46 +14,66 @@ const LEASE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 // Helper to delay execution
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
+function getAuthenticatedUserId(req) {
+  return req.user?._id || req.user;
+}
+
+function getCustomerMarketingEligibility(customer) {
+  let normalizedPhone = '';
+  try {
+    normalizedPhone = normalizePhoneNumber(customer.phone);
+  } catch {
+    return { eligible: false, eligibilityStatus: 'INVALID_PHONE', normalizedPhone: '' };
+  }
+
+  return { eligible: true, eligibilityStatus: 'ELIGIBLE', normalizedPhone };
+}
+
+function serializeMarketingCustomer(customer) {
+  const eligibility = getCustomerMarketingEligibility(customer);
+  return {
+    _id: customer._id,
+    name: customer.name,
+    phone: customer.phone,
+    companyName: customer.billingAddress?.name || '',
+    eligible: eligibility.eligible,
+    eligibilityStatus: eligibility.eligibilityStatus,
+  };
+}
+
+function buildCampaignTemplateComponents({ campaign, template, customer, companySettings }) {
+  return buildTemplateComponents(
+    {
+      messageType: 'MARKETING',
+      metaTemplateId: template,
+      variableMappings: campaign.variableMappings || [],
+      headerMapping: campaign.headerMapping || { sourceType: 'NONE' },
+    },
+    {
+      customerName: customer.name || 'Customer',
+      customerPhone: customer.phone || '',
+      companyName: companySettings?.companyName || '',
+      companySettings: companySettings || {},
+    }
+  );
+}
+
 async function getEligibleCustomers(req, res) {
   try {
+    const userId = getAuthenticatedUserId(req);
     const customers = await Customer.find({ 
-      userId: req.user._id,
+      userId,
       isDeleted: false,
       status: 'Active'
     });
 
     const eligible = [];
     const invalidPhone = [];
-    const notOptedIn = [];
-    const optedOut = [];
 
-    for (const c of customers) {
-      if (!c.phone || c.phone.trim() === '') {
-        invalidPhone.push(c);
-        continue;
-      }
-      
-      let normalized = null;
-      try {
-        normalized = normalizePhoneNumber(c.phone);
-      } catch (e) {}
-
-      if (!normalized) {
-        invalidPhone.push(c);
-        continue;
-      }
-
-      if (c.whatsappMarketingOptOutAt) {
-        optedOut.push(c);
-        continue;
-      }
-
-      if (!c.whatsappMarketingOptIn) {
-        notOptedIn.push(c);
-        continue;
-      }
-
-      eligible.push(c);
+    for (const customer of customers) {
+      const eligibility = getCustomerMarketingEligibility(customer);
+      if (eligibility.eligibilityStatus === 'INVALID_PHONE') invalidPhone.push(customer);
+      if (eligibility.eligible) eligible.push(customer);
     }
 
     res.json({
@@ -60,16 +81,10 @@ async function getEligibleCustomers(req, res) {
       stats: {
         total: customers.length,
         eligible: eligible.length,
-        invalidPhone: invalidPhone.length,
-        notOptedIn: notOptedIn.length,
-        optedOut: optedOut.length
+        invalidPhone: invalidPhone.length
       },
-      eligibleCustomers: eligible.map(c => ({
-        _id: c._id,
-        name: c.name,
-        phone: c.phone,
-        companyName: c.billingAddress?.name || ''
-      }))
+      customers: customers.map(serializeMarketingCustomer),
+      eligibleCustomers: eligible.map(serializeMarketingCustomer),
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -78,6 +93,7 @@ async function getEligibleCustomers(req, res) {
 
 async function createCampaign(req, res) {
   try {
+    const userId = getAuthenticatedUserId(req);
     const { 
       name, 
       metaTemplateId, 
@@ -91,12 +107,12 @@ async function createCampaign(req, res) {
     const idempotencyKey = req.headers['idempotency-key'] || req.body.idempotencyKey || crypto.randomUUID();
 
     // Check if campaign with this idempotency key already exists for this user
-    let campaign = await WhatsAppCampaign.findOne({ userId: req.user._id, idempotencyKey });
+    let campaign = await WhatsAppCampaign.findOne({ userId, idempotencyKey });
     if (campaign) {
       return res.status(200).json({ success: true, campaignId: campaign._id, message: 'Campaign already queued (idempotent)' });
     }
 
-    const template = await WhatsAppMetaTemplate.findOne({ metaId: metaTemplateId });
+    const template = await WhatsAppMetaTemplate.findOne({ userId, metaId: metaTemplateId });
     if (!template || template.status !== 'APPROVED') {
       return res.status(400).json({ success: false, message: 'Invalid or unapproved template.' });
     }
@@ -108,16 +124,14 @@ async function createCampaign(req, res) {
     let customers = [];
     if (sendToAllEligible) {
       customers = await Customer.find({ 
-        userId: req.user._id,
+        userId,
         isDeleted: false,
-        status: 'Active',
-        whatsappMarketingOptIn: true,
-        whatsappMarketingOptOutAt: null
+        status: 'Active'
       });
     } else {
       customers = await Customer.find({ 
         _id: { $in: selectedCustomerIds || [] }, 
-        userId: req.user._id,
+        userId,
         isDeleted: false,
         status: 'Active'
       });
@@ -132,7 +146,7 @@ async function createCampaign(req, res) {
       let normPhone = null;
       try { normPhone = normalizePhoneNumber(c.phone); } catch (e) {}
       
-      if (!normPhone || !c.whatsappMarketingOptIn || c.whatsappMarketingOptOutAt || uniquePhones.has(normPhone)) {
+      if (!normPhone || uniquePhones.has(normPhone)) {
         excludedCount++;
         continue;
       }
@@ -145,7 +159,7 @@ async function createCampaign(req, res) {
     }
 
     campaign = await WhatsAppCampaign.create({
-      userId: req.user._id,
+      userId,
       name,
       idempotencyKey,
       template: {
@@ -162,7 +176,7 @@ async function createCampaign(req, res) {
       variableMappings: variableMappings || [],
       headerMapping: headerMapping || { sourceType: 'NONE' },
       buttonMappings: buttonMappings || [],
-      createdBy: req.user._id,
+      createdBy: userId,
     });
 
     const logsToCreate = finalEligibleCustomers.map(item => ({
@@ -197,7 +211,10 @@ async function processCampaign(campaignId) {
     const campaign = await WhatsAppCampaign.findById(campaignId);
     if (!campaign) return;
 
-    const template = await WhatsAppMetaTemplate.findOne({ metaId: campaign.template.metaTemplateId });
+    const template = await WhatsAppMetaTemplate.findOne({
+      userId: campaign.userId,
+      metaId: campaign.template.metaTemplateId,
+    });
     if (!template || template.status !== 'APPROVED' || template.category !== 'MARKETING') {
       campaign.status = 'FAILED';
       await campaign.save();
@@ -217,6 +234,7 @@ async function processCampaign(campaignId) {
     const WhatsAppSettings = require('../models/WhatsAppSettings');
     const { mergeConfig } = require('../services/whatsappService');
     const settingsDoc = await WhatsAppSettings.findOne({ userId: campaign.userId });
+    const companySettings = await CompanySettings.findOne({ userId: campaign.userId }).lean();
     const config = mergeConfig(settingsDoc);
 
     if (!config.isEnabled) {
@@ -261,6 +279,14 @@ async function processCampaign(campaignId) {
       }).limit(WHATSAPP_CAMPAIGN_CONCURRENCY);
 
       if (logsToProcess.length === 0) {
+        const scheduledRetryCount = await WhatsAppMessageLog.countDocuments({
+          campaignId,
+          status: 'QUEUED',
+        });
+        if (scheduledRetryCount > 0) {
+          await delay(500);
+          continue;
+        }
         hasMore = false;
         break;
       }
@@ -293,13 +319,12 @@ async function processCampaign(campaignId) {
         }
 
         const phone = log.customerPhone;
-        const context = {
-          customerName: customer.name,
-          customerPhone: customer.phone,
-          companyName: customer.billingAddress?.name || ''
-        };
-
-        const components = buildTemplateComponents(campaign, context);
+        const components = buildCampaignTemplateComponents({
+          campaign,
+          template,
+          customer,
+          companySettings,
+        });
 
         let attempt = log.attemptCount + 1;
         let success = false;
@@ -388,7 +413,7 @@ async function processCampaign(campaignId) {
 
 async function getCampaigns(req, res) {
   try {
-    const campaigns = await WhatsAppCampaign.find({ userId: req.user._id }).sort({ createdAt: -1 });
+    const campaigns = await WhatsAppCampaign.find({ userId: getAuthenticatedUserId(req) }).sort({ createdAt: -1 });
     res.json({ success: true, data: campaigns });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -397,7 +422,10 @@ async function getCampaigns(req, res) {
 
 async function getCampaignById(req, res) {
   try {
-    const campaign = await WhatsAppCampaign.findOne({ _id: req.params.id, userId: req.user._id });
+    const campaign = await WhatsAppCampaign.findOne({
+      _id: req.params.id,
+      userId: getAuthenticatedUserId(req),
+    });
     if (!campaign) return res.status(404).json({ success: false, message: 'Not found' });
     
     const logs = await WhatsAppMessageLog.find({ campaignId: campaign._id }).select('status');
@@ -417,5 +445,6 @@ module.exports = {
   createCampaign,
   getCampaigns,
   getCampaignById,
-  processCampaign
+  processCampaign,
+  buildCampaignTemplateComponents,
 };

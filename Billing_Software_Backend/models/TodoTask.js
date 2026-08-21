@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const todoTaskSchema = new mongoose.Schema(
   {
@@ -45,5 +46,7 @@ const todoTaskSchema = new mongoose.Schema(
 );
 
 todoTaskSchema.index({ userId: 1, status: 1, dueDate: 1, createDate: -1 });
+
+todoTaskSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model("TodoTask", todoTaskSchema);

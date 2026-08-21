@@ -142,7 +142,7 @@ async function handleWebhook(req, res) {
             { customerPhone: { $regex: `${from}$` } },
             {
               $set: {
-                status: 'replied',
+                status: 'REPLIED',
                 replyText,
                 repliedAt: new Date(),
               },

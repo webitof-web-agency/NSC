@@ -6,7 +6,8 @@ import SetupOrganizationInfo from "@pages/admin/auth/SetupOrganizationInfo";
 import { useSetupStatus } from "@context/SetupStatusContext";
 import LegalPage from "@pages/public/LegalPage";
 import PublicInvoice from "@pages/public/PublicInvoice";
-
+import PublicQuotation from "@pages/public/PublicQuotation";
+import PublicExchange from "@pages/public/PublicExchange";
 const AppRoutes = () => {
     const { status, isLoading } = useSetupStatus();
 
@@ -26,6 +27,8 @@ const AppRoutes = () => {
                 <Route path="/terms-and-conditions" element={<LegalPage documentType="termsAndConditions" title="Terms & Conditions" />} />
                 <Route path="/data-deletion" element={<LegalPage documentType="dataDeletion" title="Data Deletion Policy" />} />
                 <Route path="/invoice/:publicShareId" element={<PublicInvoice />} />
+                <Route path="/quotation/:publicShareId" element={<PublicQuotation />} />
+                <Route path="/exchange/:publicShareId" element={<PublicExchange />} />
                 <Route path="/admin/*" element={<AdminRoute />} />
                 <Route path="/customer/*" element={<CustomerRoute />} />
                 <Route
@@ -60,6 +63,8 @@ const AppRoutes = () => {
                 <Route path="/terms-and-conditions" element={<LegalPage documentType="termsAndConditions" title="Terms & Conditions" />} />
                 <Route path="/data-deletion" element={<LegalPage documentType="dataDeletion" title="Data Deletion Policy" />} />
                 <Route path="/invoice/:publicShareId" element={<PublicInvoice />} />
+                <Route path="/quotation/:publicShareId" element={<PublicQuotation />} />
+                <Route path="/exchange/:publicShareId" element={<PublicExchange />} />
                 <Route path="/setup" element={<SetupOrganizationInfo />} />
                 <Route path="*" element={<Navigate to="/setup" />} />
             </Routes>
@@ -73,6 +78,8 @@ const AppRoutes = () => {
                 <Route path="/terms-and-conditions" element={<LegalPage documentType="termsAndConditions" title="Terms & Conditions" />} />
                 <Route path="/data-deletion" element={<LegalPage documentType="dataDeletion" title="Data Deletion Policy" />} />
                 <Route path="/invoice/:publicShareId" element={<PublicInvoice />} />
+                <Route path="/quotation/:publicShareId" element={<PublicQuotation />} />
+                <Route path="/exchange/:publicShareId" element={<PublicExchange />} />
                 <Route path="/register" element={<AdminRegister />} />
                 <Route path="*" element={<Navigate to="/register" />} />
             </Routes>

@@ -1,5 +1,6 @@
 const Invoice = require('../../../models/Invoice');
 const publicShareService = require('../../../services/publicShareService');
+const { resolveDocumentType } = require('../../../services/documentResolver');
 
 exports.getOrCreatePublicLink = async (req, res) => {
   try {
@@ -9,7 +10,8 @@ exports.getOrCreatePublicLink = async (req, res) => {
     }
 
     const publicShareId = await publicShareService.getOrCreatePublicShareId(invoice);
-    const publicUrl = publicShareService.buildPublicInvoiceUrl(publicShareId);
+    const documentType = resolveDocumentType(invoice) === 'exchange' ? 'EXCHANGE' : 'INVOICE';
+    const publicUrl = publicShareService.buildPublicDocumentUrl(publicShareId, documentType);
 
     res.json({
       success: true,
@@ -31,7 +33,8 @@ exports.regeneratePublicLink = async (req, res) => {
     }
 
     const publicShareId = await publicShareService.regeneratePublicShareId(invoice);
-    const publicUrl = publicShareService.buildPublicInvoiceUrl(publicShareId);
+    const documentType = resolveDocumentType(invoice) === 'exchange' ? 'EXCHANGE' : 'INVOICE';
+    const publicUrl = publicShareService.buildPublicDocumentUrl(publicShareId, documentType);
 
     res.json({
       success: true,

@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import AdminLogin from "@pages/admin/auth/AdminLogin";
 import AdminDashboard from "@pages/admin/AdminDashboard";
 import ProtectedRoute from "./ProtectedRoute";
@@ -96,8 +96,6 @@ import WhatsAppSettings from '@pages/admin/whatsapp/WhatsAppSettings';
 import WhatsAppTemplates from '@pages/admin/whatsapp/WhatsAppTemplates';
 import WhatsAppMarketing from '@pages/admin/whatsapp/WhatsAppMarketing';
 import WhatsAppMessages from '@pages/admin/whatsapp/WhatsAppMessages';
-import WhatsAppDelivered from '@pages/admin/whatsapp/WhatsAppDelivered';
-import WhatsAppRead from '@pages/admin/whatsapp/WhatsAppRead';
 
 const AdminRoute = () => {
     return (
@@ -214,8 +212,8 @@ const AdminRoute = () => {
                     <Route path="/whatsapp/templates" element={<><Seo title="WhatsApp Templates" /><WhatsAppTemplates /></>} />
                     <Route path="/whatsapp/marketing" element={<><Seo title="WhatsApp Marketing" /><WhatsAppMarketing /></>} />
                     <Route path="/whatsapp/messages" element={<><Seo title="WhatsApp Messages" /><WhatsAppMessages /></>} />
-                    <Route path="/whatsapp/delivered" element={<><Seo title="Delivered Messages" /><WhatsAppDelivered /></>} />
-                    <Route path="/whatsapp/read" element={<><Seo title="Read Messages" /><WhatsAppRead /></>} />
+                    <Route path="/whatsapp/delivered" element={<Navigate to="/admin/whatsapp/messages?status=delivered" replace />} />
+                    <Route path="/whatsapp/read" element={<Navigate to="/admin/whatsapp/messages?status=read" replace />} />
                 </Route>
 
                 {/* Finance Settings */}
