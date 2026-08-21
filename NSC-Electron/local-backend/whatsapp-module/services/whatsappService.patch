@@ -1,0 +1,74 @@
+--- whatsapp-module/services/whatsappService.js
++++ whatsapp-module/services/whatsappService.js
+@@ -128,7 +128,8 @@
+   }
+ }
+ 
+-async function resolveDocumentContextFromModels({ documentType, documentId, userId }) {
++async function resolveDocumentContextFromModels({ documentType, documentId, userId, resolvePublicUrl = true }) {
+   const { models } = getWhatsAppModuleConfig();
+   const {
+     CustomerModel,
+     InvoiceModel,
+     QuotationModel,
+     CompanySettingsModel,
++    InvoicePaymentModel,
+   } = models;
+ 
+   const DocumentModel = documentType === 'quotation' ? QuotationModel : InvoiceModel;
+@@ -161,16 +162,56 @@
+     : null;
+   const companySettings = await CompanySettingsModel.findOne({ userId }).lean();
+ 
++  let publicShareUrl = '';
++  if (resolvePublicUrl && (documentType === 'invoice' || documentType === 'exchange' || documentType === 'payment_reminder')) {
++    const publicShareService = require('../../services/publicShareService');
++    const invoiceModelInstance = await InvoiceModel.findOne({ _id: documentId, userId, isDeleted: false });
++    if (invoiceModelInstance) {
++      const publicShareId = await publicShareService.getOrCreatePublicShareId(invoiceModelInstance);
++      publicShareUrl = publicShareService.buildPublicInvoiceUrl(publicShareId);
++    }
++  }
++
++  let paidAmount = 0;
++  let outstandingAmount = 0;
++  if (documentType !== 'quotation' && InvoicePaymentModel) {
++    const paymentAgg = await InvoicePaymentModel.aggregate([
++      { $match: { invoiceId: document._id } },
++      { $group: { _id: "$invoiceId", totalPaid: { $sum: "$amount" } } },
++    ]);
++    paidAmount = paymentAgg.length > 0 ? Number(paymentAgg[0].totalPaid) : 0;
++    outstandingAmount = Math.max((Number(document.TotalAmount || 0) - paidAmount), 0);
++  }
++
+   return {
+     document,
+     customer,
+     companySettings,
+     customerId: customer?._id || null,
+     customerName: customer?.name || 'Customer',
+     customerPhone: customer?.phone || '',
++    companyName: companySettings?.companyName || 'Your Company',
++    companyPhone: companySettings?.phone || '',
++    companyEmail: companySettings?.email || '',
+     documentNumber: getDocumentNumber(documentType, document),
+     amount: Number(document.TotalAmount || 0),
+     date: formatDocumentDate(documentType, document),
+     items: Array.isArray(document.items) ? document.items : [],
+     status: document.status || '',
+-    companyName: companySettings?.companyName || 'Your Company',
+     documentLabel: getDocumentLabel(documentType),
++    paidAmount,
++    outstandingAmount,
++    dueDate: document.dueDate ? formatDocumentDate(documentType, { date: document.dueDate }) : '', // if needed
++    invoicePublicUrl: publicShareUrl,
++    exchangePublicUrl: publicShareUrl,
++    
++    // Exchange specific fields (only available if it's an exchange)
++    exchangeOldTotal: document.exchangeOldTotal || 0,
++    exchangeNewTotal: document.exchangeNewTotal || 0,
++    amountDifference: document.amountDifference || 0,
++    returnedAmount: document.returned_amount || 0,
+   };
+ }
+ 
