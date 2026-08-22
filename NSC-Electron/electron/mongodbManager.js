@@ -13,7 +13,7 @@ const net = require('net');
 class MongoDBManager {
   constructor(app) {
     this.app = app;
-    this.port = 27018;
+    this.port = 27017; // Standard MongoDB Compass port
     this.process = null;
     this.dataDir = path.join(this.app.getPath('userData'), 'mongodb', 'data');
     this._isDev = process.argv.includes('--dev');
@@ -49,8 +49,8 @@ class MongoDBManager {
     return 'mongod';
   }
 
-  // Check if port 27018 is already in use
-  isPortInUse() {
+  // Check if a specific port is in use
+  isPortInUse(port = this.port) {
     return new Promise((resolve) => {
       const server = net.createServer();
       server.once('error', (err) => {
@@ -64,18 +64,31 @@ class MongoDBManager {
         server.close();
         resolve(false);
       });
-      server.listen(this.port, '127.0.0.1');
+      server.listen(port, '127.0.0.1');
     });
   }
 
   async start() {
-    console.log('⏳ Checking if managed MongoDB is already running...');
-    const inUse = await this.isPortInUse();
+    console.log('⏳ Checking MongoDB port availability...');
     
-    if (inUse) {
-      console.log('✅ MongoDB is already running on port ' + this.port);
+    // 1. Check if standard port 27017 (used by Compass & system MongoDB) is running
+    const is27017InUse = await this.isPortInUse(27017);
+    if (is27017InUse) {
+      console.log('✅ Local MongoDB is already running on standard port 27017.');
+      this.port = 27017;
       return;
     }
+
+    // 2. Check if managed port 27018 is running
+    const is27018InUse = await this.isPortInUse(27018);
+    if (is27018InUse) {
+      console.log('✅ Managed MongoDB is already running on port 27018.');
+      this.port = 27018;
+      return;
+    }
+
+    // 3. Spawn mongod on port 27017 (preferred for Compass)
+    this.port = 27017;
 
     // Ensure data directory exists
     if (!fs.existsSync(this.dataDir)) {
@@ -92,24 +105,23 @@ class MongoDBManager {
       this.process = spawn(mongodPath, [
         '--port', String(this.port),
         '--dbpath', this.dataDir,
-        '--bind_ip', '127.0.0.1',
-        '--replSet', 'rs0'
+        '--bind_ip', '127.0.0.1'
       ]);
 
-      this.process.stdout.on('data', (data) => {
+      const handleOutput = (data) => {
         const out = data.toString();
-        if (out.includes('Waiting for connections')) {
+        if (
+          out.includes('Waiting for connections') ||
+          out.includes('"Waiting for connections"') ||
+          out.includes('waiting for connections')
+        ) {
           console.log('✅ Managed MongoDB is ready for connections.');
           resolve();
         }
-      });
+      };
 
-      this.process.stderr.on('data', (data) => {
-        // Log sparingly
-        if (data.toString().includes('error')) {
-          console.error(`[MongoDB] ${data.toString().trim()}`);
-        }
-      });
+      this.process.stdout.on('data', handleOutput);
+      this.process.stderr.on('data', handleOutput);
 
       this.process.on('error', (err) => {
         console.error('❌ Failed to spawn MongoDB:', err.message);

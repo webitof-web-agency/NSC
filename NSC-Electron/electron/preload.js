@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSyncStatus: () => ipcRenderer.invoke('get:sync-status'),
 
   // Manually trigger a sync (e.g., user clicks "Sync Now" button)
-  triggerSync: () => ipcRenderer.invoke('trigger:sync'),
+  triggerSync: (token) => ipcRenderer.invoke('trigger:sync', token),
 
   // ── App Info ──────────────────────────────── 
   // Get local backend port so renderer can build API URLs
@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Print ─────────────────────────────────── 
   printPage: () => ipcRenderer.invoke('print:page'),
+
+  // ── Diagnostics & Inspect ───────────────────
+  getSyncLogs: () => ipcRenderer.invoke('get:sync-logs'),
+  openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
 
   // ── Platform Info ─────────────────────────── 
   platform: process.platform,

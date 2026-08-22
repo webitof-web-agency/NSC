@@ -1,10 +1,13 @@
 const multer = require('multer');
 const path = require('path');
+const { ensureUploadDir } = require('../utils/storagePaths');
 
-// Storage settings remain the same
+const uploadDir = ensureUploadDir('products');
+
+// Storage settings
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/products/');
+    cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
     const ext = path.extname(file.originalname);
@@ -31,11 +34,9 @@ const upload = multer({
   }
 });
 
-// ✅ The Fix: Use .fields() to handle multiple different file inputs
 const uploadProductFields = upload.fields([
-  { name: 'product_image', maxCount: 1 },    // for the single product image
-  { name: 'gallery_images', maxCount: 10 }  // for the array of gallery images
+  { name: 'product_image', maxCount: 1 },
+  { name: 'gallery_images', maxCount: 10 }
 ]);
 
-// Export the single middleware
 module.exports = { uploadProductFields };

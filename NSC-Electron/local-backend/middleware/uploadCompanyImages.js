@@ -1,12 +1,9 @@
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const { ensureUploadDir } = require('../utils/storagePaths');
 
-// Ensure upload directory exists
-const uploadDir = path.join(__dirname, '../uploads/company');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Ensure upload directory exists safely in writable user storage
+const uploadDir = ensureUploadDir('company');
 
 const companyStorage = multer.diskStorage({
   destination: function (req, file, cb) {

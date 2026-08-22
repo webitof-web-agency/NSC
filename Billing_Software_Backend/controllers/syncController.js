@@ -108,35 +108,6 @@ exports.getBootstrapSnapshot = async (req, res) => {
     const Notification = require('@models/Notification');
     const TodoTask = require('@models/TodoTask');
     
-    await backfillMissingSyncIds([
-      User,
-      Customer,
-      Supplier,
-      Product,
-      ProductVariant,
-      Category,
-      Brand,
-      Unit,
-      TaxGroup,
-      TaxRate,
-      CompanySettings,
-      BankDetail,
-      Signature,
-      PaymentMode,
-      Invoice,
-      Quotation,
-      CreditNote,
-      Purchase,
-      SupplierPayment,
-      Attendance,
-      StaffSalary,
-      CustomerPortalBranding,
-      LegalSettings,
-      QrSettings,
-      Notification,
-      TodoTask,
-    ]);
-
     // Include legacy rows where isDeleted did not exist yet.
     const baseQuery = { isDeleted: { $ne: true } };
     

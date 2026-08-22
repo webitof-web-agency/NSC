@@ -1,7 +1,6 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { resolveReferences } = require('../utils/referenceResolver');
 
 // Mapping of collection names used in the snapshot payload to Mongoose Models
 const COLLECTION_MAP = {
@@ -25,12 +24,17 @@ const COLLECTION_MAP = {
   'company-details': 'CompanySettings',
   'bank-details': 'BankDetail',
   'signatures': 'Signature',
-  'payment-modes': 'PaymentMode'
+  'payment-modes': 'PaymentMode',
+  'customer-portal-brandings': 'CustomerPortalBranding',
+  'legal-settings': 'LegalSettings',
+  'qr-settings': 'QrSettings',
+  'notifications': 'Notification',
+  'todo-tasks': 'TodoTask'
 };
 
 exports.applyBootstrap = async (req, res) => {
   const { snapshot } = req.body;
-  if (!snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
     return res.status(400).json({ success: false, message: 'Snapshot payload required' });
   }
 
@@ -40,20 +44,16 @@ exports.applyBootstrap = async (req, res) => {
 
       const modelName = COLLECTION_MAP[collectionName];
       if (!modelName) {
-        console.warn(`[Sync Bootstrap] Unknown collection: ${collectionName}`);
+        console.warn(`[Sync Bootstrap] Skipping unmapped collection: ${collectionName}`);
         continue;
       }
 
       let Model;
       try {
-        Model = mongoose.model(modelName);
-      } catch {
-        try {
-          Model = require(`../models/${modelName}`);
-        } catch (e) {
-          console.warn(`[Sync Bootstrap] Could not load model ${modelName}:`, e.message);
-          continue;
-        }
+        Model = mongoose.models[modelName] || require(`../models/${modelName}`);
+      } catch (e) {
+        console.warn(`[Sync Bootstrap] Could not load model ${modelName}:`, e.message);
+        continue;
       }
 
       try {
@@ -61,62 +61,73 @@ exports.applyBootstrap = async (req, res) => {
         if (collectionName === 'suppliers') {
           try {
             await Model.collection.dropIndex('email_1');
-            console.log('[Sync Bootstrap] Dropped obsolete suppliers.email_1 index');
-          } catch (dropErr) {
-            // Index might not exist, ignore
-          }
+          } catch {}
         }
 
-        // Resolve global syncIds to local ObjectIds for all records
-        for (let i = 0; i < records.length; i++) {
-          records[i] = await resolveReferences(collectionName, records[i], false);
-        }
-
-        // We use bulkWrite for efficient bulk upserts based on syncId or _id
-        const bulkOps = records.map(record => {
-          const updateData = { ...record };
-          delete updateData._id; // Let local DB generate new internal _id
-          delete updateData.__v;
+        // Prepare bulk upserts preserving _id and syncId
+        const bulkOps = [];
+        for (const record of records) {
+          if (!record || typeof record !== 'object') continue;
           
-          if (!updateData.syncId && record._id) {
-            updateData.syncId = String(record._id);
+          const updateData = { ...record };
+          let docId;
+          if (updateData._id && mongoose.Types.ObjectId.isValid(updateData._id)) {
+            docId = new mongoose.Types.ObjectId(String(updateData._id));
+          } else {
+            docId = new mongoose.Types.ObjectId();
           }
 
-          // Clean empty strings on optional unique fields
+          if (!updateData.syncId) {
+            updateData.syncId = String(record._id || docId);
+          }
+
           if (updateData.email === '') {
             delete updateData.email;
           }
-          
-          return {
+
+          // In MongoDB, _id is immutable and must NOT be in $set during upsert!
+          delete updateData._id;
+          delete updateData.__v;
+
+          bulkOps.push({
             updateOne: {
-              filter: record.syncId ? { syncId: record.syncId } : { syncId: String(record._id) },
-              update: { $set: updateData },
+              filter: { _id: docId },
+              update: {
+                $set: updateData,
+                $setOnInsert: { _id: docId }
+              },
               upsert: true
             }
-          };
-        });
+          });
+        }
 
         if (bulkOps.length > 0) {
           const result = await Model.bulkWrite(bulkOps, { ordered: false });
-          console.log(`[Sync Bootstrap] Processed ${records.length} records for ${collectionName}. Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}`);
+          console.log(`[Sync Bootstrap] ${collectionName}: ${records.length} records processed (upserted: ${result.upsertedCount}, modified: ${result.modifiedCount})`);
         }
-        
-        // Phase 17: Automatically scan bootstrap snapshot for files and queue Pull Requests
-        const { extractFilePaths } = require('../utils/fileScanner');
-        const FilePullRequest = mongoose.models.FilePullRequest || require('../models/FilePullRequest');
-        
-        const filePaths = new Set();
-        for (const record of records) {
-           extractFilePaths(record, filePaths);
+
+        // File scanning (non-blocking)
+        try {
+          const { extractFilePaths } = require('../utils/fileScanner');
+          const FilePullRequest = mongoose.models.FilePullRequest || require('../models/FilePullRequest');
+          const filePaths = new Set();
+          for (const record of records) {
+            extractFilePaths(record, filePaths);
+          }
+          if (filePaths.size > 0) {
+            const fileOps = Array.from(filePaths).map(filePath => ({
+              updateOne: {
+                filter: { filePath },
+                update: { $set: { filePath, status: 'PENDING', attempts: 0, error: null } },
+                upsert: true
+              }
+            }));
+            await FilePullRequest.bulkWrite(fileOps, { ordered: false });
+          }
+        } catch (fileErr) {
+          console.warn(`[Sync Bootstrap FileScanner] ${collectionName} warning:`, fileErr.message);
         }
-        
-        for (const filePath of filePaths) {
-           await FilePullRequest.findOneAndUpdate(
-             { filePath }, 
-             { $set: { filePath, status: 'PENDING', attempts: 0, error: null } },
-             { upsert: true }
-           );
-        }
+
       } catch (colErr) {
         console.error(`⚠️ [Sync Bootstrap] Error processing collection ${collectionName}:`, colErr.message);
       }

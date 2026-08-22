@@ -81,10 +81,14 @@ function startLocalBackend() {
       asarModules
     ].filter(Boolean).join(path.delimiter);
 
+    const managedMongoPort = isDev ? 27017 : (mongoManager ? mongoManager.port : 27017);
+    const managedMongoUri = `mongodb://127.0.0.1:${managedMongoPort}/nsc_local`;
+
     console.log('📂 Backend dir:', backendDir);
     console.log('📄 Server script:', serverScript);
     console.log('📄 Env file:', envFile);
     console.log('📦 node_modules path:', fullNodePath);
+    console.log('🗄️  Backend MONGO_URI:', managedMongoUri);
 
     // ── Use Electron's bundled Node.js executable ─────────────────────
     // This ensures the app works on machines that DON'T have Node.js installed
@@ -104,6 +108,8 @@ function startLocalBackend() {
           ELECTRON_RUN_AS_NODE: '1',
           // Tell Node.js where node_modules are (critical for production)
           NODE_PATH: fullNodePath,
+          MONGO_URI: managedMongoUri,
+          NSC_UPLOADS_DIR: path.join(app.getPath('userData'), 'uploads'),
         },
         cwd: backendDir,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -113,31 +119,50 @@ function startLocalBackend() {
     localBackendProcess.stdout.on('data', (data) => {
       const line = data.toString().trim();
       console.log(`[Backend] ${line}`);
+      if (syncManager) {
+        syncManager._log('info', `[Backend] ${line}`);
+      }
       // Detect when the server is ready
-      if (line.includes('BACKEND_READY') || line.includes('running at http://localhost')) {
+      if (line.includes('BACKEND_READY') || line.includes('running at http')) {
         console.log('✅ Local backend is ready on port', LOCAL_BACKEND_PORT);
         resolve();
       }
     });
 
     localBackendProcess.stderr.on('data', (data) => {
-      console.error(`[Backend ERR] ${data.toString().trim()}`);
+      const line = data.toString().trim();
+      console.error(`[Backend ERR] ${line}`);
+      if (syncManager) {
+        syncManager._log('warn', `[Backend ERR] ${line}`);
+      }
     });
 
     localBackendProcess.on('error', (err) => {
       console.error('❌ Local backend failed to start:', err);
+      if (syncManager) {
+        syncManager._log('error', `Local backend process error: ${err.message}`);
+      }
       reject(err);
     });
 
     localBackendProcess.on('exit', (code) => {
       console.log(`⚠️  Local backend exited with code ${code}`);
+      if (syncManager) {
+        syncManager._log('warn', `Local backend exited with code ${code}. Restarting in 2s...`);
+      }
+      // Auto-restart backend if terminated unexpectedly
+      setTimeout(() => {
+        if (!app.isQuitting) {
+          console.log('🔄 Restarting local backend process...');
+          startLocalBackend().catch(console.error);
+        }
+      }, 2000);
     });
 
-    // Fallback: resolve after 8 seconds even if no ready message
+    // Fallback: resolve after 5 seconds even if no ready message
     setTimeout(() => {
-      console.log('⏱️  Backend startup timeout reached — continuing anyway');
       resolve();
-    }, 8000);
+    }, 5000);
   });
 }
 
@@ -215,23 +240,51 @@ function setupIPC() {
   });
 
   // Renderer manually triggers a sync
-  ipcMain.handle('trigger:sync', async () => {
-    if (syncManager && networkMonitor && networkMonitor.getStatus().isOnline) {
-      return syncManager.startSync();
+  ipcMain.handle('trigger:sync', async (_event, token) => {
+    let validToken = typeof token === 'string' && token.trim().length > 10 ? token.trim() : null;
+    
+    // If not passed from renderer, read directly from Electron session cookies
+    if (!validToken && mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        const cookies = await mainWindow.webContents.session.cookies.get({ name: 'authToken' });
+        if (cookies && cookies.length > 0 && cookies[0].value) {
+          validToken = cookies[0].value;
+        }
+      } catch (e) {
+        console.warn('Could not read session cookies:', e.message);
+      }
     }
-    return { success: false, message: 'Offline or sync manager not ready' };
+
+    if (syncManager) {
+      return syncManager.startSync(validToken);
+    }
+    return { success: false, message: 'Sync manager not ready' };
   });
 
   // Renderer asks for the local backend port
   ipcMain.handle('get:local-backend-port', () => LOCAL_BACKEND_PORT);
 
-  // Handle print dialog
+    // Handle print dialog
   ipcMain.handle('print:page', () => {
     if (mainWindow) {
       mainWindow.webContents.print({}, (success, failureReason) => {
         if (!success) console.error('Print failed:', failureReason);
       });
     }
+  });
+
+  // Renderer asks for live sync diagnostic logs
+  ipcMain.handle('get:sync-logs', () => {
+    return syncManager ? syncManager.getLogs() : [];
+  });
+
+  // Renderer requests opening Chromium DevTools in installed app
+  ipcMain.handle('app:open-devtools', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+      return { success: true };
+    }
+    return { success: false };
   });
 }
 
@@ -314,7 +367,7 @@ app.whenReady().then(async () => {
     const deviceId = deviceIdManager.getDeviceId();
 
     syncManager = new SyncManager({
-      localBackendUrl: `http://localhost:${LOCAL_BACKEND_PORT}`,
+      localBackendUrl: `http://127.0.0.1:${LOCAL_BACKEND_PORT}`,
       remoteBackendUrl,
       deviceId, // ── Phase 4: Device Identity ──
       userDataPath: app.getPath('userData'), // Pass userData path for cursor storage
