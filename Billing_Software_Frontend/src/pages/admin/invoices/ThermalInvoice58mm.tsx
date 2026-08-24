@@ -126,21 +126,21 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
         return (
             <div
                 ref={ref}
-                className="w-[70mm] p-2 font-mono font-bold text-[11px] leading-[1.4] text-black"
+                style={{ width: '70mm', padding: '8px', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '11px', lineHeight: 1.4, color: 'black' }}
             >
                 {companyDetails?.siteLogo && (
-                    <div className="text-center mb-1">
+                    <div style={{ textAlign: 'center', marginBottom: '4px' }}>
                         <img
                             src={companyDetails.siteLogo}
                             alt="Company Site Logo"
-                            className="max-w-[60mm] max-h-[30mm] mx-auto"
+                            style={{ maxWidth: '60mm', maxHeight: '30mm', margin: '0 auto', display: 'block' }}
                         />
                     </div>
                 )}
 
-                <div className="text-center">
-                    <p className="font-semibold">TAX INVOICE</p>
-                    <p className="font-bold">{companyDetails?.companyName}</p>
+                <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontWeight: 600 }}>TAX INVOICE</p>
+                    <p style={{ fontWeight: 'bold' }}>{companyDetails?.companyName}</p>
                     <p>{companyDetails?.address}</p>
                     <p>
                         {companyDetails?.city?.name}, {companyDetails?.state?.name},{" "}
@@ -149,10 +149,10 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                     <p>GSTIN: {companyDetails?.gstin || "N/A"}</p>
                     <p>UDYAM: {companyDetails?.udyam || "N/A"}</p>
                     <p>CONTACT: {companyDetails?.phone}</p>
-                    <hr className="my-1 border-black border-solid" />
+                    <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span>Invoice: {invoiceFormData.invoiceNumber}</span>
                     <span>
                         Date: {invoiceFormData.invoiceDate
@@ -163,10 +163,10 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                             : "N/A"}
                     </span>
                 </div>
-                <hr className="my-1 border-black border-solid" />
+                <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
 
-                <div className="my-1">
-                    <p className="font-semibold">Bill To:</p>
+                <div style={{ marginTop: '4px', marginBottom: '4px' }}>
+                    <p style={{ fontWeight: 600 }}>Bill To:</p>
                     <p>{customerDetails?.phone}</p>
                     {invoiceFormData.customerGstin && (
                         <p>Customer GSTIN: {invoiceFormData.customerGstin}</p>
@@ -176,7 +176,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                     )}
                     {hasShippingAddress && (
                         <>
-                            <p className="font-semibold mt-1">Ship To:</p>
+                            <p style={{ fontWeight: 600, marginTop: '4px' }}>Ship To:</p>
                             {shippingAddress?.name && <p>{shippingAddress.name}</p>}
                             {shippingAddress?.addressLine1 && <p>{shippingAddress.addressLine1}</p>}
                             {shippingAddress?.addressLine2 && <p>{shippingAddress.addressLine2}</p>}
@@ -188,14 +188,14 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                             </p>
                         </>
                     )}
-                    <hr className="my-1 border-black border-solid" />
+                    <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
                 </div>
 
-                <div className="grid grid-cols-[28px_1fr_70px_60px] gap-2 font-semibold">
+                <div style={{ display: 'grid', gridTemplateColumns: '28px 1fr 70px 60px', gap: '8px', fontWeight: 600 }}>
                     <span>S.No</span>
                     <span>Particulars</span>
-                    <span className="text-center">Qty × Rate</span>
-                    <span className="text-right">Amount</span>
+                    <span style={{ textAlign: 'center' }}>Qty × Rate</span>
+                    <span style={{ textAlign: 'right' }}>Amount</span>
                 </div>
 
                 {invoiceFormData.items
@@ -203,20 +203,20 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                     .map((item: ProductItem, index: number) => {
                         const variantMrp = Number((item as any).variantMrp ?? (item as any).mrp ?? 0) || 0;
                         return (
-                            <div key={item.id} className="ml-1 mb-1">
-                                <div className="font-semibold">
+                            <div key={item.id} style={{ marginLeft: '4px', marginBottom: '4px' }}>
+                                <div style={{ fontWeight: 600 }}>
                                     {index + 1}. {item.name} (HSN: {item.hsn_code})
                                 </div>
                                 {item.variantName && (
-                                    <div className="text-[10px] ml-4">{item.variantName}</div>
+                                    <div style={{ fontSize: '10px', marginLeft: '16px' }}>{item.variantName}</div>
                                 )}
-                                <div className="grid grid-cols-[28px_1fr_70px_60px] gap-2 text-[10px]">
+                                <div style={{ display: 'grid', gridTemplateColumns: '28px 1fr 70px 60px', gap: '8px', fontSize: '10px' }}>
                                     <span />
                                     <span>{variantMrp > 0 ? `MRP: ${variantMrp.toFixed(2)}` : ""}</span>
-                                    <span className="text-center">
+                                    <span style={{ textAlign: 'center' }}>
                                         {item.qty} × {Number(item.rate || 0).toFixed(2)}
                                     </span>
-                                    <span className="text-right">
+                                    <span style={{ textAlign: 'right' }}>
                                         {(Number(item.qty) * Number(item.rate || 0)).toFixed(2)}
                                     </span>
                                 </div>
@@ -226,27 +226,27 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
 
                 {exchangeOriginalItems.length > 0 && (
                     <>
-                        <hr className="my-1 border-black border-solid" />
-                        <div className="my-1 font-semibold">Previous Items (Exchange)</div>
+                        <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
+                        <div style={{ marginTop: '4px', marginBottom: '4px', fontWeight: 600 }}>Previous Items (Exchange)</div>
                         {exchangeOriginalItems
                             .filter((item) => !!item?.name && item.name.trim() !== "")
                             .map((item: ProductItem, index: number) => {
                                 const variantMrp = Number((item as any).variantMrp ?? (item as any).mrp ?? 0) || 0;
                                 return (
-                                    <div key={item.id || `prev-${index}`} className="ml-1 mb-1">
-                                        <div className="font-semibold">
+                                    <div key={item.id || `prev-${index}`} style={{ marginLeft: '4px', marginBottom: '4px' }}>
+                                        <div style={{ fontWeight: 600 }}>
                                             {index + 1}. {item.name} (HSN: {item.hsn_code})
                                         </div>
                                         {item.variantName && (
-                                            <div className="text-[10px] ml-4">{item.variantName}</div>
+                                            <div style={{ fontSize: '10px', marginLeft: '16px' }}>{item.variantName}</div>
                                         )}
-                                        <div className="grid grid-cols-[28px_1fr_70px_60px] gap-2 text-[10px]">
+                                        <div style={{ display: 'grid', gridTemplateColumns: '28px 1fr 70px 60px', gap: '8px', fontSize: '10px' }}>
                                             <span />
                                             <span>{variantMrp > 0 ? `MRP: ${variantMrp.toFixed(2)}` : ""}</span>
-                                            <span className="text-center">
+                                            <span style={{ textAlign: 'center' }}>
                                                 {item.qty} × {Number(item.rate || 0).toFixed(2)}
                                             </span>
-                                            <span className="text-right">
+                                            <span style={{ textAlign: 'right' }}>
                                                 {(Number(item.qty) * Number(item.rate || 0)).toFixed(2)}
                                             </span>
                                         </div>
@@ -256,97 +256,97 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                     </>
                 )}
 
-                <hr className="my-1 border-black border-solid" />
+                <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
 
-                <div className="my-1">
-                    <div className="flex items-center justify-between">
+                <div style={{ marginTop: '4px', marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span>Total Qty :</span>
                         <span>{totalQuantity}</span>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span>Sub Total :</span>
                         <span>{Number(invoiceFormData.subTotal ?? 0).toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span>Discount :</span>
                         <span>-{Number(invoiceFormData.totalDiscount ?? 0).toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span>{isInclusive ? "Inc. Tax" : "Tax"} :</span>
                         <span>{Number(invoiceFormData.totalTax ?? 0).toFixed(2)}</span>
                     </div>
                 </div>
 
-                <hr className="my-1 border-black border-solid" />
+                <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
 
 
                 {exchangeOriginalItems.length > 0 && exchangeOldTotal !== null && exchangeNewTotal !== null && (
                     <>
-                        <div className="my-1 text-[10px]">
-                            <div className="flex items-center justify-between">
+                        <div style={{ marginTop: '4px', marginBottom: '4px', fontSize: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <span>Old Total (Exchange):</span>
                                 <span>{exchangeOldTotal.toFixed(2)}</span>
                             </div>
-                            <div className="flex items-center justify-between">
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <span>New Total (Exchange):</span>
                                 <span>{exchangeNewTotal.toFixed(2)}</span>
                             </div>
                             {exchangeAmountDifference !== null && exchangeAmountDifference < 0 ? (
-                                <div className="flex items-center justify-between">
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <span>Refund:</span>
                                     <span>{Math.abs(exchangeAmountDifference).toFixed(2)}</span>
                                 </div>
                             ) : (
-                                <div className="flex items-center justify-between">
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                     <span>Extra Payable:</span>
                                     <span>{Math.max((exchangeAmountDifference || 0), 0).toFixed(2)}</span>
                                 </div>
                             )}
                         </div>
-                        <hr className="my-1 border-black border-solid" />
+                        <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
                     </>
                 )}
 
                 {isPartialCreditInvoice && (
-                    <div className="text-center text-[13px] my-1 font-bold">
+                    <div style={{ textAlign: 'center', fontSize: '13px', marginTop: '4px', marginBottom: '4px', fontWeight: 'bold' }}>
                         Paid Amount : {Number(invoiceFormData.totalPaid ?? 0).toFixed(2)}
                     </div>
                 )}
 
-                <div className="text-center text-[15px] my-1 font-black uppercase">
+                <div style={{ textAlign: 'center', fontSize: '15px', marginTop: '4px', marginBottom: '4px', fontWeight: 900, textTransform: 'uppercase' }}>
                     {totalPaidLabel} : {totalPaidValue.toFixed(2)}
                 </div>
 
                 {totalMRP > 0 && totalMRP > totalSale && (
                     <>
-                        <hr className="my-1 border-black border-solid" />
-                        <div className="my-1 text-[10px]">
-                            <div className="flex items-center justify-between">
+                        <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
+                        <div style={{ marginTop: '4px', marginBottom: '4px', fontSize: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <span>Total MRP:</span>
                                 <span>{parseFloat(totalMRP.toFixed(2))}</span>
                             </div>
-                            <div className="flex items-center justify-between">
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <span>Total Sale:</span>
                                 <span>{parseFloat(totalSale.toFixed(2))}</span>
                             </div>
-                            <div className="flex items-center justify-between font-bold mt-0.5">
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 'bold', marginTop: '2px' }}>
                                 <span>Total Savings:</span>
                                 <span>{parseFloat(gapPercentage.toFixed(2))}%</span>
                             </div>
                         </div>
-                        <hr className="my-1 border-black border-solid" />
+                        <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
                     </>
                 )}
 
-                <div className="my-2">
-                    <table className="w-full text-[10px] border-collapse">
+                <div style={{ marginTop: '8px', marginBottom: '8px' }}>
+                    <table style={{ width: '100%', fontSize: '10px', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr className="border-y border-black border-solid">
-                                <th className="py-0.5 text-left">HSN/SAC</th>
-                                <th className="py-0.5 text-center">GST%</th>
-                                <th className="py-0.5 text-right">Amount</th>
-                                <th className="py-0.5 text-right">CGST</th>
-                                <th className="py-0.5 text-right">SGST</th>
+                            <tr style={{ borderTop: '1px solid black', borderBottom: '1px solid black', borderColor: 'black', borderStyle: 'solid' }}>
+                                <th style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'left' }}>HSN/SAC</th>
+                                <th style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'center' }}>GST%</th>
+                                <th style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>Amount</th>
+                                <th style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>CGST</th>
+                                <th style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>SGST</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -392,12 +392,12 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                     const sgstAmount = (group.taxAmount / 2).toFixed(2);
 
                                     return (
-                                        <tr key={index} className="border-b border-black border-solid">
-                                            <td className="py-0.5">{group.hsn}</td>
-                                            <td className="py-0.5 text-center">{group.taxRate}%</td>
-                                            <td className="py-0.5 text-right">{group.taxableAmount.toFixed(2)}</td>
-                                            <td className="py-0.5 text-right">{cgstAmount}</td>
-                                            <td className="py-0.5 text-right">{sgstAmount}</td>
+                                        <tr key={index} style={{ borderBottom: '1px solid black', borderColor: 'black', borderStyle: 'solid' }}>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px' }}>{group.hsn}</td>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'center' }}>{group.taxRate}%</td>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{group.taxableAmount.toFixed(2)}</td>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{cgstAmount}</td>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{sgstAmount}</td>
                                         </tr>
                                     );
                                 });
@@ -407,35 +407,35 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                 </div>
 
                 {invoiceFormData.termsAndCondition && (
-                    <div className="text-center text-[10px] whitespace-pre-wrap break-words">
+                    <div style={{ textAlign: 'center', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                         {invoiceFormData.termsAndCondition}
                     </div>
                 )}
 
                 {invoiceFormData.notes && (
-                    <div className="text-center text-[10px] whitespace-pre-wrap break-words">
+                    <div style={{ textAlign: 'center', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                         {invoiceFormData.notes}
                     </div>
                 )}
 
                 {phonepeQRCode && (
-                    <div className="text-center my-3">
-                        <strong className="text-[11px]">Scan to Pay (UPI):</strong>
+                    <div style={{ textAlign: 'center', marginTop: '12px', marginBottom: '12px' }}>
+                        <strong style={{ fontSize: '11px' }}>Scan to Pay (UPI):</strong>
                         <img
                             src={phonepeQRCode}
                             alt="PhonePe QR"
-                            className="w-[35mm] h-[35mm] mt-2 mx-auto"
+                            style={{ width: '35mm', height: '35mm', marginTop: '8px', margin: '0 auto', display: 'block' }}
                         />
                     </div>
                 )}
 
                 {upiQRCode && (
-                    <div className="text-center my-3">
-                        <strong className="text-[11px]">Scan to Pay (UPI):</strong>
+                    <div style={{ textAlign: 'center', marginTop: '12px', marginBottom: '12px' }}>
+                        <strong style={{ fontSize: '11px' }}>Scan to Pay (UPI):</strong>
                         <img
                             src={upiQRCode}
                             alt="UPI QR"
-                            className="w-[35mm] h-[35mm] mt-2 mx-auto"
+                            style={{ width: '35mm', height: '35mm', marginTop: '8px', margin: '0 auto', display: 'block' }}
                         />
                     </div>
                 )}
