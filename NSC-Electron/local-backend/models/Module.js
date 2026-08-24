@@ -22,7 +22,7 @@ const moduleSchema = new mongoose.Schema({
     },
     userType: {
         type: Number,
-        enum: [1, 2, 3], 
+        enum: [1, 2, 3],
         required: [true, 'User type is required'],
         default: 1 // Admin
     },

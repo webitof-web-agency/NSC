@@ -17,125 +17,6 @@ const resolveItemId = (item) => {
   return candidate ? String(candidate) : new mongoose.Types.ObjectId().toString();
 };
 
-// const createDeliveryChallan = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       invoiceId,
-//       challanDate,
-//       referenceNo,
-//       items,
-//       notes,
-//       termsAndCondition,
-//       taxableAmount,
-//       totalAmount,
-//       vat,
-//       totalDiscount,
-//       roundOff,
-//       status,
-//       sign_type,
-//       signatureName,
-//       signatureId,
-//       bank,
-//       receivedBy,
-//       billFrom,
-//       billTo
-//     } = req.body;
-
-//     const userId = req.user || req.user._id;
-//     const customerId = billTo || req.user._id;
-
-//     // Validate customer exists
-//     const customer = await Customer.findById(customerId).session(session);
-//     if (!customer) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Customer not found' });
-//     }
-
-//     // Validate user exists
-//     const user = await User.findById(userId).session(session);
-//     if (!user) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'User not found' });
-//     }
-
-//     // Handle signature logic
-//     let signatureImage = null;
-//     let savedSignatureId = null;
-
-//     if (sign_type === 'eSignature' && req.file) {
-//       signatureImage = req.file.path;
-//     } else if (sign_type === 'digitalSignature' && signatureId) {
-//       savedSignatureId = signatureId;
-//     }
-
-//     // Create delivery challan
-//     const deliveryChallan = new DeliveryChallan({
-//       invoiceId: invoiceId || null,
-//       customerId,
-//       challanDate: challanDate ? new Date(challanDate) : new Date(),
-//       referenceNo: referenceNo || '',
-//       items: items.map(item => ({
-//         id: item.id || null,
-//         name: item.name,
-//         unit: item.unit || '',
-//         qty: item.qty,
-//         rate: item.rate,
-//         discount: item.discount || 0,
-//         tax: item.tax || 0,
-//         tax_group_id: item.tax_group_id || null,
-//         amount: item.amount || (item.rate * item.qty),
-//         discount_type: item.discount_type || 'Fixed',
-//         discount_value: item.discount_value || 0
-//       })),
-//       status: status || 'PENDING',
-//       bank: bank || null,
-//       taxableAmount: req.body.subTotal,
-//       totalAmount: req.body.grandTotal,
-//       vat: req.body.totalTax || 0,
-//       totalDiscount: req.body.totalDiscount || 0,
-//       roundOff: roundOff || false,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-//       sign_type: sign_type || 'none',
-//       signatureName: sign_type === 'eSignature' ? signatureName : null,
-//       signatureImage,
-//       signatureId: sign_type === 'digitalSignature' ? savedSignatureId : null,
-//       receivedBy: receivedBy || '',
-//       userId,
-//       billFrom,
-//       billTo,
-//     });
-
-//     await deliveryChallan.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       message: 'Delivery challan created successfully',
-//       data: deliveryChallan
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Create delivery challan error:', err);
-//     res.status(500).json({ message: 'Error creating delivery challan', error: err.message });
-//   }
-// };
-
 
 const createDeliveryChallan = async (req, res) => {
   try {
@@ -243,8 +124,6 @@ const createDeliveryChallan = async (req, res) => {
 };
 
 
-
-
 const updateDeliveryStatus = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -295,118 +174,6 @@ const updateDeliveryStatus = async (req, res) => {
     res.status(500).json({ message: 'Error updating delivery status', error: err.message });
   }
 };
-
-// const updateDeliveryChallan = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const { id } = req.params;
-//     const {
-//       invoiceId,
-//       challanDate,
-//       referenceNo,
-//       items,
-//       notes,
-//       termsAndCondition,
-//       taxableAmount,
-//       totalAmount,
-//       vat,
-//       totalDiscount,
-//       roundOff,
-//       status,
-//       bank,
-//       sign_type,
-//       signatureName,
-//       signatureId,
-//       receivedBy,
-//       billFrom,
-//       billTo
-//     } = req.body;
-
-//     const userId = req.user || req.user._id;
-
-//     // Find existing challan
-//     const deliveryChallan = await DeliveryChallan.findById(id).session(session);
-//     if (!deliveryChallan) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Delivery challan not found' });
-//     }
-
-//     // Handle signature logic
-//     let signatureImage = deliveryChallan.signatureImage;
-//     let savedSignatureId = deliveryChallan.signatureId;
-
-//     if (sign_type === 'eSignature' && req.file) {
-//       signatureImage = req.file.path;
-//       savedSignatureId = null; // clear digital signature if switching
-//     } else if (sign_type === 'digitalSignature' && signatureId) {
-//       savedSignatureId = signatureId;
-//       signatureImage = null; // clear eSignature if switching
-//     }
-
-//     // Update fields
-//     deliveryChallan.invoiceId = invoiceId || deliveryChallan.invoiceId;
-//     deliveryChallan.customerId = billTo || deliveryChallan.customerId;
-//     deliveryChallan.challanDate = challanDate ? new Date(challanDate) : deliveryChallan.challanDate;
-//     deliveryChallan.referenceNo = referenceNo || deliveryChallan.referenceNo;
-//     deliveryChallan.items = items
-//       ? items.map(item => ({
-//         id: item.id || null,
-//         name: item.name,
-//         unit: item.unit || '',
-//         qty: item.qty,
-//         rate: item.rate,
-//         discount: item.discount || 0,
-//         tax: item.tax || 0,
-//         tax_group_id: item.tax_group_id || null,
-//         amount: item.amount || (item.rate * item.qty),
-//         discount_type: item.discount_type || 'Fixed',
-//         discount_value: item.discount_value || 0
-//       }))
-//       : deliveryChallan.items;
-
-//     deliveryChallan.status = status || deliveryChallan.status;
-//     deliveryChallan.bank = bank || deliveryChallan.bank;
-//     deliveryChallan.taxableAmount = req.body.subTotal || deliveryChallan.taxableAmount;
-//     deliveryChallan.totalAmount = req.body.grandTotal || deliveryChallan.totalAmount;
-//     deliveryChallan.vat = req.body.totalTax || deliveryChallan.vat;
-//     deliveryChallan.totalDiscount = req.body.totalDiscount || deliveryChallan.totalDiscount;
-//     deliveryChallan.roundOff = roundOff ?? deliveryChallan.roundOff;
-//     deliveryChallan.notes = notes || deliveryChallan.notes;
-//     deliveryChallan.termsAndCondition = termsAndCondition || deliveryChallan.termsAndCondition;
-//     deliveryChallan.sign_type = sign_type || deliveryChallan.sign_type;
-//     deliveryChallan.signatureName = sign_type === 'eSignature' ? signatureName : null;
-//     deliveryChallan.signatureImage = signatureImage;
-//     deliveryChallan.signatureId = sign_type === 'digitalSignature' ? savedSignatureId : null;
-//     deliveryChallan.receivedBy = receivedBy || deliveryChallan.receivedBy;
-//     deliveryChallan.billFrom = billFrom || deliveryChallan.billFrom;
-//     deliveryChallan.billTo = billTo || deliveryChallan.billTo;
-
-//     await deliveryChallan.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Delivery challan updated successfully',
-//       data: deliveryChallan
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Update delivery challan error:', err);
-//     res.status(500).json({ message: 'Error updating delivery challan', error: err.message });
-//   }
-// };
 
 
 const updateDeliveryChallan = async (req, res) => {
@@ -512,7 +279,6 @@ const updateDeliveryChallan = async (req, res) => {
     res.status(500).json({ message: "Error updating delivery challan", error: err.message });
   }
 };
-
 
 
 const getDeliveryChallans = async (req, res) => {
@@ -884,37 +650,6 @@ const getDeliveryChallanById = async (req, res) => {
   }
 };
 
-// const deleteDeliveryChallan = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { id } = req.params;
-
-//     const deliveryChallan = await DeliveryChallan.findById(id).session(session);
-//     if (!deliveryChallan || deliveryChallan.isDeleted) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Delivery challan not found' });
-//     }
-
-//     // Soft delete
-//     deliveryChallan.isDeleted = true;
-//     await deliveryChallan.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Delivery challan deleted successfully'
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Delete delivery challan error:', err);
-//     res.status(500).json({ message: 'Error deleting delivery challan', error: err.message });
-//   }
-// };
 
 const deleteDeliveryChallan = async (req, res) => {
   try {
@@ -936,8 +671,6 @@ const deleteDeliveryChallan = async (req, res) => {
     res.status(500).json({ message: 'Error deleting delivery challan', error: err.message });
   }
 };
-
-
 
 
 module.exports = {

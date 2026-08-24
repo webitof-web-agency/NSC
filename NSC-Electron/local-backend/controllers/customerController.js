@@ -1,11 +1,14 @@
-// customerController.js
 const Customer = require('@models/Customer');
 const User = require('@models/User');
 const Invoice = require('@models/Invoice');
-const Outbox = require('@models/Outbox');
 const mongoose = require('mongoose');
-const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
 const { error } = require('console');
+const { v4: uuidv4 } = require('uuid');
+const SyncJournal = require('@models/SyncJournal');
+const fs = require('fs');
+const path = require('path');
+const ExcelJS = require('exceljs');
 
 // Create Customer
 const createCustomer = async (req, res) => {
@@ -28,7 +31,6 @@ const createCustomer = async (req, res) => {
     // Check if user exists
     const user = await User.findById(userId);
     if (!user) {
-      // if (req.file?.path) fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
         message: 'User not found'
@@ -38,20 +40,12 @@ const createCustomer = async (req, res) => {
     // Check for existing customer with same email
     const existingCustomer = await Customer.findOne({ phone, userId }); // email (prevoiusly email instead of phone)
     if (existingCustomer) {
-      // if (req.file?.path) fs.unlinkSync(req.file.path);
       return res.status(409).json({
         success: false,
         message: 'Customer with this phone number already exists'
       });
     }
 
-    // Handle image removal
-    // let imagePath = '';
-    // if (profile_image_removed === 'true') {
-    //   imagePath = '';
-    // } else if (req.file) {
-    //   imagePath = req.file.path;
-    // }
 
     // Create new customer
     const customer = new Customer({
@@ -68,6 +62,7 @@ const createCustomer = async (req, res) => {
       billingAddress: billingAddress || {},
       shippingAddress: shippingAddress || {},
       bankDetails: bankDetails || {},
+      portalPassword: await bcrypt.hash(String(phone), 12),
       userId
     });
 
@@ -75,6 +70,20 @@ const createCustomer = async (req, res) => {
     session.startTransaction();
     try {
       await customer.save({ session });
+
+      const deviceId = req.headers['x-device-id'] || null;
+
+      const journalEvent = new SyncJournal({
+        cursor: new mongoose.Types.ObjectId().toString(),
+        syncId: customer.syncId,
+        operation: 'CREATE',
+        collectionName: 'customers',
+        payload: customer.toObject(),
+        version: customer.version || 1,
+        deviceId: deviceId
+      });
+      await journalEvent.save({ session });
+
       await session.commitTransaction();
     } catch (txErr) {
       await session.abortTransaction();
@@ -89,11 +98,6 @@ const createCustomer = async (req, res) => {
       data: formatCustomerResponse(customer)
     });
   } catch (err) {
-    // if (req.file?.path) {
-    //   try { fs.unlinkSync(req.file.path); } catch (fileErr) {
-    //     console.error('Error cleaning up customer image:', fileErr);
-    //   }
-    // }
 
     console.error('Customer creation error:', err);
     res.status(500).json({
@@ -109,13 +113,6 @@ const createMinimalCustomer = async (req, res) => {
     const { name, email, phone } = req.body;
     const userId = req.user; // assuming this is set by authentication middleware
 
-    // Validation (basic)
-    // if (!name || !email) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: 'Name and Email are required'
-    //   });
-    // }
 
     // Check if user exists
     const user = await User.findById(userId);
@@ -143,6 +140,7 @@ const createMinimalCustomer = async (req, res) => {
       email: email || '',
       // phone: phone || '',
       phone,
+      portalPassword: await bcrypt.hash(String(phone), 12),
       userId
     });
 
@@ -236,7 +234,7 @@ const getCustomers = async (req, res) => {
               $filter: {
                 input: "$invoices",
                 as: "inv",
-                cond: { 
+                cond: {
                   $and: [
                     { $eq: ["$$inv.isDeleted", false] },
                     { $ne: ["$$inv.status", "CANCELLED"] }
@@ -252,7 +250,7 @@ const getCustomers = async (req, res) => {
                   $filter: {
                     input: "$invoices",
                     as: "inv",
-                    cond: { 
+                    cond: {
                       $and: [
                         { $eq: ["$$inv.isDeleted", false] },
                         { $ne: ["$$inv.status", "CANCELLED"] }
@@ -275,7 +273,7 @@ const getCustomers = async (req, res) => {
                       $filter: {
                         input: "$invoices",
                         as: "inv",
-                        cond: { 
+                        cond: {
                           $and: [
                             { $eq: ["$$inv.isDeleted", false] },
                             { $ne: ["$$inv.status", "CANCELLED"] }
@@ -429,10 +427,12 @@ const updateCustomer = async (req, res) => {
     }
 
     // Update fields with proper validation
+    const previousPhone = customer.phone;
+    const nextPhone = phone !== undefined ? phone || '' : customer.phone;
     const updateFields = {
       name: name !== undefined ? name : customer.name,
       email: email !== undefined ? email : customer.email,
-      phone: phone !== undefined ? phone || '' : customer.phone,
+      phone: nextPhone,
       website: website !== undefined ? website || '' : customer.website,
       notes: notes !== undefined ? notes || '' : customer.notes,
       status: status !== undefined ? status || 'Active' : customer.status,
@@ -449,14 +449,34 @@ const updateCustomer = async (req, res) => {
 
     // Apply updates
     Object.assign(customer, updateFields);
+    if (
+      nextPhone &&
+      nextPhone !== previousPhone &&
+      !customer.portalPasswordChanged
+    ) {
+      customer.portalPassword = await bcrypt.hash(String(nextPhone), 12);
+    }
     
-    // Phase 3: Increment version on update
     customer.version = (customer.version || 1) + 1;
 
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
       await customer.save({ session });
+
+      const deviceId = req.headers['x-device-id'] || null;
+
+      const journalEvent = new SyncJournal({
+        cursor: new mongoose.Types.ObjectId().toString(),
+        syncId: customer.syncId,
+        operation: 'UPDATE',
+        collectionName: 'customers',
+        payload: customer.toObject(),
+        version: customer.version,
+        deviceId: deviceId
+      });
+      await journalEvent.save({ session });
+
       await session.commitTransaction();
     } catch (txErr) {
       await session.abortTransaction();
@@ -495,6 +515,7 @@ const deleteCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user;
+
     const session = await mongoose.startSession();
     session.startTransaction();
     let customer;
@@ -512,6 +533,20 @@ const deleteCustomer = async (req, res) => {
         },
         { new: true, session }
       );
+
+      if (customer) {
+        const deviceId = req.headers['x-device-id'] || null;
+        const journalEvent = new SyncJournal({
+          cursor: new mongoose.Types.ObjectId().toString(),
+          syncId: customer.syncId,
+          operation: 'DELETE',
+          collectionName: 'customers',
+          payload: { syncId: customer.syncId, isDeleted: true, deletedAt: customer.deletedAt },
+          version: customer.version,
+          deviceId: deviceId
+        });
+        await journalEvent.save({ session });
+      }
 
       await session.commitTransaction();
     } catch (txErr) {
@@ -576,8 +611,6 @@ const downloadCustomerTemplate = async (req, res) => {
       { header: 'Email', key: 'email', width: 25 },
       { header: 'Website', key: 'website', width: 25 },
       { header: 'Notes', key: 'notes', width: 30 },
-      // { header: 'Status', key: 'status', width: 12 },
-      // Billing Address
       { header: 'Billing Name', key: 'billing_name', width: 20 },
       { header: 'Billing Address Line 1', key: 'billing_address1', width: 30 },
       { header: 'Billing Address Line 2', key: 'billing_address2', width: 30 },
@@ -673,9 +706,9 @@ shipping_city: 'Mumbai',
 const uploadCustomersFromExcel = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Excel file is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Excel file is required'
       });
     }
 
@@ -697,9 +730,9 @@ const uploadCustomersFromExcel = async (req, res) => {
 
     if (!sheet) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Excel sheet not found' 
+      return res.status(400).json({
+        success: false,
+        message: 'Excel sheet not found'
       });
     }
 
@@ -747,17 +780,17 @@ const uploadCustomersFromExcel = async (req, res) => {
 
         // Get phone number (REQUIRED)
         const phone = getVal(['Phone Number', 'Phone', 'Mobile']);
-        
+
         if (!phone || phone.toString().trim() === '') {
           throw new Error('Phone Number is required');
         }
 
         // Check for duplicate customer by phone for this user
-        const existingCustomer = await Customer.findOne({ 
-          phone: phone.toString().trim(), 
-          userId 
+        const existingCustomer = await Customer.findOne({
+          phone: phone.toString().trim(),
+          userId
         });
-        
+
         if (existingCustomer) {
           throw new Error(`Customer with phone number ${phone} already exists`);
         }
@@ -848,9 +881,6 @@ const uploadCustomersFromExcel = async (req, res) => {
   }
 };
 
-// ================================
-// Customer Activity Dashboard
-// ================================
 const buildInvoiceStatsMap = async (userId) => {
   const userObjectId = mongoose.Types.ObjectId.isValid(userId)
     ? new mongoose.Types.ObjectId(userId)

@@ -1,8 +1,8 @@
 const { body, validationResult } = require('express-validator');
-const Category = require('../models/Category'); 
+const Category = require('../models/Category');
 
 exports.createCategoryValidator = [
-   
+
     body('category_name')
         .notEmpty().withMessage('Category name is required')
         .isLength({ min: 3 }).withMessage('Category name must be at least 3 characters')
@@ -70,7 +70,7 @@ exports.updateCategoryValidator = [
         .custom(async (value, { req }) => {
             const existing = await Category.findOne({
                 category_name: { $regex: `^${value}$`, $options: 'i' },
-                _id: { $ne: req.params.id } 
+                _id: { $ne: req.params.id }
             });
             if (existing) {
                 throw new Error('Category name already exists');
@@ -79,12 +79,12 @@ exports.updateCategoryValidator = [
         }),
 
     body('slug')
-        .optional() 
+        .optional()
         .isLength({ min: 3 }).withMessage('Category slug must be at least 3 characters')
         .custom(async (value, { req }) => {
             const existing = await Category.findOne({
                 slug: { $regex: `^${value}$`, $options: 'i' },
-                _id: { $ne: req.params.id } 
+                _id: { $ne: req.params.id }
             });
             if (existing) {
                 throw new Error('Category slug already exists');

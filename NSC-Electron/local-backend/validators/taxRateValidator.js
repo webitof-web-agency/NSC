@@ -31,7 +31,7 @@ const updateTaxRateValidator = [
         .custom(async (value, { req }) => {
             const existing = await TaxRate.findOne({
                 tax_name: { $regex: `^${value}$`, $options: 'i' },
-                _id: { $ne: req.params.id } 
+                _id: { $ne: req.params.id }
             });
             if (existing) {
                 throw new Error('Tax name already exists');

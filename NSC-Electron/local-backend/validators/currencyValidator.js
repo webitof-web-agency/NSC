@@ -9,7 +9,7 @@ exports.createCurrencyValidator = [
         .isLength({ min: 2 }).withMessage('Currency name must be at least 2 characters')
         .isLength({ max: 50 }).withMessage('Currency name cannot exceed 50 characters')
         .custom(async (value) => {
-            const existing = await Currency.findOne({ 
+            const existing = await Currency.findOne({
                 name: { $regex: `^${value}$`, $options: 'i' },
                 isDeleted: false
             });
@@ -26,7 +26,7 @@ exports.createCurrencyValidator = [
         .isLength({ min: 3, max: 3 }).withMessage('Currency code must be exactly 3 characters')
         .isUppercase().withMessage('Currency code must be uppercase')
         .custom(async (value) => {
-            const existing = await Currency.findOne({ 
+            const existing = await Currency.findOne({
                 code: { $regex: `^${value}$`, $options: 'i' },
                 isDeleted: false
             });

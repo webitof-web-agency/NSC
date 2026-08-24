@@ -1,5 +1,5 @@
 const { body, validationResult } = require('express-validator');
-const Unit = require('../models/Unit'); 
+const Unit = require('../models/Unit');
 
 const handleValidationResult = (req, res, next) => {
   const errors = validationResult(req);
@@ -34,7 +34,6 @@ exports.createUnitValidator = [
       return true;
     }),
 
-  // Short Name (optional; auto-filled from unit_name if missing)
   body('short_name')
     .optional()
     .isAlpha().withMessage('Short name must contain only letters')
@@ -63,14 +62,13 @@ exports.updateUnitValidator = [
       if (!unitId) throw new Error('Unit ID is required for update');
 
       const existing = await Unit.findOne({ unit_name: { $regex: `^${value}$`, $options: 'i' } });
-      
+
       if (existing && existing._id.toString() !== unitId) {
         throw new Error('Unit name already exists');
       }
 
       return true;
     }),
-
 
 
   // Short Name

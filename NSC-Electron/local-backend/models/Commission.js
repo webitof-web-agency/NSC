@@ -18,11 +18,13 @@ const commissionSchema = new mongoose.Schema({
   // ✅ NEW: Array of items for this staff in this invoice
   items: [
     {
+      rowId: { type: String },
       productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
       variantId: { type: mongoose.Schema.Types.ObjectId, ref: "ProductVariant" },
       designNo: { type: String },
       qty: Number,
       rate: Number,
+      saleRate: Number,
       amount: Number,            // qt * rate
       commissionPercent: Number,
       commissionAmount: Number   // calculated commission for this line

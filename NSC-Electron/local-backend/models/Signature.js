@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const signatureSchema = new mongoose.Schema({
     signatureName: {
@@ -42,5 +43,7 @@ signatureSchema.pre('save', async function(next) {
     }
     next();
 });
+
+signatureSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('Signature', signatureSchema);

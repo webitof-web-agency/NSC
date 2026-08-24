@@ -8,15 +8,15 @@ const customFieldDataTypeSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       enum: [
-        'text', 
-        'number', 
-        'email', 
-        'date', 
-        'time', 
-        'boolean', 
-        'array', 
-        'object', 
-        'set', 
+        'text',
+        'number',
+        'email',
+        'date',
+        'time',
+        'boolean',
+        'array',
+        'object',
+        'set',
         'function',
         'textarea',
         'select',
@@ -78,8 +78,6 @@ const customFieldDataTypeSchema = new mongoose.Schema(
   }
 );
 
-// Index for better query performance
-// customFieldDataTypeSchema.index({ type: 1 }); // Removed to avoid duplicate index error (type is already unique)
 customFieldDataTypeSchema.index({ isActive: 1 });
 customFieldDataTypeSchema.index({ createdBy: 1 });
 

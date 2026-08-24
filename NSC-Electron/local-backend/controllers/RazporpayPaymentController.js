@@ -24,7 +24,6 @@ exports.createOrder = async (req, res) => {
       status: "created",
     });
 
-    // console.log("Razorpay order amount (paise):", amount);
 
     res.json({
       success: true,

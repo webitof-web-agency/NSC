@@ -11,6 +11,7 @@ const User = require('@models/User');
 const mongoose = require('mongoose');
 const Inventory = require('@models/Inventory');
 const Product = require('@models/Product');
+const { syncPurchaseNotificationForPurchase } = require("@services/notificationService");
 
 const recalcPurchasePayment = async (purchaseId, latestPaymentMode, latestReferenceNumber) => {
   const purchase = await Purchase.findById(purchaseId);
@@ -40,239 +41,6 @@ const recalcPurchasePayment = async (purchaseId, latestPaymentMode, latestRefere
   return Purchase.findByIdAndUpdate(purchaseId, update, { new: true });
 };
 
-// const createSupplierPayment = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(422).json({
-//         success: false,
-//         message: 'Validation failed.',
-//         errors: errors.array()
-//       });
-//     }
-
-//     const userId = req.user;
-//     const {
-//       purchaseId,
-//       supplierId,
-//       referenceNumber,
-//       paymentDate,
-//       paymentMode,
-//       amount,
-//       paidAmount,
-//       dueAmount,
-//       notes,
-//       sourceType,
-//       bankId
-//     } = req.body;
-
-//     let attachment = req.file ? `uploads/${req.file.filename}` : null;
-
-//     if (!['BANK', 'PETTY_CASH'].includes(sourceType)) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Validation failed.',
-//         errors: { sourceType: 'Invalid source type. Must be BANK or PETTY_CASH.' }
-//       });
-//     }
-
-//     // BANK requires bankId and paymentMode
-//     if (sourceType === 'BANK') {
-//       if (!bankId) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { bankId: 'Bank ID is required for BANK payments.' }
-//         });
-//       }
-//       if (!paymentMode) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { paymentMode: 'Payment mode is required for BANK payments.' }
-//         });
-//       }
-
-//       const bank = await BankDetail.findById(bankId).session(session);
-//       if (!bank) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { bankId: 'Bank not found.' }
-//         });
-//       }
-
-//       const currentBalance = parseFloat(bank.currentBalance.toString());
-//       if (parseFloat(paidAmount) > currentBalance) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { bankId: `Insufficient balance, current balance is ${currentBalance}` }
-//         });
-//       }
-//     }
-
-//     // PETTY_CASH balance check
-//     if (sourceType === 'PETTY_CASH') {
-//       const pettyCash = await PettyCash.findOne().session(session);
-//       if (!pettyCash) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { sourceType: 'Petty cash not found.' }
-//         });
-//       }
-
-//       const currentBalance = parseFloat(pettyCash.currentBalance.toString());
-//       if (parseFloat(paidAmount) > currentBalance) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Validation failed.',
-//           errors: { sourceType: `Insufficient balance, current balance is ${currentBalance}` }
-//         });
-//       }
-//     }
-
-//     const newPayment = new SupplierPayment({
-//       purchaseId,
-//       supplierId,
-//       referenceNumber,
-//       paymentDate,
-//       paymentMode: sourceType === 'BANK' ? paymentMode : null,
-//       amount,
-//       paidAmount,
-//       dueAmount,
-//       notes,
-//       attachment,
-//       createdBy: userId,
-//       sourceType,
-//       bankId: sourceType === 'BANK' ? bankId : null
-//     });
-
-//     const savedPayment = await newPayment.save({ session });
-
-//     if (sourceType === 'BANK') {
-//       const bank = await BankDetail.findById(bankId).session(session);
-//       const balanceBefore = parseFloat(bank.currentBalance.toString());
-//       const balanceAfter = (balanceBefore - parseFloat(paidAmount)).toFixed(2);
-
-//       bank.currentBalance = balanceAfter;
-//       await bank.save({ session });
-
-//       await BankTransaction.create([{
-//         bankAccountId: bankId,
-//         transactionDate: new Date(),
-//         type: 'TRANSFER_OUT',
-//         amount: paidAmount,
-//         balanceBefore,
-//         balanceAfter,
-//         paymentModeId: paymentMode,
-//         referenceNo: referenceNumber || null,
-//         remarks: notes || `Supplier payment to ${supplierId}`,
-//         relatedType: 'SUPPLIER_PAYMENT',
-//         relatedId: savedPayment._id
-//       }], { session });
-
-//     } else if (sourceType === 'PETTY_CASH') {
-//       const pettyCash = await PettyCash.findOne().session(session);
-//       const balanceBefore = parseFloat(pettyCash.currentBalance.toString());
-//       const balanceAfter = (balanceBefore - parseFloat(paidAmount)).toFixed(2);
-
-//       pettyCash.currentBalance = balanceAfter;
-//       await pettyCash.save({ session });
-
-//       await PettyCashTransaction.create([{
-//         pettyCashId: pettyCash._id,
-//         transactionDate: new Date(),
-//         transactionType: 'SPEND',
-//         amount: paidAmount,
-//         balanceBefore,
-//         balanceAfter,
-//         remarks: notes || `Supplier payment to ${supplierId}`,
-//         relatedType: 'SUPPLIER_PAYMENT',
-//         relatedId: savedPayment._id
-//       }], { session });
-//     }
-
-
-//     const existingPayments = await SupplierPayment.findOne({
-//       purchaseId,
-//       _id: { $ne: savedPayment._id }
-//     }).session(session);
-
-//     if (!existingPayments) {
-//       const purchase = await Purchase.findById(purchaseId).session(session);
-//       if (!purchase) throw new Error('Purchase not found for creating inventory.');
-
-//       for (const item of purchase.items) {
-//         if (!mongoose.Types.ObjectId.isValid(item.id)) {
-//           console.warn(`Skipping custom product with non-ObjectId: ${item.id}`);
-//           continue;
-//         }
-
-//         const productExists = await Product.exists({ _id: item.id }).session(session);
-//         if (!productExists) {
-//           console.warn(`Product not found for item ID: ${item.id}, skipping inventory update.`);
-//           continue;
-//         }
-
-//         await Inventory.findOneAndUpdate(
-//           { productId: item.id, userId },
-//           {
-//             $inc: { quantity: item.qty },
-//             $push: {
-//               inventory_history: {
-//                 unitId: item.unit || null,
-//                 quantity: item.qty,
-//                 notes: `Stock added from Purchase ${purchase.purchaseId}`,
-//                 type: 'stock_in',
-//                 adjustment: item.qty,
-//                 referenceId: purchase._id,
-//                 referenceType: 'purchase',
-//                 createdBy: userId
-//               }
-//             }
-//           },
-//           { upsert: true, new: true, session }
-//         );
-//       }
-//     }
-
-//     const purchaseStatus = dueAmount == 0 ? 'paid' : 'partially_paid';
-//     await Purchase.findByIdAndUpdate(
-//       purchaseId,
-//       { $set: { status: purchaseStatus } },
-//       { session }
-//     );
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Supplier payment created successfully',
-//       data: {
-//         payment: savedPayment,
-//         updatedPurchaseStatus: purchaseStatus
-//       }
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Error creating supplier payment:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Error creating supplier payment',
-//       error: err.message
-//     });
-//   }
-// };
 
 const createSupplierPayment = async (req, res) => {
   try {
@@ -290,6 +58,7 @@ const createSupplierPayment = async (req, res) => {
       purchaseId,
       supplierId,
       referenceNumber,
+      chequeNumber,
       paymentDate,
       paymentMode,
       amount,
@@ -318,9 +87,7 @@ const createSupplierPayment = async (req, res) => {
         });
       }
 
-      // console.log("checking bank:", bankId);     // Debug here
       const bank = await BankDetail.findById(bankId);
-      // console.log("BANK RESULT:", bank);          // Debug here
       if (!bank) {
         return res.status(400).json({
           success: false,
@@ -374,6 +141,7 @@ const createSupplierPayment = async (req, res) => {
       purchaseId,
       supplierId,
       referenceNumber,
+      chequeNumber: chequeNumber || null,
       paymentDate,
       paymentMode: paymentMode || null,
       amount,
@@ -432,6 +200,9 @@ const createSupplierPayment = async (req, res) => {
     }
 
     const updatedPurchase = await recalcPurchasePayment(purchaseId, paymentMode, referenceNumber);
+    if (updatedPurchase?._id) {
+      await syncPurchaseNotificationForPurchase(updatedPurchase._id);
+    }
 
     return res.status(201).json({
       success: true,
@@ -499,7 +270,7 @@ const listSupplierPayments = async (req, res) => {
         select: 'firstName lastName email phone profileImage',
         model: 'User'
       })
-      .populate('purchaseId', 'purchaseId totalAmount purchaseDate')
+      .populate('purchaseId', 'purchaseId totalAmount purchaseDate supplier_bill_number')
       .populate('paymentMode', 'name')
       .populate('bankId', 'bankName accountNumber accountHoldername')
       .sort({ createdAt: -1 })
@@ -532,6 +303,7 @@ const listSupplierPayments = async (req, res) => {
       const purchase = p.purchaseId ? {
         id: p.purchaseId._id,
         purchaseId: p.purchaseId.purchaseId,
+        supplierBillNumber: p.purchaseId.supplier_bill_number || null,
         totalAmount: p.purchaseId.totalAmount,
         purchaseDate: formatDate(p.purchaseId.purchaseDate)
       } : null;
@@ -547,6 +319,7 @@ const listSupplierPayments = async (req, res) => {
         id: p._id,
         paymentId: p.paymentId,
         referenceNumber: p.referenceNumber,
+        chequeNumber: p.chequeNumber || null,
         paymentDate: formatDate(p.paymentDate),
         sourceType: p.sourceType,
         amount: p.amount,
@@ -601,6 +374,7 @@ const updateSupplierPayment = async (req, res) => {
       purchaseId,
       supplierId,
       referenceNumber,
+      chequeNumber,
       paymentDate,
       paymentMode,
       amount,
@@ -649,6 +423,7 @@ const updateSupplierPayment = async (req, res) => {
         purchaseId,
         supplierId,
         referenceNumber,
+        chequeNumber: chequeNumber || null,
         paymentDate,
         paymentMode,
         amount,
@@ -660,6 +435,9 @@ const updateSupplierPayment = async (req, res) => {
     );
 
     const updatedPurchase = await recalcPurchasePayment(purchaseId, paymentMode, referenceNumber);
+    if (updatedPurchase?._id) {
+      await syncPurchaseNotificationForPurchase(updatedPurchase._id);
+    }
 
     res.status(200).json({
       success: true,
@@ -697,11 +475,15 @@ const deleteSupplierPayment = async (req, res) => {
       return res.status(404).json({ message: 'Supplier payment not found' });
     }
 
+    const updatedPurchase = await recalcPurchasePayment(payment.purchaseId);
+    if (updatedPurchase?._id) {
+      await syncPurchaseNotificationForPurchase(updatedPurchase._id);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Supplier payment deleted successfully and purchase status updated to partial paid',
     });
-    await recalcPurchasePayment(payment.purchaseId);
 
   } catch (err) {
     res.status(500).json({
@@ -722,7 +504,10 @@ const deleteSupplierPaymentById = async (id) => {
     return false;
   }
 
-  await recalcPurchasePayment(payment.purchaseId);
+  const updatedPurchase = await recalcPurchasePayment(payment.purchaseId);
+  if (updatedPurchase?._id) {
+    await syncPurchaseNotificationForPurchase(updatedPurchase._id);
+  }
   return true;
 };
 
@@ -757,9 +542,89 @@ const bulkDeleteSupplierPayments = async (req, res) => {
   }
 };
 
+const getSupplierPaymentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid payment ID' });
+    }
+
+    const p = await SupplierPayment.findOne({ _id: id, isDeleted: false })
+      .populate({ path: 'supplierId', select: 'firstName lastName email phone profileImage', model: 'User' })
+      .populate('purchaseId', 'purchaseId totalAmount purchaseDate supplier_bill_number')
+      .populate('paymentMode', 'name slug')
+      .populate('bankId', 'bankName accountNumber accountHoldername')
+      .lean();
+
+    if (!p) {
+      return res.status(404).json({ success: false, message: 'Supplier payment not found' });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}/`;
+    const formatDate = (date) => {
+      if (!date) return null;
+      const d = new Date(date);
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = d.toLocaleString('default', { month: 'short' });
+      const year = d.getFullYear();
+      return `${day}, ${month} ${year}`;
+    };
+
+    const supplier = p.supplierId ? {
+      id: p.supplierId._id,
+      name: `${p.supplierId.firstName || ''} ${p.supplierId.lastName || ''}`.trim(),
+      email: p.supplierId.email || null,
+      phone: p.supplierId.phone || null,
+      profileImage: p.supplierId.profileImage
+        ? `${baseUrl}${p.supplierId.profileImage.replace(/\\/g, '/')}`
+        : null
+    } : null;
+
+    const purchase = p.purchaseId ? {
+      id: p.purchaseId._id,
+      purchaseId: p.purchaseId.purchaseId,
+      supplierBillNumber: p.purchaseId.supplier_bill_number || null,
+      totalAmount: p.purchaseId.totalAmount,
+      purchaseDate: formatDate(p.purchaseId.purchaseDate)
+    } : null;
+
+    const bank = p.sourceType === 'BANK' && p.bankId ? {
+      id: p.bankId._id,
+      bankName: p.bankId.bankName,
+      accountNumber: p.bankId.accountNumber,
+      accountHolder: p.bankId.accountHoldername
+    } : null;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: p._id,
+        paymentId: p.paymentId,
+        referenceNumber: p.referenceNumber || null,
+        chequeNumber: p.chequeNumber || null,
+        paymentDate: formatDate(p.paymentDate),
+        sourceType: p.sourceType,
+        amount: p.amount,
+        paidAmount: p.paidAmount,
+        dueAmount: p.dueAmount,
+        notes: p.notes || null,
+        supplier,
+        purchase,
+        bank,
+        paymentMode: p.paymentMode ? { name: p.paymentMode.name, slug: p.paymentMode.slug } : null,
+        createdAt: formatDate(p.createdAt)
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching supplier payment:', err);
+    return res.status(500).json({ success: false, message: 'Error fetching supplier payment', error: err.message });
+  }
+};
+
 module.exports = {
   createSupplierPayment,
   listSupplierPayments,
+  getSupplierPaymentById,
   updateSupplierPayment,
   deleteSupplierPayment,
   bulkDeleteSupplierPayments

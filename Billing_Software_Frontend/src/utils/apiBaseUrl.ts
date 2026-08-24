@@ -25,7 +25,7 @@ export function getApiBaseUrl(): string {
   // Explicitly offline
   if (mode === 'offline') {
     const port = (window as any).__electronLocalBackendPort || 3002;
-    return `http://localhost:${port}`;
+    return `http://127.0.0.1:${port}`;
   }
 
   // Explicitly online
@@ -36,7 +36,7 @@ export function getApiBaseUrl(): string {
   // Mode not yet determined from IPC: check browser navigator.onLine
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     const port = (window as any).__electronLocalBackendPort || 3002;
-    return `http://localhost:${port}`;
+    return `http://127.0.0.1:${port}`;
   }
 
   // Default to live cloud backend
@@ -50,7 +50,7 @@ export function getApiBaseUrl(): string {
  */
 export function getLocalBackendUrl(): string {
   const port = (typeof window !== 'undefined' && (window as any).__electronLocalBackendPort) || 3002;
-  return `http://localhost:${port}`;
+  return `http://127.0.0.1:${port}`;
 }
 
 /**

@@ -49,7 +49,7 @@ exports.createPhonePeQROrder = async (req, res) => {
 
         // Default to UPI_QR for all requests
         const instrumentType = 'UPI_QR';
-        
+
         // Construct Payload
         const payloadData = {
             merchantId: MERCHANT_ID,
@@ -60,7 +60,7 @@ exports.createPhonePeQROrder = async (req, res) => {
             redirectMode: "REDIRECT",
             callbackUrl: `${process.env.BASE_URL}/api/admin/phonepe/webhook`, // HTTPS webhook URL
             paymentInstrument: {
-                type: instrumentType 
+                type: instrumentType
             }
         };
 
@@ -149,9 +149,8 @@ exports.verifyPhonePePayment = async (req, res) => {
         const responseData = response.data;
 
         if (responseData.success && responseData.code === "PAYMENT_SUCCESS") {
-            // Payment Success -> Update Invoice
             await updateInvoiceAfterPhonePePayment(transactionId, responseData.data.amount);
-            
+
             return res.status(200).json({ success: true, status: "SUCCESS", message: "Payment Successful" });
         } else if (responseData.code === "PAYMENT_PENDING") {
              return res.status(200).json({ success: true, status: "PENDING", message: "Payment Pending" });
@@ -174,14 +173,12 @@ exports.handlePhonePeWebhook = async (req, res) => {
         // Validation: Verify X-VERIFY header (Checksum)
         // Note: For simplicity in test mode, we might trust the payload, but in production, ALWAYS verify checksum.
         // The Payload is base64 encoded string in request body.
-        
+
         const base64Payload = req.body.response;
-        // const receivedChecksum = req.headers['x-verify'];
-        
-        // ... (Checksum verification logic would go here) ...
+
 
         const payload = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf8'));
-        
+
         if (payload.code === "PAYMENT_SUCCESS") {
              const transactionId = payload.data.merchantTransactionId;
              const amount = payload.data.amount;
@@ -207,7 +204,7 @@ exports.handlePhonePeWebhook = async (req, res) => {
 async function updateInvoiceAfterPhonePePayment(transactionId, amountPaise) {
     try {
         const invoice = await Invoice.findOne({ phonepeTransactionId: transactionId });
-        
+
         if (!invoice) {
             console.error(`Invoice not found for transaction: ${transactionId}`);
             return;
@@ -225,7 +222,7 @@ async function updateInvoiceAfterPhonePePayment(transactionId, amountPaise) {
 
         // Create Payment Record
         const amountRupees = amountPaise / 100;
-        
+
         const paymentRecord = new InvoicePayment({
             invoiceId: invoice._id,
             amount: amountRupees,

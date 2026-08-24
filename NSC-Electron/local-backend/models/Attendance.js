@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 
 const attendanceSchema = new mongoose.Schema(
@@ -73,4 +73,5 @@ attendanceSchema.index({ date: 1 });
 attendanceSchema.index({ status: 1 });
 
 attendanceSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Attendance', attendanceSchema);

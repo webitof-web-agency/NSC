@@ -8,15 +8,15 @@ const createSignature = async (req, res) => {
     try {
         const { signatureName, markAsDefault = false } = req.body;
         const userId = req.user; // Assuming user is authenticated and ID is available
-        
+
         // Check if user exists
         const user = await User.findById(userId);
         if (!user) {
             // Clean up uploaded file
             fs.unlinkSync(req.file.path);
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: 'User not found' 
+                message: 'User not found'
             });
         }
 
@@ -36,9 +36,9 @@ const createSignature = async (req, res) => {
             await user.save();
         }
 
-        res.status(201).json({ 
+        res.status(201).json({
             success: true,
-            message: 'Signature created successfully', 
+            message: 'Signature created successfully',
             data: {
                 id: signature._id,
                 signatureName: signature.signatureName,
@@ -57,12 +57,12 @@ const createSignature = async (req, res) => {
                 console.error('Error cleaning up signature image:', fileErr);
             }
         }
-        
+
         console.error('Signature creation error:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Error creating signature',
-            error: err.message 
+            error: err.message
         });
     }
 };
@@ -70,23 +70,23 @@ const createSignature = async (req, res) => {
 const getUserSignatures = async (req, res) => {
     try {
         const userId = req.user;
-        const { 
-            page = 1, 
-            limit = 10, 
+        const {
+            page = 1,
+            limit = 10,
             search = '',
             status
         } = req.query;
 
         // Build query
-        const query = { 
-            userId, 
-            isDeleted: false 
+        const query = {
+            userId,
+            isDeleted: false
         };
 
         // Add search filter
         if (search) {
-            query.signatureName = { 
-                $regex: search, 
+            query.signatureName = {
+                $regex: search,
                 $options: 'i' // case insensitive
             };
         }
@@ -106,11 +106,11 @@ const getUserSignatures = async (req, res) => {
             .limit(Number(limit));
 
         const baseUrl = `${req.protocol}://${req.get('host')}/`;
-        
+
         const formattedSignatures = signatures.map(sig => ({
             id: sig._id,
             signatureName: sig.signatureName,
-            signatureImage: sig.signatureImage 
+            signatureImage: sig.signatureImage
                 ? `${baseUrl}${sig.signatureImage.replace(/\\/g, '/')}`
                 : null,
             status: sig.status,
@@ -193,7 +193,7 @@ const updateSignature = async (req, res) => {
             data: {
                 id: signature._id,
                 signatureName: signature.signatureName,
-                signatureImage: signature.signatureImage 
+                signatureImage: signature.signatureImage
                     ? `${req.protocol}://${req.get('host')}/${signature.signatureImage.replace(/\\/g, '/')}`
                     : undefined,
                 status: signature.status,
@@ -211,7 +211,7 @@ const updateSignature = async (req, res) => {
                 console.error('Error cleaning up signature image:', fileErr);
             }
         }
-        
+
         console.error('Signature update error:', err);
         res.status(500).json({
             success: false,
@@ -227,15 +227,15 @@ const deleteSignature = async (req, res) => {
         const userId = req.user;
 
         const signature = await Signature.findOneAndUpdate(
-            { 
-                _id: signatureId, 
+            {
+                _id: signatureId,
                 userId,
-                isDeleted: false 
+                isDeleted: false
             },
-            { 
+            {
                 isDeleted: true,
                 status: false,
-                markAsDefault: false 
+                markAsDefault: false
             },
             { new: true }
         );
@@ -257,7 +257,7 @@ const deleteSignature = async (req, res) => {
             if (newDefault) {
                 newDefault.markAsDefault = true;
                 await newDefault.save();
-                
+
                 await User.findByIdAndUpdate(userId, {
                     defaultSignature: newDefault._id
                 });
@@ -295,7 +295,7 @@ const setAsDefaultSignature = async (req, res) => {
             });
         }
 
-        
+
         const signature = await Signature.findOne({
             _id: signatureId,
             userId,
@@ -309,7 +309,7 @@ const setAsDefaultSignature = async (req, res) => {
             });
         }
 
-       
+
         if (markAsDefault) {
             await Signature.updateMany(
                 { userId, markAsDefault: true, _id: { $ne: signatureId } },
@@ -378,7 +378,7 @@ const updateSignatureStatus = async (req, res) => {
                 userId,
                 isDeleted: false
             },
-            { 
+            {
                 status,
                 // If disabling, also unset as default
                 ...(status === false && { markAsDefault: false })
@@ -439,13 +439,13 @@ const updateSignatureStatus = async (req, res) => {
 const createPaymentMode = async (req, res) => {
     try {
         const { name } = req.body;
-        
+
         // Check if payment mode with this name already exists
         const existingPaymentMode = await PaymentMode.findOne({ name });
         if (existingPaymentMode) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
-                message: 'Payment mode with this name already exists' 
+                message: 'Payment mode with this name already exists'
             });
         }
 
@@ -457,9 +457,9 @@ const createPaymentMode = async (req, res) => {
 
         await paymentMode.save();
 
-        res.status(201).json({ 
+        res.status(201).json({
             success: true,
-            message: 'Payment mode created successfully', 
+            message: 'Payment mode created successfully',
             data: {
                 id: paymentMode._id,
                 name: paymentMode.name,
@@ -469,10 +469,10 @@ const createPaymentMode = async (req, res) => {
         });
     } catch (err) {
         console.error('Payment mode creation error:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Error creating payment mode',
-            error: err.message 
+            error: err.message
         });
     }
 };

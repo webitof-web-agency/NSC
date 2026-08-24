@@ -92,7 +92,7 @@ exports.getDashboard = async (req, res) => {
       .populate({
         path: "billTo",
         select: "firstName lastName email phone profileImage isDeleted",
-        match: {}, 
+        match: {},
         options: { lean: true }
       })
       .select("purchaseId totalAmount status billTo createdAt")
@@ -131,6 +131,8 @@ exports.getDashboard = async (req, res) => {
           amount: pay.amount,
           payment_method: pay.payment_method || null,
           cashAmount: pay.cashAmount || null, // Direct from model (MIXED only)
+          cardAmount: pay.cardAmount || null, // Direct from model (MIXED only)
+          creditAmount: pay.creditAmount || null,
           upiAmount: pay.upiAmount || null, // Direct from model (MIXED only)
           received_on: pay.received_on,
           notes: pay.notes || "",
@@ -276,13 +278,20 @@ exports.getDashboard = async (req, res) => {
     });
 
     // ---------- GRAPH 3: Sales Comparison (Today vs Yesterday) ----------
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-
-    const endOfYesterday = new Date(startOfToday.getTime() - 1);
+    const Localization = require("@models/Localization");
+    const localization = await Localization.findOne({ isActive: true }).populate('timezone').sort({ createdAt: -1 }).lean();
+    const utcOffset = localization?.timezone?.utc_offset || "+05:30"; // default to IST if not set
+    
+    const dayjs = require("dayjs");
+    const utc = require("dayjs/plugin/utc");
+    if (!dayjs.utc) {
+      dayjs.extend(utc);
+    }
+    
+    const now = dayjs().utcOffset(utcOffset);
+    const startOfToday = now.startOf("day").toDate();
+    const startOfYesterday = now.subtract(1, "day").startOf("day").toDate();
+    const endOfYesterday = now.startOf("day").subtract(1, "millisecond").toDate();
 
     const todayAgg = await Invoice.aggregate([
       { $match: { isDeleted: false, createdAt: { $gte: startOfToday } } },
@@ -314,6 +323,43 @@ exports.getDashboard = async (req, res) => {
       percentChange,
     };
 
+    // ---------- DAILY PAYMENT MODE SUMMARY ----------
+    const dailyPayments = await InvoicePayment.find({
+      received_on: { $gte: startOfToday }
+    })
+    .populate('invoiceId', 'status phonepePaymentStatus upiPaymentStatus')
+    .lean();
+
+    const paymentModeSummary = {
+      CASH: 0,
+      CARD: 0,
+      BANK: 0,
+      CHEQUE: 0,
+      PHONEPE: 0,
+      CREDIT: 0,
+      UPI: 0
+    };
+
+    const excludedStatuses = ['CANCELLED', 'REFUNDED', 'REJECTED', 'REVERSED', 'FAILED'];
+
+    dailyPayments.forEach(payment => {
+      // Ensure it excludes refunds, failed, cancelled, rejected, and reversed transactions
+      if (payment.invoiceId) {
+        if (excludedStatuses.includes(payment.invoiceId.status)) return;
+        if (excludedStatuses.includes(payment.invoiceId.phonepePaymentStatus)) return;
+        if (excludedStatuses.includes(payment.invoiceId.upiPaymentStatus)) return;
+      }
+
+      if (payment.payment_method === 'MIXED') {
+        if (payment.cashAmount) paymentModeSummary.CASH += payment.cashAmount;
+        if (payment.cardAmount) paymentModeSummary.CARD += payment.cardAmount;
+        if (payment.creditAmount) paymentModeSummary.CREDIT += payment.creditAmount;
+        if (payment.upiAmount) paymentModeSummary.UPI += payment.upiAmount;
+      } else if (paymentModeSummary[payment.payment_method] !== undefined) {
+        paymentModeSummary[payment.payment_method] += payment.amount;
+      }
+    });
+
     // ---------- RESPONSE ----------
     res.status(200).json({
       success: true,
@@ -343,6 +389,7 @@ exports.getDashboard = async (req, res) => {
         graph1: topProducts,
         graph2,
         salesComparison,
+        paymentModeSummary,
       },
     });
   } catch (error) {

@@ -9,7 +9,6 @@ const createInvoiceValidator = [
     .isISO8601().withMessage('Invalid date format'),
 
 
-
   body('items')
     .isArray({ min: 1 }).withMessage('At least one item is required'),
 

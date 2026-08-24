@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 
 const creditNoteSchema = new mongoose.Schema({
@@ -9,7 +9,7 @@ const creditNoteSchema = new mongoose.Schema({
   invoiceId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Invoice',
-    required: true
+    required: false
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -37,7 +37,7 @@ const creditNoteSchema = new mongoose.Schema({
   },
   items: [{
     id: {
-      type: String,      
+      type: String,
       required: true
     },
     name: {
@@ -182,4 +182,5 @@ creditNoteSchema.pre('save', async function (next) {
 });
 
 creditNoteSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('CreditNote', creditNoteSchema);

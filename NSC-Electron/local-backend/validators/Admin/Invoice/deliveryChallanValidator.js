@@ -24,7 +24,7 @@ const createDeliveryChallanValidator = [
     .isNumeric().withMessage('Item quantity must be a number')
     .isFloat({ min: 0 }).withMessage('Item quantity must be positive'),
 
- 
+
 
 ];
 

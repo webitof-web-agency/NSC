@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 
 const purchaseSchema = new mongoose.Schema({
@@ -38,7 +38,7 @@ const purchaseSchema = new mongoose.Schema({
   },
   items: [{
    id: {
-      type: String,      
+      type: String,
       required: true
     },
     name: {
@@ -55,12 +55,6 @@ const purchaseSchema = new mongoose.Schema({
     variantDesignNo: String,
     variantColor: String,
     variantSize: String,
-    // hsn_code: {
-    //   type: String,
-    //   ref: "ProductVariant",
-    //   trim: true
-    // },
-    // variantHsn_code: String,
     unit: {
       type: String,
       required: false
@@ -102,7 +96,7 @@ const purchaseSchema = new mongoose.Schema({
   }],
   status: {
     type: String,
-    enum: ['new', 'draft', 'pending', 'completed', 'cancelled', 'partially_paid', 'paid', 'return'],
+    enum: ['new', 'draft', 'pending', 'completed', 'cancelled', 'partially_paid', 'paid', 'return', 'replaced'],
     default: 'pending'
   },
   paymentMode: {
@@ -111,10 +105,6 @@ const purchaseSchema = new mongoose.Schema({
     ref: 'PaymentMode',
     required: false
   },
-  // taxableAmount: {
-  //   type: Number,
-  //   required: true
-  // },
   totalDiscount: {
     type: Number,
     default: 0
@@ -159,23 +149,6 @@ const purchaseSchema = new mongoose.Schema({
   },
   notes: String,
   termsAndCondition: String,
-  // sign_type: {
-  //   type: String,
-  //   enum: ['none', 'digitalSignature', 'eSignature'],
-  //   default: 'none'
-  // },
-  // signatureId: {
-  //   type: String,
-  //   default: null
-  // },
-  // signatureImage: {
-  //   type: String,
-  //   default: null
-  // },
-  // signatureName: {
-  //   type: String,
-  //   default: null
-  // },
   checkNumber: {
     type: String,
     default: null
@@ -220,15 +193,6 @@ const purchaseSchema = new mongoose.Schema({
     commissionAmount: { type: Number, default: 0 }
   },
 
-  // expenses: {
-  //   garageCharges: { type: Number, default: 0 },
-  //   loadingCharges: { type: Number, default: 0 },
-  //   unloadingCharges: { type: Number, default: 0 },
-  //   transportCharges: { type: Number, default: 0 },
-  //   otherCharges: { type: Number, default: 0 },
-  //   expenseNotes: { type: String, default: "" },
-  //   totalExpenses: { type: Number, default: 0 }
-  // },
 
   finalAmount: {
     type: Number,
@@ -266,4 +230,5 @@ purchaseSchema.pre('save', async function (next) {
 });
 
 purchaseSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Purchase', purchaseSchema);

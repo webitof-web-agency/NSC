@@ -70,7 +70,7 @@ const listInventory = async (req, res) => {
           as: "variantDetails"
         }
       },
-      { 
+      {
         $unwind: {
           path: "$variantDetails",
           preserveNullAndEmptyArrays: true
@@ -144,19 +144,6 @@ const listInventory = async (req, res) => {
             // status: '$productDetails.status'
           },
 
-          // PRODUCT FIELDS
-          // productDetails: {
-          //   _id: "$productDetails._id",
-          //   name: "$productDetails.name",
-          //   code: "$productDetails.code",
-          //   product_image: {
-          //     $concat: [
-          //       process.env.BASE_URL,
-          //       "$productDetails.product_image"
-          //     ]
-          //   },
-          //   unit_name: "$unitDetails.short_name"
-          // },
 
           // VARIANT FIELDS
           variantDetails: {
@@ -329,114 +316,6 @@ const getInventoryHistory = async (req, res) => {
   }
 };
 
-// const updateStock = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { productId, quantity, type, notes } = req.body;
-//     const userId = req.user; // from middleware
-
-//     if (!mongoose.Types.ObjectId.isValid(productId)) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ success: false, message: 'Invalid productId' });
-//     }
-
-//     if (!quantity || quantity <= 0) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ success: false, message: 'Quantity must be greater than 0' });
-//     }
-
-//     if (!['stock_in', 'stock_out', 'adjustment'].includes(type)) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ success: false, message: 'Invalid stock update type' });
-//     }
-
-//     const product = await Product.findById(productId).session(session);
-//     if (!product) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ success: false, message: 'Product not found' });
-//     }
-
-//     let inventory = await Inventory.findOne({ productId, userId, isDeleted: false }).session(session);
-
-//     if (!inventory) {
-//       inventory = new Inventory({
-//         productId,
-//         quantity: 0,
-//         userId,
-//         inventory_history: [],
-//         notes: ''
-//       });
-//     }
-
-//     const previousQuantity = inventory.quantity;
-//     let adjustmentValue = quantity;
-
-//     if (type === 'stock_in') {
-//       inventory.quantity += quantity;
-//     } else if (type === 'stock_out') {
-//       if (inventory.quantity < quantity) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Not enough stock to remove',
-//           currentStock: inventory.quantity,
-//           requested: quantity
-//         });
-//       }
-//       inventory.quantity -= quantity;
-//       adjustmentValue = -quantity;
-//     } else if (type === 'adjustment') {
-//       inventory.quantity += quantity;
-//     }
-
-//     inventory.inventory_history.push({
-//       unitId: product.unit || null, // Changed from product.unitId to product.unit
-//       quantity: previousQuantity, // This is now the previous quantity
-//       notes: notes || `${type.replace('_', ' ').toUpperCase()} performed`,
-//       type,
-//       adjustment: adjustmentValue,
-//       referenceId: null,
-//       referenceType: 'adjustment',
-//       createdBy: userId
-//     });
-
-//     await inventory.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     return res.status(200).json({
-//       success: true,
-//       message: inventory.isNew
-//         ? 'Inventory created and stock added successfully'
-//         : 'Stock updated successfully',
-//       data: {
-//         _id: inventory._id,
-//         productId: inventory.productId,
-//         previousQuantity: previousQuantity,
-//         newQuantity: inventory.quantity,
-//         adjustment: adjustmentValue,
-//         type: type
-//       }
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Error updating stock:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Error updating stock',
-//       error: err.message
-//     });
-//   }
-// };
 
 const updateStock = async (req, res) => {
   try {
@@ -469,27 +348,6 @@ const updateStock = async (req, res) => {
       return res.status(404).json({ message: "Variant not found" });
     }
 
-    // let updatedStock = variant.opening_qty || 0;
-
-    // new
-    // Only update variant stock when inventory already exists (real stock movement)
-    // if (inventory) {
-    //   if (type === "stock_in") {
-    //     updatedStock += quantity;
-    //   }
-
-    //   if (type === "stock_out") {
-    //     if (updatedStock < quantity) {
-    //       return res.status(400).json({ message: "Insufficient stock available" });
-    //     }
-    //     updatedStock -= quantity;
-    //   }
-
-    //   variant.opening_qty = updatedStock;
-    //   await variant.save();
-    // }
-
-    // let inventory = await Inventory.findOne({ productId, userId, isDeleted: false });
 
     // Detect if inventory exists already
     let inventory = await Inventory.findOne({ productId, variantId, userId, isDeleted: false });
@@ -564,174 +422,14 @@ const updateStock = async (req, res) => {
   }
 };
 
-// const updateStock = async (req, res) => {         // new updateStock controller a/c to product variant
-//   try {
-//     const { productId, variantId, quantity, type, notes } = req.body;
-//     const userId = req.user;
-
-//     if (!mongoose.Types.ObjectId.isValid(productId)) {
-//       return res.status(400).json({ success: false, message: 'Invalid productId' });
-//     }
-
-//     if (!mongoose.Types.ObjectId.isValid(variantId)) {
-//       return res.status(400).json({ success: false, message: 'Invalid variantId' });
-//     }
-
-//     if (!quantity || quantity <= 0) {
-//       return res.status(400).json({ success: false, message: 'Quantity must be greater than 0' });
-//     }
-
-//     if (!['stock_in', 'stock_out', 'adjustment'].includes(type)) {
-//       return res.status(400).json({ success: false, message: 'Invalid stock update type' });
-//     }
-
-//     const product = await Product.findById(productId);
-//     if (!product) {
-//       return res.status(404).json({ success: false, message: 'Product not found' });
-//     }
-
-//     const variant = await ProductVariant.findById(variantId);
-//     if (!variant) {
-//       return res.status(404).json({ message: "Variant not found" });
-//     }
-
-//     // Check if inventory exists for this product+variant+user
-//     let inventory = await Inventory.findOne({ productId, variantId, userId, isDeleted: false });
-//     const isNewInventory = !inventory;
-
-//     // If inventory doesn't exist, create with quantity = 0 (we'll set correctly below)
-//     if (isNewInventory) {
-//       inventory = new Inventory({
-//         productId,
-//         variantId,
-//         quantity: 0,
-//         userId,
-//         inventory_history: [],
-//         notes: ''
-//       });
-//     }
-
-//     const previousQuantity = inventory.quantity;
-//     let adjustmentValue = quantity;
 
 //     // CASE A: Inventory is NEW (initial create)
 
-//     if (isNewInventory) {
-//       // For initial creation we want inventory to *reflect* the variant's opening_qty (or whatever the user submits),
-//       // but we must NOT double-update variant.opening_qty here.
-//       // We will set inventory.quantity directly to the provided quantity.
-//       inventory.quantity = quantity;
-
-//       // create history entry describing the initial import/seed
-//       inventory.inventory_history.push({
-//         unitId: product.unit || null,
-//         quantity: previousQuantity, // previous was 0
-//         notes: notes || `Initial inventory created for variant`,
-//         type: 'adjustment', // mark as an initial/adjustment type
-//         adjustment: quantity,
-//         referenceId: null,
-//         referenceType: 'adjustment', 
-//         createdBy: userId
-//       });
-
-//       // Save inventory (variant.opening_qty stays unchanged on initial create)
-//       await inventory.save();
-
-//       return res.status(200).json({
-//         success: true,
-//         message: 'Inventory created successfully (adjustment)',
-//         data: {
-//           _id: inventory._id,
-//           productId: inventory.productId,
-//           previousQuantity,
-//           newQuantity: inventory.quantity,
-//           adjustment: quantity,
-//           type: 'adjustment'
-//         }
-//       });
-//     }
 
 //     // CASE B: Inventory EXISTS (treat this as a real stock movement)
 
 //     // Update variant and inventory as per stock_in / stock_out / adjustment rules
 
-//     // Update variant.opening_qty only for real stock movement (not initial)
-//     let updatedVariantQty = variant.opening_qty || 0;
-
-//     if (type === "stock_in") {
-//       // increase variant stock
-//       updatedVariantQty += quantity;
-//       variant.opening_qty = updatedVariantQty;
-//       await variant.save();
-
-//       // update inventory
-//       inventory.quantity += quantity;
-//       adjustmentValue = quantity;
-//     } else if (type === "stock_out") {
-//       // ensure variant has enough (optional but recommended)
-//       if (updatedVariantQty < quantity) {
-//         return res.status(400).json({ message: "Insufficient variant stock available" });
-//       }
-//       updatedVariantQty -= quantity;
-//       variant.opening_qty = updatedVariantQty;
-//       await variant.save();
-
-//       // update inventory
-//       if (inventory.quantity < quantity) {
-//         return res.status(400).json({
-//           success: false,
-//           message: 'Not enough inventory to remove',
-//           currentStock: inventory.quantity,
-//           requested: quantity
-//         });
-//       }
-//       inventory.quantity -= quantity;
-//       adjustmentValue = -quantity;
-//     } else if (type === 'adjustment') {
-//       // a direct adjustment — update both variant and inventory by the provided amount
-//       variant.opening_qty = updatedVariantQty + quantity;
-//       await variant.save();
-
-//       inventory.quantity += quantity;
-//       adjustmentValue = quantity;
-//     }
-
-//     // push history entry describing this movement
-//     inventory.inventory_history.push({
-//       unitId: product.unit || null,
-//       quantity: previousQuantity,
-//       notes: notes || `${type.replace('_', ' ').toUpperCase()} performed`,
-//       type,
-//       adjustment: adjustmentValue,
-//       referenceId: null,
-//       referenceType: 'adjustment',
-//       createdBy: userId
-//     });
-
-//     await inventory.save();
-
-//     return res.status(200).json({
-//       success: true,
-//       message: 'Stock updated successfully',
-//       data: {
-//         _id: inventory._id,
-//         productId: inventory.productId,
-//         previousQuantity,
-//         newQuantity: inventory.quantity,
-//         adjustment: adjustmentValue,
-//         type
-//       }
-//     });
-
-//   } catch (err) {
-//     console.error('Error updating stock:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Error updating stock',
-//       error: err.message
-//     });
-//   }
-// };
 
 module.exports =
 {

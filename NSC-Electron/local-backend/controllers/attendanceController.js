@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Attendance = require('../models/Attendance');
 const User = require('../models/User');
 const GeneralSetting = require('../models/GeneralSetting');
+const Role = require('../models/Role');
 
 const ATTENDANCE_SCHEDULE_START_KEY = 'attendanceScheduleStart';
 const ATTENDANCE_SCHEDULE_END_KEY = 'attendanceScheduleEnd';
@@ -29,6 +30,21 @@ const getAttendanceSchedule = async () => {
   });
 
   return schedule;
+};
+
+const getAttendanceHiddenRoleIds = async () => {
+  const roles = await Role.find({
+    hideFromAttendance: true,
+    deletedAt: null
+  }).select('_id').lean();
+
+  return roles.map((role) => role._id.toString());
+};
+
+const isAttendanceVisibleUser = (user, hiddenRoleIds) => {
+  if (!user) return false;
+  const roleId = user.roleId?._id || user.roleId;
+  return !roleId || !hiddenRoleIds.includes(roleId.toString());
 };
 
 const computeWorkingHoursWithSchedule = ({ checkInTime, checkOutTime, date, scheduleStart, scheduleEnd }) => {
@@ -371,6 +387,7 @@ exports.getTodayAttendance = async (req, res) => {
     const now = new Date();
     const schedule = await getAttendanceSchedule();
     const scheduleEnd = buildScheduleDateTime(today, schedule.endTime);
+    const hiddenRoleIds = await getAttendanceHiddenRoleIds();
 
     const attendances = await Attendance.find({
       date: today,
@@ -384,13 +401,17 @@ exports.getTodayAttendance = async (req, res) => {
     const allStaff = await User.find({
       user_type: 3,
       isDeleted: false,
+      ...(hiddenRoleIds.length ? { roleId: { $nin: hiddenRoleIds } } : {})
     }).select('firstName lastName email profileImage roleId');
 
-    const attendedStaffIds = attendances.map((a) => a.staffId._id.toString());
+    const visibleAttendances = attendances.filter((attendance) =>
+      isAttendanceVisibleUser(attendance.staffId, hiddenRoleIds)
+    );
+    const attendedStaffIds = visibleAttendances.map((a) => a.staffId._id.toString());
     const absentStaff = allStaff.filter((staff) => !attendedStaffIds.includes(staff._id.toString()));
 
     if (scheduleEnd && now >= scheduleEnd) {
-      const pendingCheckOut = attendances.filter((attendance) => !attendance.checkOutTime);
+      const pendingCheckOut = visibleAttendances.filter((attendance) => !attendance.checkOutTime);
       for (const attendance of pendingCheckOut) {
         const checkInTime = new Date(attendance.checkInTime);
         const autoCheckOutTime = scheduleEnd > checkInTime ? scheduleEnd : checkInTime;
@@ -411,8 +432,8 @@ exports.getTodayAttendance = async (req, res) => {
     }
 
     // Categorize by status
-    const checkedIn = attendances.filter((a) => !a.checkOutTime);
-    const checkedOut = attendances.filter((a) => a.checkOutTime);
+    const checkedIn = visibleAttendances.filter((a) => !a.checkOutTime);
+    const checkedOut = visibleAttendances.filter((a) => a.checkOutTime);
 
     return res.status(200).json({
       success: true,
@@ -423,7 +444,7 @@ exports.getTodayAttendance = async (req, res) => {
         notMarked: absentStaff,
         summary: {
           totalStaff: allStaff.length,
-          present: attendances.length,
+          present: visibleAttendances.length,
           checkedIn: checkedIn.length,
           checkedOut: checkedOut.length,
           notMarked: absentStaff.length,
@@ -500,19 +521,23 @@ exports.updateAttendanceStatus = async (req, res) => {
 exports.getAttendanceReport = async (req, res) => {
   try {
     const { staffId } = req.params;
-    const { month, year } = req.query;
+    const { month, year, startDate: startDateQuery, endDate: endDateQuery } = req.query;
 
-    if (!month || !year) {
-      return res.status(400).json({
-        success: false,
-        message: 'Month and year are required',
-      });
+    let startDate = startDateQuery;
+    let endDate = endDateQuery;
+
+    if (!startDate || !endDate) {
+      if (!month || !year) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either start/end date or month/year is required',
+        });
+      }
+
+      startDate = `${year}-${month.padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      endDate = `${year}-${month.padStart(2, '0')}-${lastDay}`;
     }
-
-    // Calculate date range for the month
-    const startDate = `${year}-${month.padStart(2, '0')}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    const endDate = `${year}-${month.padStart(2, '0')}-${lastDay}`;
 
     const attendances = await Attendance.find({
       staffId,
@@ -539,8 +564,10 @@ exports.getAttendanceReport = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: {
-        month,
-        year,
+        month: month || null,
+        year: year || null,
+        startDate,
+        endDate,
         staffId,
         amountPerDay: staff?.amountPerDay || 0,
         attendances,

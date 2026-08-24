@@ -6,12 +6,14 @@ const User = require('@models/User');
 
 const createCreditNoteValidator = [
   body('invoiceId')
-    .notEmpty().withMessage('Invoice ID is required')
+    .optional()
     .isMongoId().withMessage('Invalid Invoice ID')
     .custom(async (value) => {
-      const invoice = await Invoice.findById(value);
-      if (!invoice) {
-        throw new Error('Invoice not found');
+      if (value) {
+        const invoice = await Invoice.findById(value);
+        if (!invoice) {
+          throw new Error('Invoice not found');
+        }
       }
       return true;
     }),
@@ -46,9 +48,10 @@ const createCreditNoteValidator = [
     }),
 
   body('billTo')
-    .notEmpty().withMessage('Bill to is required')
+    .optional({ nullable: true, checkFalsy: true })
     .isMongoId().withMessage('Invalid Bill To ID')
     .custom(async (value) => {
+      if (!value) return true;
       const customer = await Customer.findById(value);
       if (!customer) {
         throw new Error('Bill To customer not found');
@@ -56,7 +59,7 @@ const createCreditNoteValidator = [
       return true;
     }),
 
-  
+
 ];
 
 const applyCreditNoteValidator = [

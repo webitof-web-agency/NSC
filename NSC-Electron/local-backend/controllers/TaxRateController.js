@@ -6,7 +6,7 @@ const fs = require('fs');
 exports.getAllTaxRates = async (req, res) => {
     try {
         const { page = 1, limit = 10, search = '' } = req.query;
-        
+
         // Build search query
         const searchQuery = {
             $or: [
@@ -38,9 +38,9 @@ exports.getAllTaxRates = async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ 
+        res.status(500).json({
             message: 'Failed to fetch tax rates',
-            error: error.message 
+            error: error.message
         });
     }
 };
@@ -101,5 +101,3 @@ exports.deleteTaxRate = async (req, res) => {
         res.status(500).json({ message: 'Failed to delete tax rate', error: error.message });
     }
 };
-
-

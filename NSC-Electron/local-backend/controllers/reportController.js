@@ -5,166 +5,6 @@ const Unit = require('@models/Unit');
 const Category = require('@models/Category');
 const ProductVariant = require('@models/ProductVariant');
 
-// const getInventoryStockSummary = async (req, res) => {
-//   try {
-//     const { search = '', startDate, endDate, prevStartDate, prevEndDate } = req.query;
-//     const userId = req.user;
-
-//     // Base query
-//     const query = {
-//       isDeleted: false
-//     };
-
-//     // Search filter
-//     if (search) {
-//       const productIds = await Product.find({
-//         $or: [
-//           { name: { $regex: search, $options: 'i' } },
-//           { sku: { $regex: search, $options: 'i' } }
-//         ]
-//       }).distinct('_id');
-
-//       query.productId = { $in: productIds };
-//     }
-
-//     // Date filter (current period)
-//     if (startDate && endDate) {
-//       query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
-//     }
-
-//     // === Get Current Period Data ===
-//     const inventoryData = await Inventory.aggregate([
-//       { $match: query },
-//       {
-//         $lookup: {
-//           from: 'products',
-//           localField: 'productId',
-//           foreignField: '_id',
-//           as: 'productDetails'
-//         }
-//       },
-//       { $unwind: '$productDetails' },
-//       {
-//         $project: {
-//           productId: 1,
-//           quantity: 1,
-//           'productDetails.name': 1,
-//           'productDetails.sku': 1,
-//           'productDetails.alert_quantity': 1,
-//           'productDetails.purchase_price': 1,
-//           'productDetails.selling_price': 1,
-//           'productDetails.status': 1,
-//           'productDetails.category': 1,
-//           'productDetails.unit': 1,
-//           'productDetails.product_image': 1
-//         }
-//       }
-//     ]);
-
-//     // === Calculate Summary ===
-//     let totalStockValue = 0;
-//     let lowStockItems = 0;
-//     let outOfStockItems = 0;
-
-//     inventoryData.forEach(item => {
-//       totalStockValue += (item.quantity || 0) * (item.productDetails?.purchase_price || 0);
-
-//       if (item.quantity === 0) outOfStockItems++;
-//       if (item.quantity > 0 && item.quantity <= (item.productDetails?.alert_quantity || 0))
-//         lowStockItems++;
-//     });
-
-//     // Placeholder for pending reorders
-//     const pendingReorders = 0;
-
-//     // === Get Previous Period Data (for percentage change) ===
-//     let percentageChange = {
-//       totalStockValue: { change: 0, direction: 'neutral' },
-//       lowStockItems: { change: 0, direction: 'neutral' },
-//       outOfStockItems: { change: 0, direction: 'neutral' },
-//       pendingReorders: { change: 0, direction: 'neutral' }
-//     };
-
-//     if (prevStartDate && prevEndDate) {
-//       const prevQuery = { ...query, createdAt: { $gte: new Date(prevStartDate), $lte: new Date(prevEndDate) } };
-
-//       const prevInventoryData = await Inventory.aggregate([
-//         { $match: prevQuery },
-//         {
-//           $lookup: {
-//             from: 'products',
-//             localField: 'productId',
-//             foreignField: '_id',
-//             as: 'productDetails'
-//           }
-//         },
-//         { $unwind: '$productDetails' }
-//       ]);
-
-//       let prevStockValue = 0;
-//       let prevLowStock = 0;
-//       let prevOutStock = 0;
-
-//       prevInventoryData.forEach(item => {
-//         prevStockValue += (item.quantity || 0) * (item.productDetails?.purchase_price || 0);
-//         if (item.quantity === 0) prevOutStock++;
-//         if (item.quantity > 0 && item.quantity <= (item.productDetails?.alert_quantity || 0))
-//           prevLowStock++;
-//       });
-
-//       const calcChange = (current, previous) => {
-//         if (previous === 0 && current === 0) return { change: 0, direction: 'neutral' };
-//         if (previous === 0) return { change: 100, direction: 'up' };
-//         const change = ((current - previous) / previous) * 100;
-//         return { change: Math.round(change), direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral' };
-//       };
-
-//       percentageChange = {
-//         totalStockValue: calcChange(totalStockValue, prevStockValue),
-//         lowStockItems: calcChange(lowStockItems, prevLowStock),
-//         outOfStockItems: calcChange(outOfStockItems, prevOutStock),
-//         pendingReorders: { change: 0, direction: 'neutral' }
-//       };
-//     }
-
-//     // === Prepare Data List ===
-//     const dataList = inventoryData.map(item => ({
-//       _id: item._id,
-//       type: 'product',
-//       name: item.productDetails?.name || '',
-//       sku: item.productDetails?.sku || '',
-//       quantity: item.quantity || 0,
-//       sellingPrice: item.productDetails?.selling_price || 0,
-//       purchasePrice: item.productDetails?.purchase_price || 0,
-//       alertQuantity: item.productDetails?.alert_quantity || 0,
-//       status: item.productDetails?.status || 'inactive',
-//       productImage: item.productDetails?.product_image || '',
-//       category: item.productDetails?.category || '',
-//       unit: item.productDetails?.unit || ''
-//     }));
-
-//     // === Final Response ===
-//     res.status(200).json({
-//       success: true,
-//       message: 'Inventory Stock Summary fetched successfully',
-//       total: {
-//         totalStockValue,
-//         lowStockItems,
-//         outOfStockItems,
-//         pendingReorders
-//       },
-//       percentageChange,
-//       data: dataList
-//     });
-//   } catch (error) {
-//     console.error('Error generating inventory stock summary:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error generating inventory stock summary',
-//       error: error.message
-//     });
-//   }
-// };
 
 const getInventoryStockSummary = async (req, res) => {
   try {
@@ -332,157 +172,6 @@ const getInventoryStockSummary = async (req, res) => {
   }
 };
 
-// const getInventoryReport = async (req, res) => {
-//   try {
-//     const { page = 1, limit = 10, search = '', startDate, endDate } = req.query;
-//     const skip = (Number(page) - 1) * Number(limit);
-
-//     // Product search filter
-//     const productFilter = {
-//       status: true,
-//       ...(search
-//         ? {
-//             $or: [
-//               { name: { $regex: search, $options: 'i' } },
-//               { code: { $regex: search, $options: 'i' } },
-//             ],
-//           }
-//         : {}),
-//     };
-
-//     // ----------------------------
-//     // 1. Aggregation for totals
-//     // ----------------------------
-//     const totalsAgg = await Product.aggregate([
-//       { $match: productFilter },
-//       {
-//         $lookup: {
-//           from: "inventories",
-//           let: { productId: "$_id" },
-//           pipeline: [
-//             { $match: { $expr: { $eq: ["$productId", "$$productId"] }, isDeleted: false } },
-//             { $project: { quantity: 1, inventory_history: 1 } },
-//           ],
-//           as: "inventory",
-//         },
-//       },
-//       {
-//         $addFields: {
-//           stockQty: { $ifNull: [{ $arrayElemAt: ["$inventory.quantity", 0] }, 0] },
-//         },
-//       },
-//       {
-//         $addFields: {
-//           value: { $multiply: ["$stockQty", "$selling_price"] },
-//           isLowStock: {
-//             $cond: [
-//               { $and: [{ $gt: ["$stockQty", 0] }, { $lte: ["$stockQty", "$alert_quantity"] }] },
-//               1,
-//               0,
-//             ],
-//           },
-//           isOutOfStock: { $cond: [{ $eq: ["$stockQty", 0] }, 1, 0] },
-//         },
-//       },
-//       {
-//         $group: {
-//           _id: null,
-//           totalValues: { $sum: "$value" },
-//           lowStockItems: { $sum: "$isLowStock" },
-//           outOfStockItems: { $sum: "$isOutOfStock" },
-//           totalProducts: { $sum: 1 },
-//         },
-//       },
-//     ]);
-
-//     const totals = totalsAgg.length ? totalsAgg[0] : {
-//       totalValues: 0,
-//       lowStockItems: 0,
-//       outOfStockItems: 0,
-//       totalProducts: 0,
-//     };
-
-//     // ----------------------------
-//     // 2. Paginated records
-//     // ----------------------------
-//     const products = await Product.find(productFilter)
-//       .populate('unit', 'unit_name short_name')
-//       .populate('category', 'category_name slug category_image status')
-//       .skip(skip)
-//       .limit(Number(limit))
-//       .lean();
-
-//     // Instead of querying all inventories, just fetch for current page products
-//     const productIds = products.map((p) => p._id);
-//     const inventories = await Inventory.find({
-//       productId: { $in: productIds },
-//       isDeleted: false,
-//     }).lean();
-
-//     const inventoryMap = {};
-//     inventories.forEach((inv) => {
-//       inventoryMap[inv.productId.toString()] = inv;
-//     });
-
-//     // Map products with inventory info
-//     const data = products.map((product) => {
-//       const inventoryInfo = inventoryMap[product._id.toString()] || null;
-//       const stockQty = inventoryInfo ? inventoryInfo.quantity : 0;
-
-//       return {
-//         _id: product._id,
-//         type: product.item_type.toLowerCase(),
-//         name: product.name,
-//         sku: product.code,
-//         sellingPrice: product.selling_price,
-//         purchasePrice: product.purchase_price,
-//         alertQuantity: product.alert_quantity,
-//         thumbnail: product.product_image
-//           ? `${process.env.BASE_URL}${product.product_image}`
-//           : null,
-//         unit: product.unit ? product.unit.unit_name  : null,
-//         categoryName: product.category
-//           ? product.category.category_name
-//           : '',
-//         stock: inventoryInfo
-//           ? stockQty
-//           : 0,
-//       };
-//     });
-
-//     // ----------------------------
-//     // 3. Response
-//     // ----------------------------
-//     res.status(200).json({
-//       success: true,
-//       message: 'Inventory report fetched successfully',
-//       filters: {
-//         startDate: startDate || null,
-//         endDate: endDate || null,
-//         search: search || null,
-//       },
-//       data: {
-//         totalValues: totals.totalValues,
-//         lowStockItems: totals.lowStockItems,
-//         outOfStockItems: totals.outOfStockItems,
-//       },
-//       records: data,
-//       pagination: {
-//         total: totals.totalProducts,
-//         page: Number(page),
-//         limit: Number(limit),
-//         totalPages: Math.ceil(totals.totalProducts / Number(limit)),
-//       },
-//     });
-//   } catch (error) {
-//     console.error('Error generating inventory report:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error generating inventory report',
-//       error: error.message,
-//     });
-//   }
-// };
 
 const getInventoryReport = async (req, res) => {
   try {
@@ -599,7 +288,6 @@ const getInventoryReport = async (req, res) => {
               {
                 $and: [
                   { $gt: ['$quantity', 0] },
-                  // { $lte: ['$quantity', '$product.alert_quantity'] }
                   {
                     $lte: [
                       '$quantity',
@@ -657,48 +345,6 @@ const getInventoryReport = async (req, res) => {
       { $limit: Number(limit) }
     ]);
 
-    // ---------- TOTALS ----------
-    // const totalsAgg = await Inventory.aggregate([
-    //   { $match: matchQuery },
-    //   {
-    //     $lookup: {
-    //       from: 'products',
-    //       localField: 'productId',
-    //       foreignField: '_id',
-    //       as: 'product'
-    //     }
-    //   },
-    //   { $unwind: '$product' },
-    //   {
-    //     $group: {
-    //       _id: null,
-    //       totalValues: {
-    //         $sum: {
-    //           $multiply: ['$quantity', '$product.selling_price']
-    //         }
-    //       },
-    //       lowStockItems: {
-    //         $sum: {
-    //           $cond: [
-    //             {
-    //               $and: [
-    //                 { $gt: ['$quantity', 0] },
-    //                 { $lte: ['$quantity', '$product.alert_quantity'] }
-    //               ]
-    //             },
-    //             1,
-    //             0
-    //           ]
-    //         }
-    //       },
-    //       outOfStockItems: {
-    //         $sum: {
-    //           $cond: [{ $eq: ['$quantity', 0] }, 1, 0]
-    //         }
-    //       }
-    //     }
-    //   }
-    // ]);
 
     const totalsAgg = await Inventory.aggregate([
       { $match: matchQuery },
@@ -739,39 +385,6 @@ const getInventoryReport = async (req, res) => {
         }
       },
 
-      // ---------- GROUP ----------
-      // {
-      //   $group: {
-      //     _id: null,
-
-      //     totalValues: {
-      //       $sum: {
-      //         $multiply: ['$quantity', '$sellingPrice']
-      //       }
-      //     },
-
-      //     lowStockItems: {
-      //       $sum: {
-      //         $cond: [
-      //           {
-      //             $and: [
-      //               { $gt: ['$quantity', 0] },
-      //               { $lte: ['$quantity', '$product.alert_quantity'] }
-      //             ]
-      //           },
-      //           1,
-      //           0
-      //         ]
-      //       }
-      //     },
-
-      //     outOfStockItems: {
-      //       $sum: {
-      //         $cond: [{ $eq: ['$quantity', 0] }, 1, 0]
-      //       }
-      //     }
-      //   }
-      // }
 
       {
         $group: {
@@ -1043,125 +656,6 @@ const getBestSellerReport = async (req, res) => {
   }
 };
 
-// const getLowStockReport = async (req, res) => {
-//   try {
-//     let { page = 1, limit = 10, search = '', startDate, endDate } = req.query;
-//     page = Number(page);
-//     limit = Number(limit);
-//     const skip = (page - 1) * limit;
-
-//     // Optional date range filter for inventory history
-//     const customDateFilter = {};
-//     if (startDate && endDate) {
-//       customDateFilter.createdAt = {
-//         $gte: new Date(startDate),
-//         $lte: new Date(endDate),
-//       };
-//     }
-
-//     // Product search filter
-//     const productFilter = {
-//       status: true,
-//       ...(search
-//         ? {
-//             $or: [
-//               { name: { $regex: search, $options: 'i' } },
-//               { code: { $regex: search, $options: 'i' } },
-//             ],
-//           }
-//         : {}),
-//     };
-
-//     // Fetch all products
-//     const allProducts = await Product.find(productFilter)
-//       .populate('unit', 'unit_name short_name')
-//       .populate('category', 'category_name slug category_image status')
-//       .lean();
-
-//     const allProductIds = allProducts.map((p) => p._id);
-
-//     // Fetch inventories
-//     const allInventories = await Inventory.find({
-//       productId: { $in: allProductIds },
-//       isDeleted: false,
-//     }).lean();
-
-//     // Map inventories by productId
-//     const inventoryMap = {};
-//     allInventories.forEach((inv) => {
-//       inventoryMap[inv.productId.toString()] = inv;
-//     });
-
-//     // Filter low stock + out of stock separately
-//     const lowStockProducts = [];
-//     let totalLowStock = 0;
-//     let totalOutOfStock = 0;
-
-//     for (const product of allProducts) {
-//       const inventoryInfo = inventoryMap[product._id.toString()] || null;
-//       const stockQty = inventoryInfo ? inventoryInfo.quantity : 0;
-
-//       if (stockQty > 0 && stockQty <= product.alert_quantity) {
-//         totalLowStock++;
-//         lowStockProducts.push({ product, inventoryInfo, stockQty });
-//       }
-
-//       if (stockQty === 0) {
-//         totalOutOfStock++;
-//         // ❌ don't push into lowStockProducts here anymore
-//       }
-//     }
-
-//     // Apply pagination only to low stock list
-//     const paginatedProducts = lowStockProducts.slice(skip, skip + limit);
-
-//     // Map for response
-//     const data = paginatedProducts.map(({ product, stockQty }) => ({
-//       _id: product._id,
-//       type: product.item_type.toLowerCase(),
-//       name: product.name,
-//       sku: product.code,
-//       sellingPrice: product.selling_price,
-//       purchasePrice: product.purchase_price,
-//       alertQuantity: product.alert_quantity,
-//       thumbnail: product.product_image
-//         ? `${process.env.BASE_URL}${product.product_image}`
-//         : '',
-//       unit: product.unit ? product.unit.unit_name : null,
-//       categoryName: product.category.category_name ?? "",
-//       stock: stockQty,
-//     }));
-
-//     res.status(200).json({
-//       success: true,
-//       message: 'Low stock report fetched successfully',
-//       filters: {
-//         startDate: startDate || null,
-//         endDate: endDate || null,
-//         search: search || null,
-//       },
-//       data: {
-//         lowStockItems: totalLowStock,
-//         outOfStockItems: totalOutOfStock,
-//       },
-//       // ✅ now records only shows low stock items, not out of stock
-//       records: data,
-//       pagination: {
-//         total: lowStockProducts.length,
-//         page,
-//         limit,
-//         totalPages: Math.ceil(lowStockProducts.length / limit),
-//       },
-//     });
-//   } catch (error) {
-//     console.error('Error generating low stock report:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error generating low stock report',
-//       error: error.message,
-//     });
-//   }
-// };
 
 const getLowStockReport = async (req, res) => {
   try {
@@ -1254,7 +748,6 @@ const getLowStockReport = async (req, res) => {
           $expr: {
             $and: [
               { $gt: ['$quantity', 0] },
-              // { $lte: ['$quantity', '$product.alert_quantity'] }
               { $lte: ['$quantity', '$variant.reorder_limit'] }
             ]
           }
@@ -1367,116 +860,6 @@ const getLowStockReport = async (req, res) => {
   }
 };
 
-// const getOutStockReport = async (req, res) => {
-//   try {
-//     let { page = 1, limit = 10, search = '', startDate, endDate } = req.query;
-//     page = Number(page);
-//     limit = Number(limit);
-//     const skip = (page - 1) * limit;
-
-//     const customDateFilter = {};
-//     if (startDate && endDate) {
-//       customDateFilter.createdAt = {
-//         $gte: new Date(startDate),
-//         $lte: new Date(endDate),
-//       };
-//     }
-
-//     // Product search filter
-//     const productFilter = {
-//       status: true,
-//       ...(search
-//         ? {
-//             $or: [
-//               { name: { $regex: search, $options: 'i' } },
-//               { code: { $regex: search, $options: 'i' } },
-//             ],
-//           }
-//         : {}),
-//     };
-
-//     // Fetch all products
-//     const allProducts = await Product.find(productFilter)
-//       .populate('unit', 'unit_name short_name')
-//       .populate('category', 'category_name slug category_image status')
-//       .lean();
-
-//     const allProductIds = allProducts.map((p) => p._id);
-
-//     // Fetch inventories
-//     const allInventories = await Inventory.find({
-//       productId: { $in: allProductIds },
-//       isDeleted: false,
-//     }).lean();
-
-//     // Map inventories by productId
-//     const inventoryMap = {};
-//     allInventories.forEach((inv) => {
-//       inventoryMap[inv.productId.toString()] = inv;
-//     });
-
-//     // Collect only out-of-stock products
-//     const outOfStockProducts = [];
-//     let totalOutOfStock = 0;
-
-//     for (const product of allProducts) {
-//       const inventoryInfo = inventoryMap[product._id.toString()] || null;
-//       const stockQty = inventoryInfo ? inventoryInfo.quantity : 0;
-
-//       if (stockQty === 0) {
-//         totalOutOfStock++;
-//         outOfStockProducts.push({ product, stockQty });
-//       }
-//     }
-
-//     // Apply pagination only to out of stock
-//     const paginatedProducts = outOfStockProducts.slice(skip, skip + limit);
-
-//     // Map for response
-//     const data = paginatedProducts.map(({ product, stockQty }) => ({
-//       _id: product._id,
-//       type: product.item_type.toLowerCase(),
-//       name: product.name,
-//       sku: product.code,
-//       sellingPrice: product.selling_price,
-//       purchasePrice: product.purchase_price,
-//       alertQuantity: product.alert_quantity,
-//       thumbnail: product.product_image
-//         ? `${process.env.BASE_URL}${product.product_image}`
-//         : '',
-//       unit: product.unit ? product.unit.unit_name : null,
-//       categoryName: product.category.category_name ?? "",
-//       stock: stockQty,
-//     }));
-
-//     res.status(200).json({
-//       success: true,
-//       message: 'Out of stock report fetched successfully',
-//       filters: {
-//         startDate: startDate || null,
-//         endDate: endDate || null,
-//         search: search || null,
-//       },
-//       data: {
-//         outOfStockItems: totalOutOfStock,
-//       },
-//       records: data,
-//       pagination: {
-//         total: outOfStockProducts.length,
-//         page,
-//         limit,
-//         totalPages: Math.ceil(outOfStockProducts.length / limit),
-//       },
-//     });
-//   } catch (error) {
-//     console.error('Error generating out of stock report:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error generating out of stock report',
-//       error: error.message,
-//     });
-//   }
-// };
 
 const getOutStockReport = async (req, res) => {
   try {
@@ -1516,7 +899,6 @@ const getOutStockReport = async (req, res) => {
       inventoryMap[inv.productId.toString()] = inv;
     });
 
-    // 3️⃣ OUT OF STOCK = product quantity === 0
     const outOfStockProducts = products.filter(p => {
       const inv = inventoryMap[p._id.toString()];
       return !inv || inv.quantity === 0;
@@ -1792,8 +1174,8 @@ const getStockHistoryReport = async (req, res) => {
   }
 };
 
-module.exports = { 
-  getInventoryStockSummary, 
+module.exports = {
+  getInventoryStockSummary,
   getInventoryReport,
   getBestSellerReport,
   getLowStockReport,

@@ -12,7 +12,7 @@ const validate = (req, res, next) => {
                 formattedErrors[err.path] = err.msg;
             }
         });
-        return res.status(422).json({ 
+        return res.status(422).json({
             'message': 'Validation failed',
             'errors': formattedErrors
          });
@@ -92,7 +92,7 @@ exports.createBankDetailValidator = [
         .isBoolean()
         .withMessage("Status must be a boolean value"),
     validate
-    
+
 ];
 
 // Update validation
@@ -143,8 +143,8 @@ exports.updateBankDetailValidator = [
         .isLength({ max: 20 })
         .withMessage("Account number cannot exceed 20 characters")
         .custom(async (value, { req }) => {
-            const existingAccount = await BankDetail.findOne({ 
-                accountNumber: value, 
+            const existingAccount = await BankDetail.findOne({
+                accountNumber: value,
                 isDeleted: false,
                 _id: { $ne: req.params.id }
             });
@@ -165,7 +165,7 @@ exports.updateBankDetailValidator = [
         .optional()
         .isBoolean()
         .withMessage("Status must be a boolean value"),
-    validate    
+    validate
 ];
 
 // ID validation (for get and delete)
@@ -202,6 +202,6 @@ exports.updateBankDetailStatusValidator = [
         .withMessage("Status is required")
         .isBoolean()
         .withMessage("Status must be a boolean value"),
-        
+
     validate
 ];

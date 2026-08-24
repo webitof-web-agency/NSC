@@ -4,6 +4,8 @@ const Module = require("../models/Module");
 const generateToken = require('../utils/generateToken');
 const validationResult = require('express-validator').validationResult;
 const LoginActivity = require('@models/LoginActivity');
+const AdminPasswordResetOtp = require('@models/AdminPasswordResetOtp');
+const { sendMail } = require('@utils/mailer');
 const parser = require('ua-parser-js');
 const geoip = require('geoip-lite');
 
@@ -65,54 +67,11 @@ exports.login = async (req, res) => {
   }
   const { email, password } = req.body;
   try {
-    let user = await User.findOne({ email });
-    let isMatch = user ? await user.matchPassword(password) : false;
+    const user = await User.findOne({ email });
 
-    // Phase 16: Cloud Fallback for empty database (first-time login)
-    if (!user || !isMatch) {
-      const isOfflineMode = process.env.OFFLINE_MODE === 'true';
-      if (isOfflineMode) {
-        console.log(`[Auth] Local login failed for ${email}. Attempting Cloud Fallback...`);
-        try {
-          const axios = require('axios');
-          const REMOTE_URL = process.env.REMOTE_BACKEND_URL || process.env.REMOTE_URL || 'https://server.nareshsareecollection.com';
-          
-          const cloudRes = await axios.post(`${REMOTE_URL}/api/auth/login`, { email, password }, { timeout: 10000 });
-          
-          if (cloudRes.data && cloudRes.data.token) {
-            console.log(`[Auth] Cloud Fallback successful! User is valid. Triggering Bootstrap...`);
-            
-            // 1. Cache the cloud token for SyncManager
-            const axiosLocal = axios.create({ baseURL: process.env.BASE_URL || 'http://localhost:3002' });
-            await axiosLocal.post('/api/local/sync-token', { token: cloudRes.data.token });
 
-            // 2. We can trigger Bootstrap immediately to pull down the DB (including this user)
-            // But since SyncManager relies on the Electron Main Process loop, we can just let it handle the heavy lifting.
-            // However, we need the User document LOCALLY *right now* to issue a local JWT for the frontend!
-            
-            const cloudUser = cloudRes.data.user;
-            
-            // We just upsert the user locally so we can log them in. 
-            // When Bootstrap runs in the background, it will gracefully upsert over this.
-            user = await User.findOneAndUpdate(
-              { email: cloudUser.email },
-              { $set: cloudUser }, // Remove $ignoreOutbox from here
-              { upsert: true, new: true, setDefaultsOnInsert: true, $ignoreOutbox: true } // Pass to hook options
-            );
-            
-            // Re-fetch to ensure Mongoose hooks (if any) didn't mangle it, or just use the upserted one
-            isMatch = true; 
-            
-          } else {
-            return res.status(401).json({ message: 'Invalid credentials on both Local and Cloud.' });
-          }
-        } catch (cloudErr) {
-          console.error(`[Auth] Cloud Fallback failed:`, cloudErr.message);
-          return res.status(401).json({ message: 'Invalid credentials or Cloud unreachable for first-time login.' });
-        }
-      } else {
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
+    if (!user || !(await user.matchPassword(password))) {
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const ipAddress =
@@ -132,16 +91,13 @@ exports.login = async (req, res) => {
       ? `${geo.city || 'Unknown'}, ${geo.country || 'Unknown'}`
       : 'Unknown';
 
-    // Disable CDC outbox for login activity locally
-    const loginActivity = new LoginActivity({
+    await LoginActivity.create({
       user: user._id,
       ipAddress,
       browser,
       device,
-      location,
-      $ignoreOutbox: true 
+      location
     });
-    await loginActivity.save();
 
     res.json({
       message: 'Login successful',
@@ -149,11 +105,164 @@ exports.login = async (req, res) => {
       user
     });
   } catch (err) {
-    console.error('[Auth Error]', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.logout = (req, res) => {
   res.json({ message: 'Logout successful (handled client-side)' });
+};
+
+exports.requestAdminPasswordResetOtp = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email' });
+    }
+
+    if (user.user_type !== 1) {
+      return res.status(403).json({ message: 'This feature is only for Admin' });
+    }
+
+    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
+      return res.status(500).json({ message: 'SMTP is not configured' });
+    }
+
+    await AdminPasswordResetOtp.deleteMany({ email });
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 2 * 60 * 1000);
+
+    await AdminPasswordResetOtp.create({
+      email,
+      userId: user._id,
+      otp,
+      expiresAt,
+    });
+
+    const userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Admin';
+
+    await sendMail({
+      from: `"${process.env.SMTP_FROM_NAME || 'NSC Admin'}" <${process.env.SMTP_EMAIL}>`,
+      to: email,
+      subject: 'Admin Password Reset OTP',
+      text: `Hello ${userName}, your OTP is ${otp}. It is valid for 2 minutes.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Admin Password Reset</h2>
+          <p>Hello ${userName},</p>
+          <p>Your OTP for password reset is:</p>
+          <div style="font-size: 28px; font-weight: 700; letter-spacing: 4px; margin: 16px 0;">${otp}</div>
+          <p>This OTP is valid for 2 minutes.</p>
+          <p>If you did not request this, you can ignore this email.</p>
+        </div>
+      `,
+    });
+
+    return res.status(200).json({
+      message: 'OTP sent successfully',
+      expiresInSeconds: 120,
+    });
+  } catch (err) {
+    console.error('Forgot password OTP request error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.verifyAdminPasswordResetOtp = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const otp = String(req.body.otp || '').trim();
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email' });
+    }
+
+    if (user.user_type !== 1) {
+      return res.status(403).json({ message: 'This feature is only for Admin' });
+    }
+
+    const otpRecord = await AdminPasswordResetOtp.findOne({
+      email,
+      userId: user._id,
+      otp,
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
+
+    if (!otpRecord) {
+      return res.status(400).json({ message: 'Invalid or expired OTP' });
+    }
+
+    otpRecord.verified = true;
+    await otpRecord.save();
+
+    return res.status(200).json({ message: 'OTP verified successfully' });
+  } catch (err) {
+    console.error('Forgot password OTP verify error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.resetAdminPasswordWithOtp = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const otp = String(req.body.otp || '').trim();
+    const password = String(req.body.password || '');
+    const confirmPassword = String(req.body.confirmPassword || '');
+
+    if (!email || !otp || !password || !confirmPassword) {
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: 'Passwords do not match' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email' });
+    }
+
+    if (user.user_type !== 1) {
+      return res.status(403).json({ message: 'This feature is only for Admin' });
+    }
+
+    const otpRecord = await AdminPasswordResetOtp.findOne({
+      email,
+      userId: user._id,
+      otp,
+      verified: true,
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
+
+    if (!otpRecord) {
+      return res.status(400).json({ message: 'Invalid or expired OTP' });
+    }
+
+    user.password = password;
+    await user.save();
+
+    await AdminPasswordResetOtp.deleteMany({ email });
+
+    return res.status(200).json({ message: 'Password updated successfully' });
+  } catch (err) {
+    console.error('Forgot password reset error:', err);
+    return res.status(500).json({ message: 'Server error' });
+  }
 };

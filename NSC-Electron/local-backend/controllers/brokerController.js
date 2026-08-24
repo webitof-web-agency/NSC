@@ -20,7 +20,7 @@ exports.createBroker = async (req, res) => {
     if (!brokerDetail) {
         brokerDetail = await BrokerDetail.findOne({ phone: phone, isDeleted: false });
     }
-    
+
     if (brokerDetail) {
          // Update existing master if requested or if simpler flow
          if (isMasterUpdate || (!purchaseId)) {
@@ -85,7 +85,7 @@ exports.createBroker = async (req, res) => {
 
         // Find or create broker document
         let broker = await Broker.findOne({ phone: brokerDetail.phone, isDeleted: false });
-        
+
         if (!broker) {
             // Create new broker document with first deal
             broker = new Broker({
@@ -113,7 +113,7 @@ exports.createBroker = async (req, res) => {
             broker.name = brokerDetail.name; // Update name if changed
             await broker.save();
         }
-        
+
         // Populate the deals
         populatedBroker = await Broker.findById(broker._id)
             .populate('deals.purchaseId', 'purchaseId finalAmount totalAmount');
@@ -159,7 +159,7 @@ exports.updateBroker = async (req, res) => {
     }
 
     // Logic to update deal specific fields (recalculate if needed)
-    // NOTE: If updating name/phone on a specific deal, do we update all? 
+    // NOTE: If updating name/phone on a specific deal, do we update all?
     // For now, let's assume valid single deal edits.
 
     let commissionAmount = broker.commissionAmount;
@@ -168,7 +168,7 @@ exports.updateBroker = async (req, res) => {
     if ((purchaseId && broker.purchaseId?.toString() !== purchaseId) ||
         (commissionValue !== undefined && broker.commissionValue !== Number(commissionValue)) ||
         (commissionType && broker.commissionType !== commissionType)) {
-      
+
         // Need to recalculate
         const puId = purchaseId || broker.purchaseId;
         if(puId) {
@@ -177,7 +177,7 @@ exports.updateBroker = async (req, res) => {
                  const baseAmount = purchase.finalAmount || purchase.totalAmount || 0;
                  const cType = commissionType || broker.commissionType;
                  const cVal = commissionValue !== undefined ? Number(commissionValue) : broker.commissionValue;
-                 
+
                  commissionAmount = cType === 'Percentage' ? (baseAmount * cVal) / 100 : cVal;
                  purchaseNumber = purchase.purchaseId;
              }
@@ -215,7 +215,7 @@ exports.updateBroker = async (req, res) => {
 exports.getBrokers = async (req, res) => {
   try {
     const { search, phone, aggregated } = req.query;
-    
+
     const matchStage = { isDeleted: false };
     if (search) {
         // Escape special regex characters
@@ -231,7 +231,7 @@ exports.getBrokers = async (req, res) => {
 
     // Fetch from BrokerDetail
     const brokers = await BrokerDetail.find(matchStage).sort({ name: 1 });
-    
+
     // If aggregated flag is set, enhance with totalDeals count
     if (aggregated === 'true') {
         const brokersWithCounts = await Promise.all(
@@ -242,7 +242,7 @@ exports.getBrokers = async (req, res) => {
                     isDeleted: false
                 });
                 const dealCount = brokerDoc ? brokerDoc.deals.length : 0;
-                
+
                 return {
                     _id: broker._id, // BrokerDetail document ID
                     name: broker.name,
@@ -281,7 +281,7 @@ exports.getBrokers = async (req, res) => {
 exports.getBrokerDeals = async (req, res) => {
     try {
         const { id } = req.params; // Expecting BrokerDetail _id
-        
+
         const master = await BrokerDetail.findById(id);
         if (!master) return res.status(404).json({ message: "Broker not found" });
 
@@ -310,7 +310,7 @@ exports.deleteBroker = async (req, res) => {
 
     // Find broker containing this deal and remove it
     const broker = await Broker.findOne({ 'deals._id': id, isDeleted: false });
-    
+
     if (!broker) {
       return res.status(404).json({ message: 'Deal not found' });
     }
@@ -400,10 +400,10 @@ exports.bulkDeleteBrokerMasters = async (req, res) => {
 exports.uploadBrokersFromExcel = async (req, res) => {
   const fs = require('fs');
   const path = require('path');
-  
+
   try {
     const ExcelJS = require('exceljs');
-    
+
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
@@ -411,7 +411,7 @@ exports.uploadBrokersFromExcel = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     // Use readFile because middleware saves to disk (req.file.path)
     await workbook.xlsx.readFile(req.file.path);
-    
+
     const worksheet = workbook.getWorksheet(1); // Get first sheet
     if (!worksheet) {
       // Clean up file if error
@@ -421,7 +421,7 @@ exports.uploadBrokersFromExcel = async (req, res) => {
 
     const data = [];
     const headers = {};
-    
+
     // Map headers from first row
     const headerRow = worksheet.getRow(1);
     headerRow.eachCell((cell, colNumber) => {

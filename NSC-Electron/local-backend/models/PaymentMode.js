@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const paymentModeSchema = new mongoose.Schema(
   {
@@ -21,11 +22,13 @@ const paymentModeSchema = new mongoose.Schema(
       default: true,
     },
   },
-  { 
+  {
     timestamps: true,
     toJSON: { virtuals: true },
-    toObject: { virtuals: true } 
+    toObject: { virtuals: true }
   }
 );
+
+paymentModeSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('PaymentMode', paymentModeSchema);

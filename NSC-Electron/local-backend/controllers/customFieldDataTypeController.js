@@ -26,7 +26,7 @@ exports.createCustomFieldDataType = async (req, res) => {
     });
 
     const savedCustomFieldDataType = await customFieldDataType.save();
-    
+
     res.status(201).json({
       message: 'Custom field data type created successfully',
       data: savedCustomFieldDataType

@@ -78,7 +78,7 @@ exports.getProfile = async (req, res) => {
     const user = await User.findById(req.user)
       .populate({
         path: 'country',
-        select: '_id name' 
+        select: '_id name'
       })
       .populate({
         path: 'state',
@@ -103,6 +103,12 @@ exports.getProfile = async (req, res) => {
 };
 exports.updateProfile = async (req, res) => {
   try {
+    const user = await User.findById(req.user);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
     const allowedFields = [
       'firstName',
       'lastName',
@@ -129,19 +135,22 @@ exports.updateProfile = async (req, res) => {
       updateData.profileImage = `uploads/${req.file.filename}`;
     }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user,
-      { $set: updateData },
-      { new: true, runValidators: true, context: 'query' }
-    );
+    Object.entries(updateData).forEach(([key, value]) => {
+      user[key] = value;
+    });
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: 'User not found' });
+    if (req.body.newPassword) {
+      if (Number(user.user_type) !== 1) {
+        return res.status(403).json({ message: 'Only admin users can change password from profile settings' });
+      }
+      user.password = req.body.newPassword;
     }
+
+    const updatedUser = await user.save();
 
     res.json({
       message: 'User profile updated successfully',
-      user: updatedUser,
+      user: updatedUser.toJSON(),
     });
   } catch (err) {
     console.error(err);
@@ -180,11 +189,11 @@ exports.getCountryById = async (req, res) => {
 
 exports.getStateById = async (req, res) => {
     const stateId = parseInt(req.params.id, 10);
-    
+
     if (isNaN(stateId)) {
         return res.status(400).json({ message: 'Invalid state ID format. Must be an integer.' });
     }
-    
+
     try {
         const state = await State.findById(stateId).lean();
         if (!state) {
@@ -213,4 +222,4 @@ exports.getCityById = async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: 'Error fetching city', error: err.message });
     }
-};  
+};

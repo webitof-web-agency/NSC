@@ -70,7 +70,7 @@ const deleteAccount = async (req, res) => {
         message: 'User not found'
       });
     }
-  
+
 
     if (user.profileImage) {
       const profileImagePath = path.join(__dirname, '../public', user.profileImage);

@@ -1,10 +1,7 @@
-const fs = require("fs");
 const multer = require("multer");
 const { ensureUploadDir } = require('../utils/storagePaths');
 
 const tempDir = ensureUploadDir('_temp', 'ai-imports');
-
-fs.mkdirSync(tempDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tempDir),

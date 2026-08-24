@@ -7,195 +7,232 @@ const User = require('@models/User');
 const Inventory = require('@models/Inventory');
 const { body, validationResult } = require('express-validator');
 const { sendMail } = require("@utils/mailer");
+const { syncPurchaseNotificationForPurchase } = require("@services/notificationService");
 
-// const createDebitNote = async (req, res) => {
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-//     const userId = req.user;
+const normalizeDebitNoteItems = (rawItems = []) =>
+  (Array.isArray(rawItems) ? rawItems : []).map(item => {
+    const qty = Number(item.qty || item.quantity || 0);
+    const rate = Number(item.rate || 0);
+    const amount = Number(item.amount || qty * rate);
+    const rawProductId = item.productId || item.product_id || null;
+    const productId = isValidObjectId(rawProductId) ? rawProductId : null;
 
-//     const { 
-//       purchaseId,
-//       debitNoteDate,
-//       referenceNo,
-//       paymentMode,
-//       items,
-//       notes,
-//       termsAndCondition,
-//       status = 'draft',
-//       createdBy = userId,
-//       billFrom,
-//       billTo,
-//       sign_type,
-//       signatureId,
-//       signatureName,
-//       checkNumber,
-//       bank,
-//       paidAmount = 0
-//     } = req.body;
+    return {
+      id: item.id || String(rawProductId || item.variantId || ""),
+      productId,
+      name: item.name,
+      hsn_code: item.hsn_code || null,
+      variantId: item.variantId || null,
+      variantName: item.variantName || "",
+      variantDesignNo: item.variantDesignNo || "",
+      variantColor: item.variantColor || "",
+      variantSize: item.variantSize || "",
+      unit: item.unit || "",
+      qty,
+      rate,
+      discount: Number(item.discount || 0),
+      tax: Number(item.tax || 0),
+      tax_group_id: item.tax_group_id || null,
+      discount_type: item.discount_type || "Fixed",
+      discount_value: Number(item.discount_value || 0),
+      amount
+    };
+  }).filter((item) => item.name && item.qty > 0);
 
-//     // console.log("Purchase ID Received:", purchaseId);
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ""));
 
-//     if (!purchaseId) {
-//       console.log("purchaseId Missing in Request");
-//       return res.status(400).json({ message: "purchaseId is required" });
-//     }
+const toPurchaseItemShape = (item = {}) => {
+  const qty = Number(item.qty || item.quantity || 0);
+  const rate = Number(item.rate || 0);
+  const amount = Number(item.amount || qty * rate);
 
-//     // Validate purchase exists
-//     // const purchase = await Purchase.findById({purchaseId});
-//     const purchase = await Purchase.findById(purchaseId);
-//     // console.log("Purchase Found:", purchase);
+  return {
+    id: String(item.productId || item.product_id || item.id || ""),
+    name: item.name || "",
+    hsn_code: item.hsn_code || "",
+    variantId: item.variantId || null,
+    variantName: item.variantName || "",
+    variantDesignNo: item.variantDesignNo || "",
+    variantColor: item.variantColor || "",
+    variantSize: item.variantSize || "",
+    unit: item.unit || "",
+    qty,
+    rate,
+    discount: Number(item.discount || 0),
+    tax: Number(item.tax || 0),
+    tax_group_id: item.tax_group_id || null,
+    discount_type: item.discount_type || "Fixed",
+    discount_value: Number(item.discount_value || 0),
+    amount
+  };
+};
 
-//     if (!purchase) {
-//       console.log("Purchase Not Found in DB");
-//       return res.status(404).json({ message: 'Purchase not found' });
-//     }
+const buildUpdatedPurchaseItems = (originalItems = [], returnedItems = [], exchangeItems = []) => {
+  const finalItems = (Array.isArray(originalItems) ? originalItems : []).map((item) => toPurchaseItemShape(item));
+  const indexByKey = new Map();
 
-//     // Validate vendor
-//     const vendor = await User.findById(purchase.vendorId);
-//     // console.log("Vendor Found:", vendor);
+  finalItems.forEach((item, index) => {
+    const key = String(item.variantId || item.id || "");
+    if (key) indexByKey.set(key, index);
+  });
 
-//     if (!vendor) {
-//       console.log("Vendor Not Found");
-//       return res.status(422).json({ message: 'Invalid vendor ID from purchase' });
-//     }
+  returnedItems.forEach((item) => {
+    const key = String(item.variantId || item.productId || item.id || "");
+    if (!key || !indexByKey.has(key)) return;
 
-//     // Validate bill from and bill to users
-//     const billFromUser = await User.findById(billFrom);
-//     const billToUser = await User.findById(billTo);
-//     // console.log("BillFrom User:", billFromUser);
-//     // console.log("BillTo User:", billToUser);
+    const targetIndex = indexByKey.get(key);
+    const current = finalItems[targetIndex];
+    const currentQty = Number(current?.qty || 0);
+    const returnedQty = Number(item.qty || 0);
+    const nextQty = currentQty - returnedQty;
 
-//     if (!billFromUser || !billToUser) {
-//       console.log("Bill From / Bill To Validation Error");
-//       return res.status(422).json({ message: 'Invalid bill from or bill to user ID' });
-//     }
+    if (nextQty <= 0) {
+      finalItems[targetIndex] = null;
+      indexByKey.delete(key);
+      return;
+    }
 
-//     // Validate signature type
-//     const validSignatureTypes = ['none', 'digitalSignature', 'eSignature'];
-//     if (sign_type && !validSignatureTypes.includes(sign_type)) {
-//       console.log("Invalid Signature Type Provided");
-//       return res.status(400).json({ message: 'Invalid signature type' });
-//     }
+    const ratio = currentQty > 0 ? nextQty / currentQty : 0;
+    finalItems[targetIndex] = {
+      ...current,
+      qty: nextQty,
+      discount: Number((Number(current.discount || 0) * ratio).toFixed(2)),
+      tax: Number((Number(current.tax || 0) * ratio).toFixed(2)),
+      amount: Number((Number(current.amount || 0) * ratio).toFixed(2)),
+    };
+  });
 
-//     if (sign_type === 'eSignature') {
-//       if (!req.file) {
-//         return res.status(400).json({ message: 'Signature image is required for eSignature' });
-//       }
-//       if (!signatureName) {
-//         return res.status(400).json({ message: 'Signature name is required for eSignature' });
-//       }
-//     }
+  exchangeItems.forEach((item) => {
+    const normalized = toPurchaseItemShape(item);
+    if (!normalized.name || normalized.qty <= 0) return;
+    finalItems.push(normalized);
+  });
 
-//     // Calculate amounts
-//     const taxableAmount = items.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
-//     const totalDiscount = items.reduce((sum, item) => sum + (item.discount || 0), 0);
-//     const totalTax = items.reduce((sum, item) => sum + (item.tax || 0), 0);
-//     const totalAmount = taxableAmount + totalTax - totalDiscount;
-//     const balanceAmount = totalAmount - paidAmount;
+  return finalItems.filter(Boolean);
+};
 
-//     const debitNote = new DebitNote({
-//       purchaseId,
-//       vendorId: purchase.vendorId,
-//       debitNoteDate: debitNoteDate ? new Date(debitNoteDate) : new Date(),
-//       dueDate: new Date(debitNoteDate ? new Date(debitNoteDate) : new Date()),
-//       referenceNo: referenceNo || '',
-//       items: items.map(item => ({
-//         productId: item.id,
-//         name: item.name,
-//         unit: item.unit,
-//         quantity: item.qty,
-//         rate: item.rate,
-//         discount: item.discount,
-//         tax: item.tax,
-//         tax_group_id: item.tax_group_id,
-//         discount_type: item.discount_type,
-//         discount_value: item.discount_value,
-//         amount: item.amount || (item.quantity * item.rate),
-//       })),
-//       status,
-//       paymentMode,
-//       taxableAmount: req.body.subTotal || taxableAmount,
-//       totalDiscount: req.body.totalDiscount || totalDiscount,
-//       totalTax: req.body.totalTax || totalTax,
-//       totalAmount: req.body.grandTotal || totalAmount,
-//       paidAmount,
-//       balanceAmount: 0,
-//       bank: bank || null,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-//       sign_type: sign_type || 'none',
-//       signatureId: signatureId || null,
-//       signatureImage: sign_type === 'eSignature' ? req.file.path : null,
-//       signatureName: sign_type === 'eSignature' ? signatureName : null,
-//       checkNumber: checkNumber || null,
-//       userId,
-//       createdBy,
-//       billFrom,
-//       billTo
-//     });
+const revertUpdatedPurchaseItems = (currentItems = [], returnedItems = [], exchangeItems = []) => {
+  const finalItems = (Array.isArray(currentItems) ? currentItems : []).map((item) => toPurchaseItemShape(item));
+  const findIndexByKey = (key) => finalItems.findIndex((item) => String(item.variantId || item.id || "") === key);
 
-//     await debitNote.save();
-//     // console.log("Debit Note Saved Successfully:", debitNote);
+  returnedItems.forEach((item) => {
+    const normalized = toPurchaseItemShape(item);
+    const key = String(normalized.variantId || normalized.id || "");
+    if (!key) return;
+    const existingIndex = findIndexByKey(key);
 
-//     // Update inventory if approved
-//     if (status === 'approved') {
-//       for (const item of items) {
-//         let inventory = await Inventory.findOne({ productId: item.productId, userId });
-//         if (!inventory) {
-//           inventory = new Inventory({ productId: item.productId, userId, quantity: 0 });
-//         }
-//         inventory.quantity -= item.quantity;
-//         inventory.inventory_history.push({
-//           unitId: item.unit,
-//           quantity: inventory.quantity,
-//           notes: `Stock out from debit note ${debitNote.debitNoteId}`,
-//           type: 'stock_out',
-//           adjustment: -item.quantity,
-//           referenceId: debitNote._id,
-//           referenceType: 'debit_note',
-//           createdBy: userId
-//         });
-//         await inventory.save();
-//       }
-//     }
+    if (existingIndex === -1) {
+      finalItems.push(normalized);
+      return;
+    }
 
-//     res.status(201).json({
-//       message: 'Debit note created successfully',
-//       data: { debitNote }
-//     });
+    const current = finalItems[existingIndex];
+    finalItems[existingIndex] = {
+      ...current,
+      qty: Number(current.qty || 0) + Number(normalized.qty || 0),
+      discount: Number((Number(current.discount || 0) + Number(normalized.discount || 0)).toFixed(2)),
+      tax: Number((Number(current.tax || 0) + Number(normalized.tax || 0)).toFixed(2)),
+      amount: Number((Number(current.amount || 0) + Number(normalized.amount || 0)).toFixed(2)),
+    };
+  });
 
-//      if (billToUser?.email && process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-//       try {
-//         await sendMail({
-//           from: `"Your Company" <${process.env.SMTP_EMAIL}>`,
-//           to: billToUser.email,
-//           subject: "New Debit Note Created",
-//           html: `
-//             <h3>Hello ${billToUser.name},</h3>
-//             <p>A new debit note has been created for you.</p>
-//             <p><strong>Reference No:</strong> ${debitNote.referenceNo}</p>
-//             <p><strong>Total Amount:</strong> ${debitNote.totalAmount}</p>
-//             <p>Debit Note Date: ${new Date(debitNote.debitNoteDate).toLocaleDateString()}</p>
-//             <br>
-//             <p>Best Regards,<br>Your Company</p>
-//           `
-//         });
-//       } catch (emailErr) {
-//         console.error("Failed to send debit note email:", emailErr.message);
-//       }
-//     }
+  exchangeItems.forEach((item) => {
+    const key = String(item.variantId || item.productId || item.id || "");
+    const existingIndex = findIndexByKey(key);
+    if (existingIndex === -1) return;
 
-//   } catch (err) {
-//     console.error("ERROR Creating Debit Note:", err);
-//     res.status(500).json({ 
-//       message: 'Error creating debit note',
-//       error: err.message
-//     });
-//   }
-// };
+    const current = finalItems[existingIndex];
+    const currentQty = Number(current?.qty || 0);
+    const removeQty = Number(item.qty || 0);
+    const nextQty = currentQty - removeQty;
+
+    if (nextQty <= 0) {
+      finalItems.splice(existingIndex, 1);
+      return;
+    }
+
+    const ratio = currentQty > 0 ? nextQty / currentQty : 0;
+    finalItems[existingIndex] = {
+      ...current,
+      qty: nextQty,
+      discount: Number((Number(current.discount || 0) * ratio).toFixed(2)),
+      tax: Number((Number(current.tax || 0) * ratio).toFixed(2)),
+      amount: Number((Number(current.amount || 0) * ratio).toFixed(2)),
+    };
+  });
+
+  return finalItems.filter(Boolean);
+};
+
+const calculatePurchaseTotals = (items = []) => {
+  const totalDiscount = Number(items.reduce((sum, item) => sum + Number(item.discount || 0), 0).toFixed(2));
+  const totalTax = Number(items.reduce((sum, item) => sum + Number(item.tax || 0), 0).toFixed(2));
+  const totalAmount = Number(items.reduce((sum, item) => sum + Number(item.amount || 0), 0).toFixed(2));
+
+  return {
+    totalDiscount,
+    totalTax,
+    totalAmount,
+    finalAmount: totalAmount
+  };
+};
+
+const applyInventoryMovement = async ({
+  items = [],
+  userId,
+  referenceId,
+  referenceCode,
+  movementType,
+  notes
+}) => {
+  const direction = movementType === "stock_in" ? 1 : -1;
+
+  for (const item of items) {
+    const qty = Number(item.qty || 0);
+    if (!item.variantId || !qty || qty <= 0) continue;
+
+    const inventory = await Inventory.findOne({
+      variantId: item.variantId,
+      userId,
+      isDeleted: false,
+    });
+
+    const beforeQty = inventory?.quantity || 0;
+    const inventoryProductId = isValidObjectId(item.productId) ? item.productId : null;
+
+    if (!inventory && !isValidObjectId(inventoryProductId)) {
+      console.warn(`Inventory not found and productId missing for variant ${item.variantId}, skipping ${movementType}`);
+      continue;
+    }
+
+    await Inventory.findOneAndUpdate(
+      { variantId: item.variantId, userId, isDeleted: false },
+      {
+        $setOnInsert: {
+          productId: inventoryProductId,
+          variantId: item.variantId,
+          userId,
+          isDeleted: false
+        },
+        $inc: { quantity: direction * qty },
+        $push: {
+          inventory_history: {
+            unitId: item.unit,
+            quantity: beforeQty,
+            type: movementType,
+            adjustment: direction * qty,
+            referenceId,
+            referenceType: "debit_note",
+            notes: `${notes} ${referenceCode}`,
+            createdBy: userId,
+          },
+        },
+      },
+      { new: true, upsert: true }
+    );
+  }
+};
+
 
 const createDebitNote = async (req, res) => {
   try {
@@ -211,7 +248,8 @@ const createDebitNote = async (req, res) => {
       debitNoteDate,
       referenceNo,
       paymentMode,
-      items,
+      items = [],
+      replacementItems = [],
       notes,
       termsAndCondition,
       status = "draft",
@@ -249,28 +287,116 @@ const createDebitNote = async (req, res) => {
     /* ---------------------------------
       NORMALIZE ITEMS (MATCH PURCHASE)
     --------------------------------- */
-    const normalizedItems = items.map(item => {
-      const qty = Number(item.qty || 0);
+    const normalizeItems = (rawItems = []) =>
+      (Array.isArray(rawItems) ? rawItems : []).map(item => {
+        const qty = Number(item.qty || 0);
+        const rate = Number(item.rate || 0);
+        const amount = Number(item.amount || qty * rate);
+        const productId = item.productId || item.product_id || item.id || null;
+
+        return {
+          id: item.id,
+          productId,
+          name: item.name,
+          hsn_code: item.hsn_code || null,
+          variantId: item.variantId || null,
+          variantName: item.variantName || "",
+          variantDesignNo: item.variantDesignNo || "",
+          variantColor: item.variantColor || "",
+          variantSize: item.variantSize || "",
+          unit: item.unit || "",
+          qty,
+          rate,
+          amount
+        };
+      }).filter((item) => item.name && item.qty > 0);
+
+    const aggregateQtyByKey = (rawItems = []) => rawItems.reduce((map, item) => {
+      const key = String(item.variantId || item.id || "");
+      if (!key) return map;
+      map.set(key, (map.get(key) || 0) + Number(item.qty || 0));
+      return map;
+    }, new Map());
+
+    const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ""));
+
+    const toPurchaseItemShape = (item = {}) => {
+      const qty = Number(item.qty || item.quantity || 0);
       const rate = Number(item.rate || 0);
       const amount = Number(item.amount || qty * rate);
 
       return {
-        id: item.id, // product ID (string)
-        name: item.name,
-        hsn_code: item.hsn_code || null,
-
+        id: String(item.productId || item.product_id || item.id || ""),
+        name: item.name || "",
+        hsn_code: item.hsn_code || "",
         variantId: item.variantId || null,
         variantName: item.variantName || "",
         variantDesignNo: item.variantDesignNo || "",
         variantColor: item.variantColor || "",
         variantSize: item.variantSize || "",
-
         unit: item.unit || "",
         qty,
         rate,
+        discount: Number(item.discount || 0),
+        tax: Number(item.tax || 0),
+        tax_group_id: item.tax_group_id || null,
+        discount_type: item.discount_type || "Fixed",
+        discount_value: Number(item.discount_value || 0),
         amount
       };
-    });
+    };
+
+    const buildUpdatedPurchaseItems = (originalItems = [], returnedItems = [], exchangeItems = []) => {
+      const finalItems = (Array.isArray(originalItems) ? originalItems : []).map((item) => toPurchaseItemShape(item));
+      const indexByKey = new Map();
+
+      finalItems.forEach((item, index) => {
+        const key = String(item.variantId || item.id || "");
+        if (key) indexByKey.set(key, index);
+      });
+
+      returnedItems.forEach((item) => {
+        const key = String(item.variantId || item.productId || item.id || "");
+        if (!key || !indexByKey.has(key)) return;
+
+        const targetIndex = indexByKey.get(key);
+        const current = finalItems[targetIndex];
+        const currentQty = Number(current?.qty || 0);
+        const returnedQty = Number(item.qty || 0);
+        const nextQty = currentQty - returnedQty;
+
+        if (nextQty <= 0) {
+          finalItems[targetIndex] = null;
+          indexByKey.delete(key);
+          return;
+        }
+
+        const ratio = currentQty > 0 ? nextQty / currentQty : 0;
+        finalItems[targetIndex] = {
+          ...current,
+          qty: nextQty,
+          discount: Number((Number(current.discount || 0) * ratio).toFixed(2)),
+          tax: Number((Number(current.tax || 0) * ratio).toFixed(2)),
+          amount: Number((Number(current.amount || 0) * ratio).toFixed(2)),
+        };
+      });
+
+      exchangeItems.forEach((item) => {
+        const normalized = toPurchaseItemShape(item);
+        if (!normalized.name || normalized.qty <= 0) return;
+        finalItems.push(normalized);
+      });
+
+      return finalItems.filter(Boolean);
+    };
+
+    const normalizedItems = normalizeDebitNoteItems(items);
+    const normalizedReplacementItems = normalizeDebitNoteItems(replacementItems);
+    const effectiveStatus = normalizedReplacementItems.length > 0 ? "replaced" : "return";
+
+    if (normalizedItems.length === 0) {
+      return res.status(400).json({ message: "At least one return item is required" });
+    }
 
     /* ---------------------------------
       AMOUNT CALCULATIONS
@@ -279,9 +405,19 @@ const createDebitNote = async (req, res) => {
       (sum, item) => sum + item.amount,
       0
     );
+    const replacementAmount = normalizedReplacementItems.reduce(
+      (sum, item) => sum + item.amount,
+      0
+    );
+    const netAdjustment = Number((totalAmount - replacementAmount).toFixed(2));
+    const adjustmentType = netAdjustment > 0
+      ? "supplier_credit"
+      : netAdjustment < 0
+        ? "supplier_payable"
+        : "even_exchange";
 
-    const paid = Number(paidAmount || 0);
-    const balanceAmount = totalAmount - paid;
+    const paid = Math.max(Number(paidAmount || 0), 0);
+    const balanceAmount = Math.max(Number((Math.abs(netAdjustment) - paid).toFixed(2)), 0);
 
     /* ---------------------------------
       CREATE DEBIT NOTE
@@ -295,11 +431,15 @@ const createDebitNote = async (req, res) => {
 
       referenceNo: referenceNo || "",
       items: normalizedItems,
+      replacementItems: normalizedReplacementItems,
 
-      status,
+      status: effectiveStatus,
       paymentMode: paymentMode || null,
 
       totalAmount,
+      replacementAmount,
+      netAdjustment,
+      adjustmentType,
       finalAmount: totalAmount,
 
       paidAmount: paid,
@@ -318,53 +458,48 @@ const createDebitNote = async (req, res) => {
 
     await debitNote.save();
 
-    // Update purchase status to "return"
-    await Purchase.findByIdAndUpdate(purchaseId, { status: 'return' });
+    const purchaseUpdate = { status: effectiveStatus };
+
+    if (effectiveStatus === "replaced") {
+      const updatedPurchaseItems = buildUpdatedPurchaseItems(
+        purchase.items || [],
+        normalizedItems,
+        normalizedReplacementItems
+      );
+      const updatedTotals = calculatePurchaseTotals(updatedPurchaseItems);
+      const updatedPaidAmount = Number(purchase.paidAmount || 0);
+
+      purchaseUpdate.items = updatedPurchaseItems;
+      purchaseUpdate.totalDiscount = updatedTotals.totalDiscount;
+      purchaseUpdate.totalTax = updatedTotals.totalTax;
+      purchaseUpdate.totalAmount = updatedTotals.totalAmount;
+      purchaseUpdate.finalAmount = updatedTotals.finalAmount;
+      purchaseUpdate.balanceAmount = Math.max(Number((updatedTotals.totalAmount - updatedPaidAmount).toFixed(2)), 0);
+    }
+
+    await Purchase.findByIdAndUpdate(purchaseId, purchaseUpdate);
 
     /* ---------------------------------
       INVENTORY UPDATE (ONLY ON RETURN)
     --------------------------------- */
-    if (status === "return") {
-      for (const item of normalizedItems) {
-        if (!item.variantId || !item.qty || item.qty <= 0) continue;
+    if (["return", "replaced"].includes(effectiveStatus)) {
+      await applyInventoryMovement({
+        items: normalizedItems,
+        userId,
+        referenceId: debitNote._id,
+        referenceCode: debitNote.debitNoteId,
+        movementType: "stock_out",
+        notes: "Purchase return via Debit Note"
+      });
 
-        // 1️⃣ Find inventory FIRST
-        const inventory = await Inventory.findOne({
-          variantId: item.variantId,
-          userId,
-          isDeleted: false,
-        });
-
-        if (!inventory) {
-          console.warn(
-            `Inventory not found for variant ${item.variantId}, skipping`
-          );
-          continue;
-        }
-
-        const beforeQty = inventory.quantity || 0;
-
-        // 2️⃣ Decrease quantity + log history
-        await Inventory.findByIdAndUpdate(
-          inventory._id,
-          {
-            $inc: { quantity: -item.qty },
-            $push: {
-              inventory_history: {
-                unitId: item.unit,
-                quantity: beforeQty, // ✅ THIS FIXES "Before Adjustment"
-                type: "stock_out",
-                adjustment: -item.qty,
-                referenceId: debitNote._id,
-                referenceType: "purchase", //debit_note
-                notes: `Purchase return via Debit Note ${debitNote.debitNoteId}`,
-                createdBy: userId,
-              },
-            },
-          },
-          { new: true }
-        );
-      }
+      await applyInventoryMovement({
+        items: normalizedReplacementItems,
+        userId,
+        referenceId: debitNote._id,
+        referenceCode: debitNote.debitNoteId,
+        movementType: "stock_in",
+        notes: "Supplier exchange in via Debit Note"
+      });
     }
 
     /* ---------------------------------
@@ -389,7 +524,9 @@ const createDebitNote = async (req, res) => {
             <h3>Hello ${billToUser.firstName || billToUser.name},</h3>
             <p>A new debit note has been created.</p>
             <p><strong>Debit Note No:</strong> ${debitNote.debitNoteId}</p>
-            <p><strong>Total Amount:</strong> ${debitNote.totalAmount}</p>
+            <p><strong>Return Amount:</strong> ${debitNote.totalAmount}</p>
+            <p><strong>Replacement Amount:</strong> ${debitNote.replacementAmount}</p>
+            <p><strong>Net Adjustment:</strong> ${debitNote.netAdjustment}</p>
             <p><strong>Date:</strong> ${new Date(debitNote.debitNoteDate).toLocaleDateString()}</p>
             <br/>
             <p>Best Regards,<br/>Naresh Saree COllection</p>
@@ -466,10 +603,10 @@ const getAllDebitNotes = async (req, res) => {
         path: 'vendorId',
         select: 'firstName lastName email phone profileImage'
       })
-      .populate('purchaseId', 'purchaseId purchaseDate totalAmount')
+      .populate('purchaseId', 'purchaseId purchaseDate totalAmount supplier_bill_number')
       .populate('createdBy', 'firstName lastName profileImage')
       .populate('approvedBy', 'firstName lastName profileImage')
-      .sort({ debitNoteDate: -1 })
+      .sort({ createdAt: -1, debitNoteDate: -1 })
       .skip(skip)
       .limit(Number(limit));
 
@@ -514,6 +651,7 @@ const getAllDebitNotes = async (req, res) => {
       const purchase = note.purchaseId ? {
         id: note.purchaseId._id,
         purchaseId: note.purchaseId.purchaseId || null,
+        supplierBillNumber: note.purchaseId.supplier_bill_number || null,
         purchaseDate: formatDate(note.purchaseId.purchaseDate),
         totalAmount: note.purchaseId.totalAmount || 0
       } : null;
@@ -546,6 +684,9 @@ const getAllDebitNotes = async (req, res) => {
         debitNoteDate: formatDate(note.debitNoteDate),
         status: note.status,
         totalAmount: note.totalAmount,
+        replacementAmount: note.replacementAmount || 0,
+        netAdjustment: note.netAdjustment || 0,
+        adjustmentType: note.adjustmentType || 'even_exchange',
         paidAmount: note.paidAmount || 0,
         balanceAmount: note.balanceAmount || 0,
         paymentMode,
@@ -589,7 +730,7 @@ const getAllDebitNotes = async (req, res) => {
 const getDebitNoteById = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Validate debit note ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -600,9 +741,10 @@ const getDebitNoteById = async (req, res) => {
 
     const debitNote = await DebitNote.findOne({ _id: id, isDeleted: false })
       .populate('vendorId', 'firstName lastName email phone address')
-      .populate('purchaseId', 'purchaseId purchaseDate totalAmount')
+      .populate('purchaseId', 'purchaseId purchaseDate totalAmount supplier_bill_number')
       .populate('items.productId', 'name sku barcode')
-      .populate('items.tax_group_id', 'name rate')
+      .populate('billFrom', 'firstName lastName email')
+      .populate('billTo', 'firstName lastName email phone address')
       .populate('createdBy', 'firstName lastName')
       .populate('approvedBy', 'firstName lastName')
       .populate('bank', 'bankName accountNumber branch')
@@ -613,9 +755,9 @@ const getDebitNoteById = async (req, res) => {
       });
 
     if (!debitNote) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Debit note not found' 
+        message: 'Debit note not found'
       });
     }
 
@@ -641,6 +783,7 @@ const getDebitNoteById = async (req, res) => {
     const purchase = debitNote.purchaseId ? {
       id: debitNote.purchaseId._id,
       purchaseId: debitNote.purchaseId.purchaseId || null,
+      supplierBillNumber: debitNote.purchaseId.supplier_bill_number || null,
       purchaseDate: formatDate(debitNote.purchaseId.purchaseDate),
       totalAmount: debitNote.purchaseId.totalAmount || 0
     } : null;
@@ -661,6 +804,20 @@ const getDebitNoteById = async (req, res) => {
       status: debitNote.paymentMode.status
     } : null;
 
+    const billFrom = debitNote.billFrom ? {
+      id: debitNote.billFrom._id,
+      name: `${debitNote.billFrom.firstName || ''} ${debitNote.billFrom.lastName || ''}`.trim(),
+      email: debitNote.billFrom.email || null
+    } : null;
+
+    const billTo = debitNote.billTo ? {
+      id: debitNote.billTo._id,
+      name: `${debitNote.billTo.firstName || ''} ${debitNote.billTo.lastName || ''}`.trim(),
+      email: debitNote.billTo.email || null,
+      phone: debitNote.billTo.phone || null,
+      address: debitNote.billTo.address || null
+    } : null;
+
     // Created by
     const createdBy = debitNote.createdBy ? {
       id: debitNote.createdBy._id,
@@ -674,14 +831,24 @@ const getDebitNoteById = async (req, res) => {
     } : null;
 
     // Items
-    const items = debitNote.items.map(item => ({
+    const mapDebitNoteItems = (itemList = []) => itemList.map(item => ({
       product: item.productId ? {
         id: item.productId._id,
         name: item.productId.name || null,
         sku: item.productId.sku || null,
         barcode: item.productId.barcode || null
       } : null,
-      quantity: item.quantity || 0,
+      id: item.id || null,
+      name: item.name || null,
+      hsn_code: item.hsn_code || null,
+      variantId: item.variantId || null,
+      variantName: item.variantName || null,
+      variantDesignNo: item.variantDesignNo || null,
+      variantColor: item.variantColor || null,
+      variantSize: item.variantSize || null,
+      unit: item.unit || null,
+      quantity: item.quantity || item.qty || 0,
+      qty: item.qty || item.quantity || 0,
       rate: item.rate || 0,
       discount: item.discount || 0,
       discount_type: item.discount_type || 'Fixed',
@@ -690,11 +857,14 @@ const getDebitNoteById = async (req, res) => {
       amount: item.amount || 0,
       reason: item.reason || null,
       taxGroup: item.tax_group_id ? {
-        id: item.tax_group_id._id,
+        id: item.tax_group_id._id || item.tax_group_id,
         name: item.tax_group_id.name || null,
         rate: item.tax_group_id.rate || 0
       } : null
     }));
+
+    const items = mapDebitNoteItems(debitNote.items || []);
+    const replacementItems = mapDebitNoteItems(debitNote.replacementItems || []);
 
     // Final formatted response
     const formattedDebitNote = {
@@ -704,14 +874,21 @@ const getDebitNoteById = async (req, res) => {
       vendor,
       purchase,
       debitNoteDate: formatDate(debitNote.debitNoteDate),
+      debitNoteDateRaw: debitNote.debitNoteDate || null,
       dueDate: formatDate(debitNote.dueDate),
+      dueDateRaw: debitNote.dueDate || null,
       status: debitNote.status || null,
       taxableAmount: debitNote.taxableAmount || 0,
       totalDiscount: debitNote.totalDiscount || 0,
       totalTax: debitNote.totalTax || 0,
       totalAmount: debitNote.totalAmount || 0,
+      replacementAmount: debitNote.replacementAmount || 0,
+      netAdjustment: debitNote.netAdjustment || 0,
+      adjustmentType: debitNote.adjustmentType || 'even_exchange',
       paidAmount: debitNote.paidAmount || 0,
       balanceAmount: debitNote.balanceAmount || 0,
+      billFrom,
+      billTo,
       paymentMode,
       bank,
       notes: debitNote.notes || null,
@@ -722,6 +899,7 @@ const getDebitNoteById = async (req, res) => {
       signatureName: debitNote.signatureName || null,
       checkNumber: debitNote.checkNumber || null,
       items,
+      replacementItems,
       createdBy,
       approvedBy,
       createdAt: formatDate(debitNote.createdAt),
@@ -736,9 +914,218 @@ const getDebitNoteById = async (req, res) => {
 
   } catch (err) {
     console.error('Get debit note by ID error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error retrieving debit note',
+      error: err.message
+    });
+  }
+};
+
+const updateDebitNote = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const userId = req.user;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid debit note ID" });
+    }
+
+    const {
+      purchaseId,
+      debitNoteDate,
+      referenceNo,
+      paymentMode,
+      items = [],
+      replacementItems = [],
+      notes,
+      termsAndCondition,
+      billFrom,
+      billTo,
+      checkNumber,
+      bank,
+      paidAmount = 0
+    } = req.body;
+
+    const existingDebitNote = await DebitNote.findOne({ _id: id, isDeleted: false });
+    if (!existingDebitNote) {
+      return res.status(404).json({ success: false, message: "Debit note not found" });
+    }
+
+    const targetPurchaseId = purchaseId || String(existingDebitNote.purchaseId);
+    const targetPurchase = await Purchase.findById(targetPurchaseId);
+    if (!targetPurchase) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+
+    const vendor = await User.findById(targetPurchase.vendorId);
+    if (!vendor) {
+      return res.status(422).json({ success: false, message: "Invalid vendor ID from purchase" });
+    }
+
+    const billFromUser = await User.findById(billFrom);
+    const billToUser = await User.findById(billTo);
+    if (!billFromUser || !billToUser) {
+      return res.status(422).json({ success: false, message: "Invalid bill from or bill to user ID" });
+    }
+
+    const oldPurchase = await Purchase.findById(existingDebitNote.purchaseId);
+    if (!oldPurchase) {
+      return res.status(404).json({ success: false, message: "Original purchase not found" });
+    }
+
+    const oldReturnedItems = normalizeDebitNoteItems(existingDebitNote.items || []);
+    const oldReplacementItems = normalizeDebitNoteItems(existingDebitNote.replacementItems || []);
+    const normalizedItems = normalizeDebitNoteItems(items);
+    const normalizedReplacementItems = normalizeDebitNoteItems(replacementItems);
+    const effectiveStatus = normalizedReplacementItems.length > 0 ? "replaced" : "return";
+
+    if (normalizedItems.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one return item is required" });
+    }
+
+    const totalAmount = normalizedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const replacementAmount = normalizedReplacementItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const netAdjustment = Number((totalAmount - replacementAmount).toFixed(2));
+    const adjustmentType = netAdjustment > 0
+      ? "supplier_credit"
+      : netAdjustment < 0
+        ? "supplier_payable"
+        : "even_exchange";
+    const paid = Math.max(Number(paidAmount || 0), 0);
+    const balanceAmount = Math.max(Number((Math.abs(netAdjustment) - paid).toFixed(2)), 0);
+
+    if (String(oldPurchase._id) === String(targetPurchase._id)) {
+      if (existingDebitNote.status === "replaced") {
+        const revertedItems = revertUpdatedPurchaseItems(oldPurchase.items || [], oldReturnedItems, oldReplacementItems);
+        const revertedTotals = calculatePurchaseTotals(revertedItems);
+        oldPurchase.items = revertedItems;
+        oldPurchase.totalDiscount = revertedTotals.totalDiscount;
+        oldPurchase.totalTax = revertedTotals.totalTax;
+        oldPurchase.totalAmount = revertedTotals.totalAmount;
+        oldPurchase.finalAmount = revertedTotals.finalAmount;
+        oldPurchase.balanceAmount = Math.max(Number((revertedTotals.totalAmount - Number(oldPurchase.paidAmount || 0)).toFixed(2)), 0);
+      }
+    } else {
+      if (existingDebitNote.status === "replaced") {
+        const revertedItems = revertUpdatedPurchaseItems(oldPurchase.items || [], oldReturnedItems, oldReplacementItems);
+        const revertedTotals = calculatePurchaseTotals(revertedItems);
+        oldPurchase.items = revertedItems;
+        oldPurchase.totalDiscount = revertedTotals.totalDiscount;
+        oldPurchase.totalTax = revertedTotals.totalTax;
+        oldPurchase.totalAmount = revertedTotals.totalAmount;
+        oldPurchase.finalAmount = revertedTotals.finalAmount;
+        oldPurchase.balanceAmount = Math.max(Number((revertedTotals.totalAmount - Number(oldPurchase.paidAmount || 0)).toFixed(2)), 0);
+      }
+      oldPurchase.status = "paid";
+      await oldPurchase.save();
+    }
+
+    await applyInventoryMovement({
+      items: oldReturnedItems,
+      userId,
+      referenceId: existingDebitNote._id,
+      referenceCode: existingDebitNote.debitNoteId,
+      movementType: "stock_in",
+      notes: "Debit Note edit revert return"
+    });
+
+    await applyInventoryMovement({
+      items: oldReplacementItems,
+      userId,
+      referenceId: existingDebitNote._id,
+      referenceCode: existingDebitNote.debitNoteId,
+      movementType: "stock_out",
+      notes: "Debit Note edit revert replacement"
+    });
+
+    const basePurchaseItems = String(oldPurchase._id) === String(targetPurchase._id)
+      ? (oldPurchase.items || []).map((item) => toPurchaseItemShape(item))
+      : (targetPurchase.items || []).map((item) => toPurchaseItemShape(item));
+
+    if (String(oldPurchase._id) === String(targetPurchase._id) && existingDebitNote.status === "replaced") {
+      const baseTotals = calculatePurchaseTotals(basePurchaseItems);
+      targetPurchase.items = basePurchaseItems;
+      targetPurchase.totalDiscount = baseTotals.totalDiscount;
+      targetPurchase.totalTax = baseTotals.totalTax;
+      targetPurchase.totalAmount = baseTotals.totalAmount;
+      targetPurchase.finalAmount = baseTotals.finalAmount;
+      targetPurchase.balanceAmount = Math.max(Number((baseTotals.totalAmount - Number(targetPurchase.paidAmount || 0)).toFixed(2)), 0);
+    }
+
+    let updatedPurchaseItems = basePurchaseItems;
+    if (effectiveStatus === "replaced") {
+      updatedPurchaseItems = buildUpdatedPurchaseItems(basePurchaseItems, normalizedItems, normalizedReplacementItems);
+      const updatedTotals = calculatePurchaseTotals(updatedPurchaseItems);
+      targetPurchase.items = updatedPurchaseItems;
+      targetPurchase.totalDiscount = updatedTotals.totalDiscount;
+      targetPurchase.totalTax = updatedTotals.totalTax;
+      targetPurchase.totalAmount = updatedTotals.totalAmount;
+      targetPurchase.finalAmount = updatedTotals.finalAmount;
+      targetPurchase.balanceAmount = Math.max(Number((updatedTotals.totalAmount - Number(targetPurchase.paidAmount || 0)).toFixed(2)), 0);
+    }
+
+    targetPurchase.status = effectiveStatus;
+    await targetPurchase.save();
+
+    await applyInventoryMovement({
+      items: normalizedItems,
+      userId,
+      referenceId: existingDebitNote._id,
+      referenceCode: existingDebitNote.debitNoteId,
+      movementType: "stock_out",
+      notes: "Purchase return via Debit Note"
+    });
+
+    await applyInventoryMovement({
+      items: normalizedReplacementItems,
+      userId,
+      referenceId: existingDebitNote._id,
+      referenceCode: existingDebitNote.debitNoteId,
+      movementType: "stock_in",
+      notes: "Supplier exchange in via Debit Note"
+    });
+
+    existingDebitNote.purchaseId = targetPurchase._id;
+    existingDebitNote.vendorId = targetPurchase.vendorId;
+    existingDebitNote.debitNoteDate = debitNoteDate ? new Date(debitNoteDate) : existingDebitNote.debitNoteDate;
+    existingDebitNote.dueDate = debitNoteDate ? new Date(debitNoteDate) : existingDebitNote.dueDate;
+    existingDebitNote.referenceNo = referenceNo || "";
+    existingDebitNote.items = normalizedItems;
+    existingDebitNote.replacementItems = normalizedReplacementItems;
+    existingDebitNote.status = effectiveStatus;
+    existingDebitNote.paymentMode = paymentMode || null;
+    existingDebitNote.totalAmount = totalAmount;
+    existingDebitNote.replacementAmount = replacementAmount;
+    existingDebitNote.netAdjustment = netAdjustment;
+    existingDebitNote.adjustmentType = adjustmentType;
+    existingDebitNote.finalAmount = totalAmount;
+    existingDebitNote.paidAmount = paid;
+    existingDebitNote.balanceAmount = balanceAmount;
+    existingDebitNote.bank = bank || null;
+    existingDebitNote.notes = notes || "";
+    existingDebitNote.termsAndCondition = termsAndCondition || "";
+    existingDebitNote.checkNumber = checkNumber || null;
+    existingDebitNote.billFrom = billFrom;
+    existingDebitNote.billTo = billTo;
+
+    await existingDebitNote.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Debit note updated successfully",
+      data: existingDebitNote
+    });
+  } catch (err) {
+    console.error("Update debit note error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error updating debit note",
       error: err.message
     });
   }
@@ -936,6 +1323,7 @@ const deleteDebitNote = async (req, res) => {
 
     // Revert purchase status to "paid"
     await Purchase.findByIdAndUpdate(debitNote.purchaseId, { status: 'paid' });
+  await syncPurchaseNotificationForPurchase(debitNote.purchaseId);
 
     res.status(200).json({
       message: 'Debit note deleted successfully',
@@ -943,7 +1331,7 @@ const deleteDebitNote = async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Error deleting debit note',
       error: err.message
     });
@@ -1001,6 +1389,7 @@ module.exports = {
   createDebitNote,
   getAllDebitNotes,
   getDebitNoteById,
+  updateDebitNote,
   updateDebitNoteStatus,
   deleteDebitNote,
   bulkDeleteDebitNotes

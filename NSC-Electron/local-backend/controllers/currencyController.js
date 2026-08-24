@@ -4,23 +4,23 @@ const mongoose = require('mongoose');
 
 const createCurrency = async (req, res) => {
     try {
-       
+
         const { name, code, symbol, status = true, isDefault = false } = req.body;
         const createdBy = req.user;
-        
+
         const existingCode = await Currency.findOne({ code, isDeleted: false });
         if (existingCode) {
-            return res.status(409).json({ 
+            return res.status(409).json({
                 success: false,
-                message: 'Currency code already exists' 
+                message: 'Currency code already exists'
             });
         }
 
         const existingName = await Currency.findOne({ name, isDeleted: false });
         if (existingName) {
-            return res.status(409).json({ 
+            return res.status(409).json({
                 success: false,
-                message: 'Currency name already exists' 
+                message: 'Currency name already exists'
             });
         }
 
@@ -42,9 +42,9 @@ const createCurrency = async (req, res) => {
             );
         }
 
-        res.status(201).json({ 
+        res.status(201).json({
             success: true,
-            message: 'Currency created successfully', 
+            message: 'Currency created successfully',
             data: {
                 id: currency._id,
                 name: currency.name,
@@ -57,10 +57,10 @@ const createCurrency = async (req, res) => {
         });
     } catch (err) {
         console.error('Currency creation error:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Error creating currency',
-            error: err.message 
+            error: err.message
         });
     }
 };
@@ -69,27 +69,27 @@ const getAllCurrencies = async (req, res) => {
     try {
         const { page = 1, limit = 10, search = '', status } = req.query;
         const skip = (page - 1) * limit;
-        
+
         const query = { isDeleted: false };
-        
+
         if (status !== undefined) {
             query.status = status === 'true';
         }
-        
+
         if (search) {
             query.$or = [
                 { name: { $regex: search, $options: 'i' } },
                 { code: { $regex: search, $options: 'i' } }
             ];
         }
-        
+
         const total = await Currency.countDocuments(query);
         const currencies = await Currency.find(query)
             .sort({ createdAt: -1, name: 1 })
             .skip(skip)
             .limit(Number(limit))
             .populate('createdBy', 'firstName lastName');
-            
+
         const formattedCurrencies = currencies.map(currency => ({
             id: currency._id,
             name: currency.name,
@@ -103,7 +103,7 @@ const getAllCurrencies = async (req, res) => {
             } : null,
             createdAt: currency.createdAt
         }));
-        
+
         res.status(200).json({
             success: true,
             message: 'Currencies retrieved successfully',
@@ -119,10 +119,10 @@ const getAllCurrencies = async (req, res) => {
         });
     } catch (err) {
         console.error('Error fetching currencies:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Error fetching currencies',
-            error: err.message 
+            error: err.message
         });
     }
 };
@@ -131,9 +131,9 @@ const updateCurrency = async (req, res) => {
     try {
         const { id } = req.params;
         const { name, code, symbol, status, isDefault } = req.body;
-        
+
         const errors = {};
-        
+
         // Validate required fields if they're being updated
         if (name !== undefined && !name) {
             errors.name = 'Currency name is required';
@@ -141,10 +141,10 @@ const updateCurrency = async (req, res) => {
         if (code !== undefined && !code) {
             errors.code = 'Currency code is required';
         }
-        
+
         // If there are validation errors, return them
         if (Object.keys(errors).length > 0) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors
@@ -153,7 +153,7 @@ const updateCurrency = async (req, res) => {
 
         const currency = await Currency.findOne({ _id: id, isDeleted: false });
         if (!currency) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
                 message: 'Currency not found',
                 errors: {
@@ -164,8 +164,8 @@ const updateCurrency = async (req, res) => {
 
         // Check if currency code already exists (excluding current currency)
         if (code && code !== currency.code) {
-            const existingCode = await Currency.findOne({ 
-                code, 
+            const existingCode = await Currency.findOne({
+                code,
                 isDeleted: false,
                 _id: { $ne: id }
             });
@@ -176,8 +176,8 @@ const updateCurrency = async (req, res) => {
 
         // Check if currency name already exists (excluding current currency)
         if (name && name !== currency.name) {
-            const existingName = await Currency.findOne({ 
-                name, 
+            const existingName = await Currency.findOne({
+                name,
                 isDeleted: false,
                 _id: { $ne: id }
             });
@@ -188,7 +188,7 @@ const updateCurrency = async (req, res) => {
 
         // If there are duplicate errors, return them
         if (Object.keys(errors).length > 0) {
-            return res.status(409).json({ 
+            return res.status(409).json({
                 success: false,
                 message: 'Validation failed',
                 errors
@@ -201,12 +201,12 @@ const updateCurrency = async (req, res) => {
         if (symbol) currency.symbol = symbol;
         if (status !== undefined) currency.status = status;
         if (isDefault !== undefined) currency.isDefault = isDefault;
-        
+
         await currency.save();
 
-        res.status(200).json({ 
+        res.status(200).json({
             success: true,
-            message: 'Currency updated successfully', 
+            message: 'Currency updated successfully',
             data: {
                 id: currency._id,
                 name: currency.name,
@@ -218,24 +218,24 @@ const updateCurrency = async (req, res) => {
         });
     } catch (err) {
         console.error('Currency update error:', err);
-        
+
         // Handle Mongoose validation errors
         if (err.name === 'ValidationError') {
             const validationErrors = {};
             for (const field in err.errors) {
                 validationErrors[field] = err.errors[field].message;
             }
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
                 errors: validationErrors
             });
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             success: false,
             message: 'Error updating currency',
-            error: err.message 
+            error: err.message
         });
     }
 };
@@ -243,12 +243,12 @@ const updateCurrency = async (req, res) => {
 const deleteCurrency = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         const currency = await Currency.findOne({ _id: id, isDeleted: false });
         if (!currency) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: 'Currency not found' 
+                message: 'Currency not found'
             });
         }
 
@@ -258,15 +258,15 @@ const deleteCurrency = async (req, res) => {
 
         // If this was the default currency, set another one as default
         if (currency.isDefault) {
-            const newDefault = await Currency.findOne({ 
+            const newDefault = await Currency.findOne({
                 isDeleted: false,
                 _id: { $ne: id }
             }).sort({ createdAt: 1 });
-            
+
             if (newDefault) {
                 newDefault.isDefault = true;
                 await newDefault.save();
-                
+
                 // Update user's default currency reference
                 await User.updateMany(
                     {},
@@ -275,16 +275,16 @@ const deleteCurrency = async (req, res) => {
             }
         }
 
-        res.status(200).json({ 
+        res.status(200).json({
             success: true,
             message: 'Currency deleted successfully'
         });
     } catch (err) {
         console.error('Currency deletion error:', err);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             message: 'Error deleting currency',
-            error: err.message 
+            error: err.message
         });
     }
 };
@@ -360,7 +360,7 @@ const updateCurrencyStatus = async (req, res) => {
             error: err.message
         });
     }
-};       
+};
 
 module.exports = {
     createCurrency,

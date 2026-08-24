@@ -8,16 +8,246 @@ const SupplierPayment = require('@models/SupplierPayment');
 const DebitNote = require('@models/DebitNote');
 const Quotation = require('@models/Quotation');
 const Supplier = require('@models/Supplier');
+const CompanySettings = require('@models/CompanySettings');
+const State = require('@models/State');
 const ExcelJS = require('exceljs');
+
+const roundMoney = (value) => Number((Number(value) || 0).toFixed(2));
+
+const buildReportDateFilter = (dateField, startDate, endDate) => {
+  if (!startDate && !endDate) return {};
+  const dateFilter = {};
+  if (startDate) dateFilter.$gte = new Date(startDate);
+  if (endDate) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    dateFilter.$lte = end;
+  }
+  return { [dateField]: dateFilter };
+};
+
+const getItemTaxableValue = (item = {}, invoice = {}) => {
+  const itemAmount = Number(item.amount ?? (Number(item.qty || 0) * Number(item.rate || 0)));
+  const taxAmount = Number(item.tax || 0);
+
+  // The frontend stores the final amount (inclusive of tax) in `item.amount`.
+  // Therefore, for both Inclusive and Exclusive GST invoices, the pre-tax base is `Amount - Tax`.
+  return roundMoney(Math.max(itemAmount - taxAmount, 0));
+};
+
+const getItemTaxRate = (item = {}, invoice = {}) => {
+  const taxableValue = getItemTaxableValue(item, invoice);
+  const taxAmount = roundMoney(item.tax || 0);
+  if (!taxableValue || !taxAmount) return 0;
+  
+  const derivedRate1 = (taxAmount / taxableValue) * 100;
+  
+  const itemAmount = Number(item.amount ?? (Number(item.qty || 0) * Number(item.rate || 0)));
+  const derivedRate2 = itemAmount ? (taxAmount / itemAmount) * 100 : 0;
+  
+  const standardSlabs = [0, 0.1, 0.25, 1.5, 3, 5, 12, 18, 28];
+  let minDiff = Infinity;
+  let closestSlab = 0;
+  
+  for (const slab of standardSlabs) {
+     const diff1 = Math.abs(derivedRate1 - slab);
+     const diff2 = Math.abs(derivedRate2 - slab);
+     const bestDiff = Math.min(diff1, diff2);
+     if (bestDiff < minDiff) {
+        minDiff = bestDiff;
+        closestSlab = slab;
+     }
+  }
+  
+  return closestSlab;
+};
+
+const addHsnSummarySheet = (workbook, sheetName, records) => {
+  const worksheet = workbook.addWorksheet(sheetName);
+  const columns = [
+    { key: 'hsn', width: 18 },
+    { key: 'description', width: 32 },
+    { key: 'uqc', width: 14 },
+    { key: 'totalQuantity', width: 16 },
+    { key: 'totalValue', width: 16 },
+    { key: 'rate', width: 12 },
+    { key: 'taxableValue', width: 18 },
+    { key: 'integratedTaxAmount', width: 22 },
+    { key: 'centralTaxAmount', width: 20 },
+    { key: 'stateTaxAmount', width: 22 },
+    { key: 'cessAmount', width: 16 },
+  ];
+  worksheet.columns = columns;
+
+  const totals = records.reduce(
+    (acc, row) => ({
+      totalValue: roundMoney(acc.totalValue + row.totalValue),
+      taxableValue: roundMoney(acc.taxableValue + row.taxableValue),
+      integratedTaxAmount: roundMoney(acc.integratedTaxAmount + row.integratedTaxAmount),
+      centralTaxAmount: roundMoney(acc.centralTaxAmount + row.centralTaxAmount),
+      stateTaxAmount: roundMoney(acc.stateTaxAmount + row.stateTaxAmount),
+      cessAmount: roundMoney(acc.cessAmount + row.cessAmount),
+    }),
+    {
+      totalValue: 0,
+      taxableValue: 0,
+      integratedTaxAmount: 0,
+      centralTaxAmount: 0,
+      stateTaxAmount: 0,
+      cessAmount: 0,
+    }
+  );
+
+  worksheet.addRow([
+    'No. of HSN',
+    '',
+    '',
+    '',
+    'Total Value',
+    '',
+    'Total Taxable Value',
+    'Total Integrated Tax',
+    'Total Central Tax',
+    'Total State/UT Tax',
+    'Total Cess',
+  ]);
+  worksheet.addRow([
+    records.length,
+    '',
+    '',
+    '',
+    totals.totalValue,
+    '',
+    totals.taxableValue,
+    totals.integratedTaxAmount,
+    totals.centralTaxAmount,
+    totals.stateTaxAmount,
+    totals.cessAmount,
+  ]);
+  worksheet.addRow([
+    'HSN',
+    'Description',
+    'UQC',
+    'Total Quantity',
+    'Total Value',
+    'Rate',
+    'Taxable Value',
+    'Integrated Tax Amount',
+    'Central Tax Amount',
+    'State/UT Tax Amount',
+    'Cess Amount',
+  ]);
+
+  records.forEach((row) => worksheet.addRow(row));
+
+  worksheet.getRow(1).eachCell((cell) => {
+    cell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0070C0' } };
+    cell.alignment = { horizontal: 'center' };
+  });
+  worksheet.getRow(2).alignment = { horizontal: 'right' };
+  worksheet.getRow(3).eachCell((cell) => {
+    cell.font = { bold: true };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+    cell.alignment = { horizontal: 'center' };
+  });
+};
+
+const buildHsnGstSummaryRecords = (invoices, isB2B) => {
+  const grouped = new Map();
+
+  invoices.forEach((invoice) => {
+    const hasCustomerGstin = Boolean(String(invoice.customerGstin || '').trim());
+    if (hasCustomerGstin !== isB2B) return;
+
+    (invoice.items || []).forEach((item) => {
+      const hsn = String(item.hsn_code || '').trim();
+      if (!hsn) return;
+
+      const taxableValue = getItemTaxableValue(item, invoice);
+      const taxAmount = roundMoney(item.tax || 0);
+      const rate = getItemTaxRate(item, invoice);
+      const totalQuantity = Number(item.qty || 0);
+      const uqc = String(item.unit || 'PCS').trim() || 'PCS';
+      const description = String(item.name || '').trim() || 'N/A';
+      const key = `${hsn}|${description}|${uqc}|${rate}`;
+      const current = grouped.get(key) || {
+        hsn,
+        description,
+        uqc,
+        totalQuantity: 0,
+        totalValue: 0,
+        rate,
+        taxableValue: 0,
+        integratedTaxAmount: 0,
+        centralTaxAmount: 0,
+        stateTaxAmount: 0,
+        cessAmount: 0,
+      };
+
+      current.totalQuantity = roundMoney(current.totalQuantity + totalQuantity);
+      current.taxableValue = roundMoney(current.taxableValue + taxableValue);
+      current.totalValue = roundMoney(current.totalValue + taxableValue + taxAmount);
+      current.centralTaxAmount = roundMoney(current.centralTaxAmount + taxAmount / 2);
+      current.stateTaxAmount = roundMoney(current.stateTaxAmount + taxAmount / 2);
+      grouped.set(key, current);
+    });
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => String(a.hsn).localeCompare(String(b.hsn)));
+};
+
+const buildHsnGstSummaryTotals = (records) =>
+  records.reduce(
+    (acc, row) => ({
+      noOfHsn: records.length,
+      totalValue: roundMoney(acc.totalValue + row.totalValue),
+      taxableValue: roundMoney(acc.taxableValue + row.taxableValue),
+      integratedTaxAmount: roundMoney(acc.integratedTaxAmount + row.integratedTaxAmount),
+      centralTaxAmount: roundMoney(acc.centralTaxAmount + row.centralTaxAmount),
+      stateTaxAmount: roundMoney(acc.stateTaxAmount + row.stateTaxAmount),
+      cessAmount: roundMoney(acc.cessAmount + row.cessAmount),
+    }),
+    {
+      noOfHsn: records.length,
+      totalValue: 0,
+      taxableValue: 0,
+      integratedTaxAmount: 0,
+      centralTaxAmount: 0,
+      stateTaxAmount: 0,
+      cessAmount: 0,
+    }
+  );
+
+const buildHsnGstReportPayload = (invoices) => {
+  const b2bRecords = buildHsnGstSummaryRecords(invoices, true);
+  const b2cRecords = buildHsnGstSummaryRecords(invoices, false);
+
+  return {
+    b2b: {
+      summary: buildHsnGstSummaryTotals(b2bRecords),
+      records: b2bRecords,
+    },
+    b2c: {
+      summary: buildHsnGstSummaryTotals(b2cRecords),
+      records: b2cRecords,
+    },
+  };
+};
 
 const getInvoiceSalesReport = async (req, res) => {
   try {
-    const { page = 1, limit = 10, startDate, endDate, search } = req.query;
+    const { page = 1, limit = 10, startDate, endDate, search, fetchAll, status } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
     const now = new Date();
+    const shouldFetchAll = fetchAll === 'true';
 
     // --- Build filters dynamically ---
     const filters = { isDeleted: false, status: { $ne: 'CANCELLED' } };
+
+    if (status && String(status).toUpperCase() !== 'ALL') {
+      filters.status = String(status).toUpperCase();
+    }
 
     // Date filter
     if (startDate || endDate) {
@@ -45,13 +275,21 @@ const getInvoiceSalesReport = async (req, res) => {
     const totalInvoices = await Invoice.countDocuments(filters);
 
     // Fetch invoices (exclude CANCELLED)
+    const allInvoicesQuery = Invoice.find(filters)
+      .populate('items.product_id', 'name code selling_price category product_image')
+      .populate('billTo', 'name email phone image')
+      .sort({ createdAt: -1 });
+
+    if (!shouldFetchAll) {
+      allInvoicesQuery.skip(skip).limit(Number(limit));
+    }
+
     const [currentInvoices, previousInvoices, allInvoices] = await Promise.all([
       Invoice.find({
         invoiceDate: { $gte: startOfCurrentMonth, $lte: endOfCurrentMonth },
         isDeleted: false,
         status: { $ne: 'CANCELLED' },
       })
-        // .populate('items.id', 'name code selling_price category product_image')
         .populate('items.product_id', 'name code selling_price category product_image')
         .populate('billTo', 'name email phone image'),
 
@@ -60,25 +298,12 @@ const getInvoiceSalesReport = async (req, res) => {
         isDeleted: false,
         status: { $ne: 'CANCELLED' },
       })
-        // .populate('items.id', 'name code selling_price category product_image')
         .populate('items.product_id', 'name code selling_price category product_image')
         .populate('billTo', 'name email phone image'),
 
-      Invoice.find(filters)
-        // .populate('items.id', 'name code selling_price category product_image')
-        .populate('items.product_id', 'name code selling_price category product_image')
-        .populate('billTo', 'name email phone image')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(Number(limit)),
+      allInvoicesQuery,
     ]);
 
-    // console.log("=== DEBUG: RAW INVOICE SAMPLE ===");
-    // console.log({
-    //   invoiceId: allInvoices?.[0]?._id,
-    //   billTo: allInvoices?.[0]?.billTo,
-    //   customerId: allInvoices?.[0]?.customerId,
-    // });
 
     // Process invoices helper
     const processInvoices = async (invoices) => {
@@ -90,7 +315,6 @@ const getInvoiceSalesReport = async (req, res) => {
         let invoiceRevenue = 0;
 
         invoice.items.forEach(item => {
-          // const product = item.id;
           const product = item.product_id;
           const qty = item.qty || 0;
           const revenue = item.amount || (qty * (item.rate || 0));
@@ -119,7 +343,12 @@ const getInvoiceSalesReport = async (req, res) => {
 
         // Payments
         const payments = await InvoicePayment.find({ invoiceId: invoice._id });
-        const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+        const rawPaidAmount = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const invoiceTotalAmount = Number(invoice.TotalAmount || 0);
+        const paidAmount =
+          invoice.status === 'EXCHANGE'
+            ? Math.min(rawPaidAmount, invoiceTotalAmount)
+            : rawPaidAmount;
         const paymentModes = [...new Set(payments.map(p => p.payment_method))];
 
         // Use actual invoice status instead of calculating
@@ -138,24 +367,16 @@ const getInvoiceSalesReport = async (req, res) => {
           },
           amount: invoice.TotalAmount || 0,
           paidAmount,
-          remainingBalance: (invoice.TotalAmount || 0) - paidAmount,
+          remainingBalance: Math.max(invoiceTotalAmount - paidAmount, 0),
           paymentModes,
+          paymentMethod: invoice.payment_method || "N/A",
+          cashAmount: Number(invoice.cashAmount || 0),
+          cardAmount: Number(invoice.cardAmount || 0),
+          upiAmount: Number(invoice.upiAmount || 0),
           createdAt: invoice.createdAt,
           status,
           invoiceDate: invoice.invoiceDate,
           revenue: invoiceRevenue,
-          // products: invoice.items.map(item => ({
-          //   _id: item.id?._id || null,
-          //   name: item.id?.name || '-',
-          //   sku: item.id?.code || '-',
-          //   sellingPrice: item.id?.selling_price || 0,
-          //   categoryName: item.id?.category?.name || '-',
-          //   soldQuantity: item.qty || 0,
-          //   revenue: item.amount || (item.qty * (item.rate || 0)) || 0,
-          //   image: item.id?.product_image
-          //     ? `${process.env.BASE_URL}${item.id.product_image}`
-          //     : '',
-          // }))
 
           products: invoice.items.map(item => ({
             _id: item.product_id?._id || null,
@@ -326,7 +547,7 @@ const getCreditNoteSalesReport = async (req, res) => {
         // For exchanges, returned_amount is the refund (downgrade) and profit_amount is additional payment (upgrade)
         const returnedAmount = invoice.returned_amount || 0;
         const profitAmount = invoice.profit_amount || 0;
-        
+
         totalReturnedAmount += returnedAmount;
         totalProfitAmount += profitAmount;
 
@@ -361,7 +582,7 @@ const getCreditNoteSalesReport = async (req, res) => {
         });
 
         const customer = invoice.billTo || invoice.customerId || null;
-        
+
         report.push({
           creditNoteId: invoice._id, // Keep same field name for frontend compatibility
           creditNoteNumber: invoice.invoiceNumber, // Use invoice number
@@ -372,6 +593,10 @@ const getCreditNoteSalesReport = async (req, res) => {
             image: customer?.image ? `${process.env.BASE_URL}/${customer.image}` : ''
           },
           refundAmount: invoice.TotalAmount || 0, // Show total invoice amount
+          paymentMethod: invoice.payment_method || "N/A",
+          cashAmount: Number(invoice.cashAmount || 0),
+          cardAmount: Number(invoice.cardAmount || 0),
+          upiAmount: Number(invoice.upiAmount || 0),
           returned_amount: returnedAmount, // Downgrade refund
           profit_amount: profitAmount, // Upgrade profit
           reason: returnedAmount > 0 ? 'Exchange - Downgrade' : 'Exchange - Upgrade',
@@ -411,9 +636,9 @@ const getCreditNoteSalesReport = async (req, res) => {
       if (previous === 0 && current === 0) return { change: '0%', trend: 'equal' };
       if (previous === 0) return { change: '100%', trend: 'up' };
       const change = (((current - previous) / previous) * 100).toFixed(0);
-      return { 
-        change: Number(change), 
-        trend: current > previous ? 'up' : current < previous ? 'down' : 'equal' 
+      return {
+        change: Number(change),
+        trend: current > previous ? 'up' : current < previous ? 'down' : 'equal'
       };
     };
 
@@ -462,10 +687,11 @@ const getCreditNoteSalesReport = async (req, res) => {
 
 const getPurchaseReport = async (req, res) => {
   try {
-    const { page = 1, limit = 10, startDate, endDate, search } = req.query;
+    const { page = 1, limit = 10, startDate, endDate, search, fetchAll } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
     const now = new Date();
+    const shouldFetchAll = fetchAll === 'true';
 
     // Build filters dynamically
     const filters = { isDeleted: false };
@@ -517,6 +743,15 @@ const getPurchaseReport = async (req, res) => {
     );
 
     // Fetch data in parallel
+    const allPurchasesQuery = Purchase.find(filters)
+      .populate('vendorId', 'firstName lastName email phone profileImage address postalCode city')
+      .populate('paymentMode', 'name')
+      .sort({ createdAt: -1 });
+
+    if (!shouldFetchAll) {
+      allPurchasesQuery.skip(skip).limit(Number(limit));
+    }
+
     const [currentPurchases, previousPurchases, allPurchases] =
       await Promise.all([
         Purchase.find({
@@ -524,7 +759,7 @@ const getPurchaseReport = async (req, res) => {
           isDeleted: false,
         })
           .populate('vendorId', 'firstName lastName email phone profileImage')
-          // .populate('items.id', 'name code category product_image')
+          .populate('paymentMode', 'name')
           .sort({ createdAt: -1 }),
 
         Purchase.find({
@@ -532,14 +767,8 @@ const getPurchaseReport = async (req, res) => {
           isDeleted: false,
         })
           .populate('vendorId', 'firstName lastName email phone profileImage'),
-          // .populate('items.id', 'name code category product_image'),
 
-        Purchase.find(filters)
-          .populate('vendorId', 'firstName lastName email phone profileImage')
-          // .populate('items.id', 'name code category product_image')
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(Number(limit)),
+        allPurchasesQuery,
       ]);
 
     // Helper to process purchases
@@ -551,8 +780,8 @@ const getPurchaseReport = async (req, res) => {
 
       // efficiently fetch all debit notes for these purchases
       const purchaseIds = purchases.map(p => p._id);
-      const debitNotes = await DebitNote.find({ 
-          purchaseId: { $in: purchaseIds }, 
+      const debitNotes = await DebitNote.find({
+          purchaseId: { $in: purchaseIds },
           isDeleted: false,
           status: { $ne: 'cancelled' }
       });
@@ -609,15 +838,20 @@ const getPurchaseReport = async (req, res) => {
         const balance = purchase.balanceAmount !== undefined ? purchase.balanceAmount : (purchase.totalAmount - paidAmount);
 
         let status = purchase.status ? purchase.status.toUpperCase() : 'UNPAID';
-        
+
         // Check for Debit Notes (Returns)
         const relatedDebitNotes = debitNoteMap[purchase._id.toString()] || [];
         const returnedAmount = relatedDebitNotes.reduce((sum, dn) => sum + dn.finalAmount, 0); // using finalAmount as it's the value of the note
+        const hasReplacementDebitNote = relatedDebitNotes.some(
+          (dn) => String(dn.status || '').toLowerCase() === 'replaced'
+        );
 
-        // Logic to normalize status for display in table
-        // Priority: Cancelled > Returned > Paid > Partially Paid > Unpaid
         if (status === 'CANCELLED') {
             // keep as cancelled
+        } else if (status === 'REPLACED' || hasReplacementDebitNote) {
+            status = 'REPLACED';
+        } else if (status === 'RETURN') {
+            status = 'RETURN';
         } else if (returnedAmount >= purchase.totalAmount && purchase.totalAmount > 0) {
             status = 'RETURN';
         } else if (returnedAmount > 0) {
@@ -683,20 +917,20 @@ const getPurchaseReport = async (req, res) => {
       {
         $addFields: {
            // Sum of all debit notes for this purchase (active ones)
-           debitNoteTotal: { 
+           debitNoteTotal: {
              $sum: {
                $map: {
-                 input: { 
-                   $filter: { 
-                     input: "$debitNotes", 
-                     as: "dn", 
-                     cond: { 
+                 input: {
+                   $filter: {
+                     input: "$debitNotes",
+                     as: "dn",
+                     cond: {
                         $and: [
                           { $ne: ["$$dn.status", "cancelled"] },
                           { $eq: ["$$dn.isDeleted", false] }
                         ]
-                     } 
-                   } 
+                     }
+                   }
                  },
                  as: "activeDn",
                  in: "$$activeDn.finalAmount"
@@ -708,17 +942,36 @@ const getPurchaseReport = async (req, res) => {
       {
         $addFields: {
            isReturned: { $gte: ["$debitNoteTotal", "$totalAmount"] }, // Fully returned
-           effectiveStatus: {
-             $cond: {
-               if: { $eq: [{ $toLower: "$status" }, "cancelled"] },
-               then: "cancelled",
-               else: {
-                 $cond: {
-                   if: { $gte: ["$debitNoteTotal", "$totalAmount"] },
-                   then: "return",
-                   else: { $toLower: "$status" }
+           hasReplacementDebitNote: {
+             $gt: [
+               {
+                 $size: {
+                   $filter: {
+                     input: "$debitNotes",
+                     as: "dn",
+                     cond: {
+                       $and: [
+                         { $eq: ["$$dn.isDeleted", false] },
+                         { $eq: [{ $toLower: "$$dn.status" }, "replaced"] }
+                       ]
+                     }
+                   }
                  }
-               }
+               },
+               0
+             ]
+           },
+           effectiveStatus: {
+             $switch: {
+               branches: [
+                 { case: { $eq: [{ $toLower: "$status" }, "cancelled"] }, then: "cancelled" },
+                 { case: { $or: [{ $eq: [{ $toLower: "$status" }, "replaced"] }, "$hasReplacementDebitNote"] }, then: "replaced" },
+                 { case: { $eq: [{ $toLower: "$status" }, "return"] }, then: "return" },
+                 { case: { $gte: ["$debitNoteTotal", "$totalAmount"] }, then: "return" },
+                 { case: { $gt: ["$debitNoteTotal", 0] }, then: "partially_return" },
+                 { case: { $eq: [{ $toLower: "$status" }, "completed"] }, then: "paid" }
+               ],
+               default: { $toLower: "$status" }
              }
            }
         }
@@ -728,31 +981,29 @@ const getPurchaseReport = async (req, res) => {
           _id: null,
           // Total Count includes everything
           totalCount: { $sum: 1 },
-          
+
           // Total Amount should EXCLUDE Returned purchases (per user request)
           // We also exclude Cancelled usually.
-          totalAmount: { 
+          totalAmount: {
             $sum: {
               $cond: [
                  { $or: [ { $eq: ["$effectiveStatus", "return"] }, { $eq: ["$effectiveStatus", "cancelled"] } ] },
-                 0, 
+                 0,
                  "$totalAmount"
-              ] 
-            } 
+              ]
+            }
           },
-          
-          // Completed = 'paid' or 'completed' AND NOT Returned
+
           completedCount: {
             $sum: {
               $cond: [
-                { 
+                {
                   $and: [
-                    { $in: ["$effectiveStatus", ["paid", "completed", "partially_paid"]] }, // Wait, partially_paid is pending usually? User logic: Pending = unpaid/partially_paid. 
-                    // Previous logic: Completed = PAID.
+                    { $in: ["$effectiveStatus", ["paid", "completed", "partially_paid"]] }, // Wait, partially_paid is pending usually? User logic: Pending = unpaid/partially_paid.
                     { $eq: ["$effectiveStatus", "paid"] }
                   ]
-                }, 
-                1, 
+                },
+                1,
                 0
               ]
             }
@@ -763,7 +1014,7 @@ const getPurchaseReport = async (req, res) => {
             }
           },
 
-          // "Cancelled Orders" card is now "Returned Orders" 
+          // "Cancelled Orders" card is now "Returned Orders"
           // We will map 'cancelledCount' output to 'returned' logic, or repurpose the field name to avoid breaking frontend interface (which expects cancelledOrders object)
           // Actually, I'll calculate `returnedCount` here and map it to `cancelledOrders` in the response construction below.
           returnedCount: {
@@ -772,20 +1023,18 @@ const getPurchaseReport = async (req, res) => {
             }
           },
           returnedAmount: {
-             // User wants "Amount of Returned Purchase" 
+             // User wants "Amount of Returned Purchase"
              // If I return the whole purchase, is it the purchase total? Yes.
              $sum: {
                $cond: [{ $eq: ["$effectiveStatus", "return"] }, "$totalAmount", 0]
              }
           },
 
-          // Pending = 'unpaid', 'partially_paid', 'new', 'draft'
-          // And ensure it's not Returned or Cancelled
           pendingCount: {
             $sum: {
               $cond: [
                 { $in: ["$effectiveStatus", ["unpaid", "partially_paid", "new", "draft", "pending"]] },
-                1, 
+                1,
                 0
               ]
             }
@@ -918,7 +1167,6 @@ const getDebitNoteReport = async (req, res) => {
           isDeleted: false,
         })
           .populate("vendorId", "firstName lastName email phone profileImage"),
-          // .populate("items.id", "name code category product_image"),
 
         // Previous month
         DebitNote.find({
@@ -926,12 +1174,10 @@ const getDebitNoteReport = async (req, res) => {
           isDeleted: false,
         })
           .populate("vendorId", "firstName lastName email phone profileImage"),
-          // .populate("items.id", "name code category product_image"),
 
         // Paginated with filters
         DebitNote.find(filters)
           .populate("vendorId", "firstName lastName email phone profileImage")
-          // .populate("items.id", "name code category product_image")
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(Number(limit)),
@@ -968,32 +1214,9 @@ const getDebitNoteReport = async (req, res) => {
           vendorMap[vendorId].totalAmount += note.totalAmount;
         }
 
-        // Product aggregation
-        // note.items.forEach((item) => {
-        //   const product = item.id;
-        //   if (product) {
-        //     const productId = product._id.toString();
-        //     if (!productMap[productId]) {
-        //       productMap[productId] = {
-        //         _id: productId,
-        //         name: product.name,
-        //         sku: product.code,
-        //         category: product.category?.name || "-",
-        //         quantity: 0,
-        //         totalAmount: 0,
-        //         image: product.product_image
-        //           ? `${process.env.BASE_URL}${product.product_image}`
-        //           : "",
-        //       };
-        //     }
-        //     productMap[productId].quantity += item.qty || 0;
-        //     productMap[productId].totalAmount += item.amount || 0;
-        //   }
-        // });
 
         // Product aggregation (SAFE)
         note.items.forEach((item) => {
-          // item.id is STRING now
           if (!item.id) return;
 
           const productId = item.id.toString();
@@ -1035,13 +1258,9 @@ const getDebitNoteReport = async (req, res) => {
           debitNoteDate: note.debitNoteDate,
           items: note.items.map((item) => ({
             name: item.name,
-            // sku: item.id?.code || "-",
             sku: "-", // product code not stored in debit note
             quantity: item.qty || 0,
             amount: item.amount || 0,
-            // image: item.id?.product_image
-            //   ? `${process.env.BASE_URL}${item.id.product_image}`
-            //   : "",
             image: "",
           })),
         });
@@ -1342,15 +1561,14 @@ const getQuotationSalesReport = async (req, res) => {
 };
 
 
-// ===== EXPORT SALES REPORT TO EXCEL =====
 const exportSalesReportExcel = async (req, res) => {
   try {
     const { startDate, endDate, search = '' } = req.query;
 
     // Build query filter - exclude CANCELLED invoices
-    const query = { 
-      isDeleted: false, 
-      status: { $ne: 'CANCELLED' } 
+    const query = {
+      isDeleted: false,
+      status: { $ne: 'CANCELLED' }
     };
 
     // Date filter
@@ -1435,8 +1653,13 @@ const exportSalesReportExcel = async (req, res) => {
     invoices.forEach(invoice => {
       const customerName = invoice.billTo?.name || 'N/A';
       const customerPhone = invoice.billTo?.phone || 'N/A';
-      const totalPaid = paymentMap[invoice._id.toString()] || 0;
-      const balance = (invoice.TotalAmount || 0) - totalPaid;
+      const rawTotalPaid = Number(paymentMap[invoice._id.toString()] || 0);
+      const invoiceTotalAmount = Number(invoice.TotalAmount || 0);
+      const totalPaid =
+        invoice.status === 'EXCHANGE'
+          ? Math.min(rawTotalPaid, invoiceTotalAmount)
+          : rawTotalPaid;
+      const balance = Math.max(invoiceTotalAmount - totalPaid, 0);
 
       // Format date
       const formattedDate = invoice.invoiceDate
@@ -1523,7 +1746,6 @@ const exportSalesReportExcel = async (req, res) => {
   }
 };
 
-// ===== EXPORT PURCHASE REPORT TO EXCEL =====
 const exportPurchaseReport = async (req, res) => {
   try {
     const { startDate, endDate, search } = req.query;
@@ -1550,15 +1772,15 @@ const exportPurchaseReport = async (req, res) => {
     // Fetch purchases with all necessary vendor details and payment mode
     // We populate User fields for basic info, but detailed info comes from Supplier model
     const purchases = await Purchase.find(query)
-      .populate('vendorId', 'firstName lastName email phone') 
+      .populate('vendorId', 'firstName lastName email phone')
       .populate('paymentMode', 'name')
       .sort({ createdAt: -1 });
-    
+
     // Fetch Supplier details for address/gst
     const vendorIds = purchases
         .map(p => p.vendorId ? p.vendorId._id : null)
         .filter(id => id !== null);
-    
+
     const suppliers = await Supplier.find({ user_id: { $in: vendorIds } });
     const supplierMap = suppliers.reduce((acc, sup) => {
         if (sup.user_id) {
@@ -1589,7 +1811,7 @@ const exportPurchaseReport = async (req, res) => {
       { header: 'Purchase No', key: 'purchaseId', width: 20 },
       { header: 'Reference No', key: 'referenceNo', width: 20 },
       { header: 'Supplier Bill No', key: 'supplierBillNumber', width: 20 },
-      
+
       // Supplier Details
       { header: 'Supplier Name', key: 'supplierName', width: 30 },
       { header: 'Supplier Phone', key: 'supplierPhone', width: 15 },
@@ -1625,10 +1847,20 @@ const exportPurchaseReport = async (req, res) => {
       const purchaseIdStr = purchase._id.toString();
       const returnedAmount = debitNoteMap[purchaseIdStr] || 0;
       let status = purchase.status ? purchase.status.toUpperCase() : 'UNPAID';
+      const purchaseDebitNotes = debitNotes.filter(
+        (note) => note.purchaseId && note.purchaseId.toString() === purchaseIdStr
+      );
+      const hasReplacementDebitNote = purchaseDebitNotes.some(
+        (note) => String(note.status || '').toLowerCase() === 'replaced'
+      );
 
       // Status Logic
       if (status === 'CANCELLED') {
          // keep cancelled
+      } else if (status === 'REPLACED' || hasReplacementDebitNote) {
+        status = 'REPLACED';
+      } else if (status === 'RETURN') {
+        status = 'RETURN';
       } else if (returnedAmount >= purchase.totalAmount && purchase.totalAmount > 0) {
         status = 'RETURN';
       } else if (returnedAmount > 0) {
@@ -1636,19 +1868,19 @@ const exportPurchaseReport = async (req, res) => {
       }
 
       const purchaseDate = purchase.purchaseDate ? new Date(purchase.purchaseDate).toLocaleDateString('en-GB') : '-';
-      
+
       // Vendor Details (User + Supplier)
       const userVendor = purchase.vendorId;
       const supplierDetails = userVendor ? supplierMap[userVendor._id.toString()] : null;
 
       // prioritize Supplier model for company details, fallback to User model
-      // Supplier Name: user prefers "Supplier Name". 
-      // If Supplier model has company_name, maybe use that concatenated or distinct? 
+      // Supplier Name: user prefers "Supplier Name".
+      // If Supplier model has company_name, maybe use that concatenated or distinct?
       // Current UI uses user.firstName + lastName. I'll stick to that as base, or Supplier.company_name if exists?
       // Let's use User name as primary since that's what was working, but User might want company name if available.
       // I'll stick to User name for now to avoid regression on what's "seen", but feel free to switch if requested.
       const supplierName = userVendor ? `${userVendor.firstName || ''} ${userVendor.lastName || ''}`.trim() : 'N/A';
-      
+
       const supplierPhone = supplierDetails?.phone_number || (userVendor ? userVendor.phone : 'N/A');
       const supplierAddress = supplierDetails?.company_address || (userVendor ? userVendor.address : 'N/A');
       const supplierCity = supplierDetails?.city || (userVendor && userVendor.city && userVendor.city.name ? userVendor.city.name : 'N/A');
@@ -1666,7 +1898,7 @@ const exportPurchaseReport = async (req, res) => {
               purchaseId: index === 0 ? purchase.purchaseId : '',
               referenceNo: index === 0 ? (purchase.referenceNo || 'N/A') : '',
               supplierBillNumber: index === 0 ? (purchase.supplier_bill_number || 'N/A') : '',
-              
+
               supplierName: index === 0 ? supplierName : '',
               supplierPhone: index === 0 ? supplierPhone : '',
               supplierAddress: index === 0 ? supplierAddress : '',
@@ -1675,7 +1907,7 @@ const exportPurchaseReport = async (req, res) => {
               supplierGst: index === 0 ? supplierGst : '',
 
               productName: item.name || 'N/A',
-              variant: (item.variantColor || item.variantSize) ? `${item.variantColor || ''} ${item.variantSize || ''}`.trim() : 'N/A', 
+              variant: (item.variantColor || item.variantSize) ? `${item.variantColor || ''} ${item.variantSize || ''}`.trim() : 'N/A',
               qty: item.qty || 0,
               rate: item.rate || 0,
               itemAmount: item.amount || 0,
@@ -1694,7 +1926,7 @@ const exportPurchaseReport = async (req, res) => {
               purchaseId: purchase.purchaseId,
               referenceNo: purchase.referenceNo || 'N/A',
               supplierBillNumber: purchase.supplier_bill_number || 'N/A',
-              
+
               supplierName: supplierName,
               supplierPhone: supplierPhone,
               supplierAddress: supplierAddress,
@@ -1740,8 +1972,407 @@ const exportPurchaseReport = async (req, res) => {
   }
 };
 
+const getHsnGstReport = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const query = {
+      isDeleted: false,
+      status: { $nin: ['CANCELLED', 'DRAFT'] },
+      ...buildReportDateFilter('invoiceDate', startDate, endDate),
+    };
 
-module.exports = { 
+    const invoices = await Invoice.find(query)
+      .select('invoiceNumber invoiceDate customerGstin items taxType gstType status')
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      message: 'HSN GST report fetched successfully',
+      data: buildHsnGstReportPayload(invoices),
+    });
+  } catch (err) {
+    console.error('Get HSN GST report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching HSN GST report',
+      error: err.message,
+    });
+  }
+};
+
+const exportHsnGstReportExcel = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const query = {
+      isDeleted: false,
+      status: { $nin: ['CANCELLED', 'DRAFT'] },
+      ...buildReportDateFilter('invoiceDate', startDate, endDate),
+    };
+
+    const invoices = await Invoice.find(query)
+      .select('invoiceNumber invoiceDate customerGstin items taxType gstType status')
+      .lean();
+
+    const reportPayload = buildHsnGstReportPayload(invoices);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Naresh Billing Software';
+    workbook.created = new Date();
+
+    addHsnSummarySheet(workbook, 'hsn(b2b)', reportPayload.b2b.records);
+    addHsnSummarySheet(workbook, 'hsn(b2c)', reportPayload.b2c.records);
+
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `HSN_GST_Report_${today}.xlsx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export HSN GST report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting HSN GST report',
+      error: err.message,
+    });
+  }
+};
+
+const exportSalesGstReportExcel = async (req, res) => {
+  try {
+    const { startDate, endDate, search = '' } = req.query;
+
+    const query = {
+      isDeleted: false,
+      status: { $ne: 'CANCELLED' }
+    };
+
+    if (startDate || endDate) {
+      query.invoiceDate = {};
+      if (startDate) query.invoiceDate.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.invoiceDate.$lte = end;
+      }
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { invoiceNumber: searchRegex },
+        { 'items.name': searchRegex }
+      ];
+    }
+
+    const invoices = await Invoice.find(query)
+      .populate('billTo', 'name email phone state')
+      .populate('userId', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    let companySettings = null;
+    if (req.user && req.user._id) {
+      companySettings = await CompanySettings.findOne({ userId: req.user._id });
+    } else if (invoices.length > 0 && invoices[0].userId) {
+      companySettings = await CompanySettings.findOne({ userId: invoices[0].userId });
+    }
+    
+    const states = await State.find({}).lean();
+    const stateMap = {};
+    states.forEach(s => {
+      stateMap[String(s._id)] = s.name;
+    });
+
+    const resolveStateName = (val) => {
+      if (!val) return '';
+      const strVal = String(val).trim();
+      return stateMap[strVal] || strVal;
+    };
+
+    const companyStateRaw = companySettings?.state || '';
+    const companyState = resolveStateName(companyStateRaw).toLowerCase();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('GST Sales Report');
+
+    worksheet.columns = [
+      { header: 'GSTIN/UIN', key: 'gstin', width: 20 },
+      { header: "Buyer's Name", key: 'buyerName', width: 25 },
+      { header: 'Invoice No.', key: 'invoiceNo', width: 15 },
+      { header: 'Invoice Date', key: 'invoiceDate', width: 15 },
+      { header: 'PoS', key: 'pos', width: 20 },
+      { header: 'Total Invoice Value', key: 'totalValue', width: 18 },
+      { header: 'Rate', key: 'rate', width: 12 },
+      { header: 'Taxable Value', key: 'taxableValue', width: 15 },
+      { header: 'IGST', key: 'igst', width: 12 },
+      { header: 'CGST', key: 'cgst', width: 12 },
+      { header: 'SGST', key: 'sgst', width: 12 },
+      { header: 'Invoice Type', key: 'invoiceType', width: 15 }
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFD3D3D3' }
+    };
+
+    invoices.forEach(invoice => {
+      const gstin = invoice.customerGstin || (invoice.billTo?.gstin) || '';
+      const buyerName = invoice.billTo?.name || 'CASH';
+      const formattedDate = invoice.invoiceDate 
+        ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-')
+        : '';
+      
+      const buyerStateRaw = invoice.shippingAddress?.state || invoice.billTo?.state || companySettings?.state || '';
+      const resolvedBuyerState = resolveStateName(buyerStateRaw);
+      const buyerState = resolvedBuyerState.toLowerCase();
+      
+      const pos = resolvedBuyerState || 'N/A';
+      const isIntraState = companyState === buyerState;
+      const invoiceType = gstin ? 'B2B' : 'B2CS';
+      const totalInvoiceValue = roundMoney(invoice.TotalAmount || 0);
+
+      if (invoice.items && invoice.items.length > 0) {
+        let totalTaxableValue = 0;
+        let totalIgst = 0;
+        let totalCgst = 0;
+        let totalSgst = 0;
+        const uniqueRates = new Set();
+
+        invoice.items.forEach((item) => {
+          const taxableValue = getItemTaxableValue(item, invoice);
+          const taxAmount = roundMoney(item.tax || 0);
+          const rate = getItemTaxRate(item, invoice);
+          
+          uniqueRates.add(rate);
+          totalTaxableValue += taxableValue;
+
+          if (invoice.taxType !== 'Non-GST') {
+            if (isIntraState) {
+              totalCgst += taxAmount / 2;
+              totalSgst += taxAmount / 2;
+            } else {
+              totalIgst += taxAmount;
+            }
+          }
+        });
+        
+        worksheet.addRow({
+          gstin: gstin,
+          buyerName: buyerName,
+          invoiceNo: invoice.invoiceNumber,
+          invoiceDate: formattedDate,
+          pos: pos,
+          totalValue: totalInvoiceValue.toFixed(2),
+          rate: Array.from(uniqueRates).map(r => r.toFixed(2)).join(', '),
+          taxableValue: totalTaxableValue.toFixed(2),
+          igst: totalIgst.toFixed(2),
+          cgst: totalCgst.toFixed(2),
+          sgst: totalSgst.toFixed(2),
+          invoiceType: invoiceType
+        });
+      }
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `GST_Sales_Report_${today}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export GST Sales Report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting GST Sales Report',
+      error: err.message
+    });
+  }
+};
+
+
+const exportPurchaseGstReportExcel = async (req, res) => {
+  try {
+    const { startDate, endDate, search = '' } = req.query;
+
+    const query = {
+      isDeleted: false,
+      status: { $ne: 'CANCELLED' }
+    };
+
+    if (startDate || endDate) {
+      query.purchaseDate = {};
+      if (startDate) query.purchaseDate.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.purchaseDate.$lte = end;
+      }
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { purchaseId: searchRegex },
+        { supplierBillNumber: searchRegex },
+        { 'items.name': searchRegex }
+      ];
+    }
+
+    const purchases = await Purchase.find(query)
+      .populate('vendorId', 'firstName lastName email phone gstin state')
+      .populate('userId', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const vendorIds = purchases
+        .map(p => p.vendorId ? p.vendorId._id : null)
+        .filter(id => id !== null);
+
+    const suppliers = await Supplier.find({ user_id: { $in: vendorIds } }).lean();
+    const supplierMap = suppliers.reduce((acc, sup) => {
+        if (sup.user_id) {
+            acc[sup.user_id.toString()] = sup;
+        }
+        return acc;
+    }, {});
+
+    let companySettings = null;
+    if (req.user && req.user._id) {
+      companySettings = await CompanySettings.findOne({ userId: req.user._id }).lean();
+    } else if (purchases.length > 0 && purchases[0].userId) {
+      companySettings = await CompanySettings.findOne({ userId: purchases[0].userId }).lean();
+    }
+    
+    const states = await State.find({}).lean();
+    const stateMap = {};
+    states.forEach(s => {
+      stateMap[String(s._id)] = s.name;
+    });
+
+    const resolveStateName = (val) => {
+      if (!val) return '';
+      const strVal = String(val).trim();
+      return stateMap[strVal] || strVal;
+    };
+
+    const companyStateRaw = companySettings?.state || '';
+    const companyState = resolveStateName(companyStateRaw).toLowerCase();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('GST Purchase Report');
+
+    worksheet.columns = [
+      { header: 'GSTIN/UIN', key: 'gstin', width: 20 },
+      { header: "Supplier's Name", key: 'supplierName', width: 25 },
+      { header: 'Purchase Bill', key: 'purchaseBill', width: 15 },
+      { header: 'Date', key: 'purchaseDate', width: 15 },
+      { header: 'PoS', key: 'pos', width: 20 },
+      { header: 'Total Invoice Value', key: 'totalValue', width: 18 },
+      { header: 'Rate', key: 'rate', width: 12 },
+      { header: 'Taxable Value', key: 'taxableValue', width: 15 },
+      { header: 'IGST', key: 'igst', width: 12 },
+      { header: 'CGST', key: 'cgst', width: 12 },
+      { header: 'SGST', key: 'sgst', width: 12 }
+    ];
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFD3D3D3' }
+    };
+
+    purchases.forEach(purchase => {
+      const vendorIdStr = purchase.vendorId ? purchase.vendorId._id.toString() : '';
+      const supplier = supplierMap[vendorIdStr] || {};
+      const gstin = supplier.gstin || purchase.vendorId?.gstin || '';
+      
+      const supplierNameRaw = supplier.companyName || supplier.name || (purchase.vendorId ? `${purchase.vendorId.firstName || ''} ${purchase.vendorId.lastName || ''}`.trim() : '');
+      const supplierName = supplierNameRaw || 'CASH';
+      
+      const formattedDate = purchase.purchaseDate 
+        ? new Date(purchase.purchaseDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-')
+        : '';
+      
+      const supplierStateRaw = supplier.state || purchase.vendorId?.state || '';
+      const resolvedSupplierState = resolveStateName(supplierStateRaw);
+      const supplierState = resolvedSupplierState.toLowerCase();
+      
+      const pos = resolvedSupplierState || 'N/A';
+      const isIntraState = companyState === supplierState;
+      const totalInvoiceValue = roundMoney(purchase.totalAmount || 0);
+
+      if (purchase.items && purchase.items.length > 0) {
+        let totalTaxableValue = 0;
+        let totalIgst = 0;
+        let totalCgst = 0;
+        let totalSgst = 0;
+        const uniqueRates = new Set();
+
+        purchase.items.forEach((item) => {
+          const taxableValue = getItemTaxableValue(item, purchase);
+          const taxAmount = roundMoney(item.tax || 0);
+          const rate = getItemTaxRate(item, purchase);
+          
+          uniqueRates.add(rate);
+          totalTaxableValue += taxableValue;
+
+          if (purchase.taxType !== 'Non-GST') {
+            if (isIntraState) {
+              totalCgst += taxAmount / 2;
+              totalSgst += taxAmount / 2;
+            } else {
+              totalIgst += taxAmount;
+            }
+          }
+        });
+        
+        worksheet.addRow({
+          gstin: gstin,
+          supplierName: supplierName,
+          purchaseBill: purchase.supplierBillNumber || purchase.purchaseId,
+          purchaseDate: formattedDate,
+          pos: pos,
+          totalValue: totalInvoiceValue.toFixed(2),
+          rate: Array.from(uniqueRates).map(r => r.toFixed(2)).join(', '),
+          taxableValue: totalTaxableValue.toFixed(2),
+          igst: totalIgst.toFixed(2),
+          cgst: totalCgst.toFixed(2),
+          sgst: totalSgst.toFixed(2)
+        });
+      }
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `GST_Purchase_Report_${today}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('Export GST Purchase Report error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting GST Purchase Report',
+      error: err.message
+    });
+  }
+};
+
+
+module.exports = {
   getInvoiceSalesReport,
   getCreditNoteSalesReport,
   getPurchaseReport,
@@ -1749,4 +2380,8 @@ module.exports = {
   getQuotationSalesReport,
   exportSalesReportExcel,
   exportPurchaseReport,
+  exportPurchaseGstReportExcel,
+  getHsnGstReport,
+  exportHsnGstReportExcel,
+  exportSalesGstReportExcel,
 };

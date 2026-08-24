@@ -11,17 +11,12 @@ const invoicePaymentSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
-  // payment_method: {
-  //   type: String,
-  //   ref: 'PaymentMode',
-  //   required: true
-  // },
   payment_method: {
     type: String,
-    enum: ["CASH", "BANK", "CHEQUE", "PHONEPE", "MIXED", "CREDIT", "UPI"],
+    enum: ["CASH", "CARD", "BANK", "CHEQUE", "PHONEPE", "MIXED", "CREDIT", "UPI"],
     required: true
   },
-  
+
   // For MIXED payments only
   cashAmount: {
     type: Number,
@@ -29,6 +24,14 @@ const invoicePaymentSchema = new mongoose.Schema({
     required: function () {
       return this.payment_method === "MIXED";
     }
+  },
+  cardAmount: {
+    type: Number,
+    min: 0,
+  },
+  creditAmount: {
+    type: Number,
+    min: 0,
   },
   upiAmount: {
     type: Number,
@@ -38,11 +41,6 @@ const invoicePaymentSchema = new mongoose.Schema({
     }
   },
 
-  // bankId: {
-  //   type: mongoose.Schema.Types.ObjectId,
-  //   ref: 'BankDetail',
-  //   required: true
-  // },
   bankId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "BankDetail",

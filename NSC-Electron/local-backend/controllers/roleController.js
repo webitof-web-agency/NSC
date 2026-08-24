@@ -4,7 +4,7 @@ const User = require('@models/User');
 
 const createRole = async (req, res) => {
     try {
-        const { roleName, status = true } = req.body;
+        const { roleName, status = true, hideFromAttendance = false } = req.body;
         const userId = req.user;
 
         // Collect validation errors
@@ -46,6 +46,7 @@ const createRole = async (req, res) => {
         const role = new Role({
             roleName: roleName.trim(),
             status,
+            hideFromAttendance: Boolean(hideFromAttendance),
             createdBy: userId
         });
 
@@ -58,6 +59,7 @@ const createRole = async (req, res) => {
                 id: role._id,
                 roleName: role.roleName,
                 status: role.status,
+                hideFromAttendance: role.hideFromAttendance,
                 createdBy: role.createdBy,
                 createdAt: role.createdAt
             }
@@ -75,18 +77,18 @@ const createRole = async (req, res) => {
 
 const getRoles = async (req, res) => {
     try {
-        const { 
-            page = 1, 
-            limit = 10, 
-            search = '', 
-            status 
+        const {
+            page = 1,
+            limit = 10,
+            search = '',
+            status
         } = req.query;
 
         const query = { deletedAt: null };
 
         if (search) {
-            query.roleName = { 
-                $regex: search, 
+            query.roleName = {
+                $regex: search,
                 $options: 'i'
             };
         }
@@ -106,6 +108,7 @@ const getRoles = async (req, res) => {
             id: role._id,
             roleName: role.roleName,
             status: role.status,
+            hideFromAttendance: role.hideFromAttendance,
             createdBy: role.createdBy || null,
             createdAt: role.createdAt,
             updatedAt: role.updatedAt
@@ -217,6 +220,7 @@ const getAllRoles = async (req, res) => {
             id: role._id,
             roleName: role.roleName,
             status: role.status,
+            hideFromAttendance: role.hideFromAttendance,
             createdBy: role.createdBy || null,
             createdAt: role.createdAt,
             updatedAt: role.updatedAt
@@ -241,7 +245,7 @@ const getAllRoles = async (req, res) => {
 const updateRole = async (req, res) => {
     try {
         const { id } = req.params;
-        const { roleName, status } = req.body;
+        const { roleName, status, hideFromAttendance } = req.body;
 
         // Find role by ID
         const role = await Role.findById(id);
@@ -262,7 +266,7 @@ const updateRole = async (req, res) => {
             }
 
             // Check for duplicate roleName ignoring soft-deleted roles
-            const existingRole = await Role.findOne({ 
+            const existingRole = await Role.findOne({
                 roleName: roleName.trim(),
                 deletedAt: null, // ignore soft-deleted roles
                 _id: { $ne: id } // exclude current role from duplicate check
@@ -282,6 +286,9 @@ const updateRole = async (req, res) => {
         if (status !== undefined) {
             role.status = status;
         }
+        if (hideFromAttendance !== undefined) {
+            role.hideFromAttendance = Boolean(hideFromAttendance);
+        }
 
         // Update timestamp
         role.updatedAt = new Date();
@@ -296,6 +303,7 @@ const updateRole = async (req, res) => {
                 id: role._id,
                 roleName: role.roleName,
                 status: role.status,
+                hideFromAttendance: role.hideFromAttendance,
                 createdBy: role.createdBy,
                 createdAt: role.createdAt,
                 updatedAt: role.updatedAt

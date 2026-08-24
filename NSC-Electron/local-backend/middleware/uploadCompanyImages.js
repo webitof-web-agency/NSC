@@ -2,7 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const { ensureUploadDir } = require('../utils/storagePaths');
 
-// Ensure upload directory exists safely in writable user storage
+// Ensure upload directory exists safely
 const uploadDir = ensureUploadDir('company');
 
 const companyStorage = multer.diskStorage({

@@ -1,4 +1,4 @@
-const Category = require('../models/Category'); 
+const Category = require('../models/Category');
 const Product = require('../models/Product');
 
 exports.createCategory = async (req, res) => {
@@ -12,7 +12,7 @@ exports.createCategory = async (req, res) => {
 
         const category_image = req.file ? req.file.filename : null;
 
-        const category = new Category({ 
+        const category = new Category({
             category_name: category_name,
             slug: slug,
             category_image: category_image,
@@ -31,7 +31,7 @@ exports.createCategory = async (req, res) => {
 exports.getAllCategories = async (req, res) => {
     try {
         const { page = 1, limit = 10, search = '' } = req.query;
-        
+
         // Build search query
         const searchQuery = {
             $or: [
@@ -64,14 +64,14 @@ exports.getAllCategories = async (req, res) => {
             }
         });
     } catch (err) {
-        res.status(500).json({ 
+        res.status(500).json({
             message: 'Error fetching categories',
-            error: err.message 
+            error: err.message
         });
     }
 };
 
-exports.getCategoryById = async (req, res) => { 
+exports.getCategoryById = async (req, res) => {
     try {
         const category = await Category.findById(req.params.id)
             .populate("defaultUnitId", "unit_name short_name")
@@ -83,9 +83,9 @@ exports.getCategoryById = async (req, res) => {
     }
 };
 
-exports.updateCategory = async (req, res) => { 
+exports.updateCategory = async (req, res) => {
     try {
-        const { category_name, slug, status, defaultUnitId, defaultTaxId } = req.body; 
+        const { category_name, slug, status, defaultUnitId, defaultTaxId } = req.body;
         const category = await Category.findById(req.params.id);
         if (!category) return res.status(404).json({ error: 'Category not found' });
 
@@ -95,7 +95,7 @@ exports.updateCategory = async (req, res) => {
                 category.slug = String(category_name).trim().replace(/\s+/g, "-").toLowerCase();
             }
         }
-        if (slug && String(slug).trim()) category.slug = String(slug).trim(); 
+        if (slug && String(slug).trim()) category.slug = String(slug).trim();
         if (status !== undefined) category.status = status;
         if (req.file) category.category_image = req.file.filename;
         if (defaultUnitId !== undefined) {
@@ -108,7 +108,7 @@ exports.updateCategory = async (req, res) => {
             category.defaultTaxId = nextTaxId;
         }
 
-        await category.save(); 
+        await category.save();
         if (taxChanged) {
             await Product.updateMany(
                 { category: category._id },

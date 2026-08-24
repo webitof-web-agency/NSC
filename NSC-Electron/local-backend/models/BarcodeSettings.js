@@ -43,6 +43,10 @@ const barcodeSettingsSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    showVariantSize: {
+      type: Boolean,
+      default: false,
+    },
     showProductName: {
       type: Boolean,
       default: true,
@@ -52,6 +56,10 @@ const barcodeSettingsSchema = new mongoose.Schema(
       default: null,
     },
     fontBrandMm: {
+      type: Number,
+      default: null,
+    },
+    fontSizeMm: {
       type: Number,
       default: null,
     },
@@ -72,6 +80,10 @@ const barcodeSettingsSchema = new mongoose.Schema(
       default: 800,
     },
     weightBrand: {
+      type: Number,
+      default: 800,
+    },
+    weightSize: {
       type: Number,
       default: 800,
     },

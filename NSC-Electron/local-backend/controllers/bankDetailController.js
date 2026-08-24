@@ -9,89 +9,6 @@ const InvoicePayment = require('@models/InvoicePayment');
 const SupplierPayment = require('@models/SupplierPayment');
 const Expense = require('@models/Expense');
 
-// const createBankDetail = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const {
-//       accountHoldername,
-//       bankName,
-//       branchName,
-//       accountNumber,
-//       IFSCCode,
-//       accountType,
-//       openingBalance = 0,
-//       currentBalance = openingBalance,
-//       userId,
-//       status = true,
-//     } = req.body;
-//     //find payment mode where slug is "bank"
-//     const paymentModeId = await PaymentMode.findOne({ slug: 'bank' }).session(session);
-//     const user = await User.findById(userId).session(session);
-//     if (!user) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({
-//         success: false,
-//         message: 'User not found'
-//       });
-//     }
-
-//     const bankDetail = new BankDetail({
-//       accountHoldername,
-//       bankName,
-//       branchName,
-//       accountNumber,
-//       IFSCCode,
-//       accountType,
-//       openingBalance,
-//       currentBalance,
-//       asOnDate: new Date(),
-//       userId,
-//       status,
-//       isDeleted: false
-//     });
-
-//     await bankDetail.save({ session });
-
-//     // Create initial bank transaction (DEPOSIT)
-//     if (currentBalance > 0) {
-//       const transaction = new BankTransaction({
-//         bankAccountId: bankDetail._id,
-//         transactionDate: new Date(),
-//         type: 'DEPOSIT',
-//         amount: currentBalance,
-//         balanceBefore: 0,
-//         balanceAfter: currentBalance,
-//         paymentModeId: paymentModeId, // payment mode required
-//         relatedType: 'MANUAL',
-//         relatedId: null,
-//         remarks: 'Initial deposit'
-//       });
-
-//       await transaction.save({ session });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       success: true,
-//       message: 'Bank detail created successfully',
-//       data: bankDetail
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Bank detail creation error:', err);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error creating bank detail',
-//       error: err.message
-//     });
-//   }
-// };
 
 const createBankDetail = async (req, res) => {
   try {
@@ -171,55 +88,6 @@ const createBankDetail = async (req, res) => {
   }
 };
 
-// const updateBankDetail = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { id } = req.params;
-//     const updates = req.body;
-
-//     delete updates._id;
-//     delete updates.userId;
-//     delete updates.createdAt;
-//     delete updates.updatedAt;
-//     delete updates.isDeleted;
-
-//     const bankDetail = await BankDetail.findById(id).session(session);
-//     if (!bankDetail || bankDetail.isDeleted) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({
-//         success: false,
-//         message: 'Bank detail not found'
-//       });
-//     }
-
-//     const updatedBankDetail = await BankDetail.findByIdAndUpdate(
-//       id,
-//       { $set: updates },
-//       { new: true, runValidators: true, session }
-//     );
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       success: true,
-//       message: 'Bank detail updated successfully',
-//       data: updatedBankDetail
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Bank detail update error:', err);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Error updating bank detail',
-//       error: err.message
-//     });
-//   }
-// };
 
 const updateBankDetail = async (req, res) => {
   try {
@@ -926,8 +794,6 @@ const getBankTransactionDetails = async (req, res) => {
             .populate("bankId", "bankName accountNumber")
             .populate("createdBy", "name email")
             .lean();
-
-          //formatting supplier profile image
           if (relatedData.supplierId) {
             relatedData.supplierId.profileImage = relatedData.supplierId.profileImage
               ? `${process.env.BASE_URL}/${relatedData.supplierId.profileImage}`

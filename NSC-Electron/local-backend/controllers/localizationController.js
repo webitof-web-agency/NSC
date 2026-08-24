@@ -215,7 +215,7 @@ const getLocalization = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching localization settings',
-      error: err.message 
+      error: err.message
     });
   }
 };

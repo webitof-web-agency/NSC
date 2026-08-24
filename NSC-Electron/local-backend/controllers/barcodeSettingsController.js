@@ -14,14 +14,17 @@ exports.upsertSettings = async (req, res) => {
       showPrice,
       showSalePrice,
       showBrand,
+      showVariantSize,
       showProductName,
       fontProductMm,
       fontBrandMm,
+      fontSizeMm,
       fontBarcodeMm,
       fontPriceMm,
       fontSalePriceMm,
       weightProduct,
       weightBrand,
+      weightSize,
       weightBarcode,
       weightPrice,
       weightSalePrice,
@@ -40,14 +43,17 @@ exports.upsertSettings = async (req, res) => {
         showPrice,
         showSalePrice,
         showBrand,
+        showVariantSize,
         showProductName,
         fontProductMm,
         fontBrandMm,
+        fontSizeMm,
         fontBarcodeMm,
         fontPriceMm,
         fontSalePriceMm,
         weightProduct,
         weightBrand,
+        weightSize,
         weightBarcode,
         weightPrice,
         weightSalePrice,
@@ -78,8 +84,8 @@ exports.getSettings = async (req, res) => {
 
     // If no settings exist yet, return defaults (or null, handled by frontend)
     // But since we want defaults, we can just return an empty object or let frontend handle null
-    // Ideally, frontend handles null by using its own defaults. 
-    
+    // Ideally, frontend handles null by using its own defaults.
+
     res.status(200).json({
       success: true,
       data: settings,

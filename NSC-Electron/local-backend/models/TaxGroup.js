@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const taxGroupSchema = new mongoose.Schema(
     {
@@ -34,5 +35,6 @@ taxGroupSchema.methods.calculateTotalTaxRate = async function () {
 };
 
 
+taxGroupSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('TaxGroup', taxGroupSchema);

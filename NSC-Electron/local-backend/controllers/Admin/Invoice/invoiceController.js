@@ -10,6 +10,10 @@ const Inventory = require("@models/Inventory");
 const DeliveryChallan = require("@models/DeliveryChallan");
 const BankDetail = require("@models/BankDetail");
 const ProductVariant = require("@models/ProductVariant");
+const {
+  enrichInvoicePrintItems,
+  normalizeInvoiceItems,
+} = require("@utils/invoicePrintItems");
 
 const getNextExchangeInvoiceNumberInternal = async () => {
   const prefix = "EXC-";
@@ -35,8 +39,276 @@ const BankTransaction = require("@models/BankTransaction");
 const GeneralSetting = require("@models/GeneralSetting");
 const CompanySettings = require("@models/CompanySettings");
 const { sendMail } = require("@utils/mailer");
+const { syncCreditNotificationForInvoice, resolveNotificationForInvoice } = require("@services/notificationService");
 const toMoney = (value) =>
   Number((Number(value) || 0).toFixed(2));
+
+const toIsoWithoutMilliseconds = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+};
+
+const normalizeInvoiceShippingAddress = (value) => {
+  const raw = typeof value === "string"
+    ? (() => {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return {};
+      }
+    })()
+    : value || {};
+
+  return {
+    name: String(raw.name || "").trim(),
+    addressLine1: String(raw.addressLine1 || "").trim(),
+    addressLine2: String(raw.addressLine2 || "").trim(),
+    country: String(raw.country || "").trim(),
+    state: String(raw.state || "").trim(),
+    city: String(raw.city || "").trim(),
+    pincode: String(raw.pincode || "").trim(),
+  };
+};
+
+const getCommissionBase = (item = {}) => {
+  const qty = Number(item.qty) || 0;
+  const rate = Number(item.rate) || 0;
+  const taxPerUnit = qty > 0 ? (Number(item.tax) || 0) / qty : 0;
+  const rateAfterTax = Math.max(rate - taxPerUnit, 0);
+
+  return {
+    qty,
+    rate,
+    rateAfterTax,
+    basePrice: qty * rateAfterTax,
+  };
+};
+
+const getInvoiceItemKey = (item = {}) =>
+  String(item.rowId || item.id || `${String(item.product_id || "")}-${String(item.variantId || "")}`);
+
+const getCommissionItemKey = (item = {}) => {
+  const rowId = String(item.rowId || item.id || "").trim();
+  if (rowId) {
+    return `row:${rowId}`;
+  }
+
+  return [
+    String(item.staffId || ""),
+    String(item.product_id || item.productId || ""),
+    String(item.variantId || ""),
+    String(item.designNo || item.design_no || item.product_name || ""),
+    Number(item.qty || 0),
+    Number(item.rate || 0),
+  ].join("|");
+};
+
+const createCommissionRecordsForInvoiceItems = async ({
+  invoiceId,
+  items = [],
+  createdBy,
+  existingCommissions = [],
+}) => {
+  const commissionedKeys = new Set();
+
+  for (const commission of existingCommissions || []) {
+    for (const commissionItem of commission?.items || []) {
+      commissionedKeys.add(getCommissionItemKey(commissionItem));
+    }
+  }
+
+  const staffGroups = {};
+
+  for (const item of items || []) {
+    if (!item?.staffId) continue;
+
+    const itemKey = getCommissionItemKey(item);
+    if (commissionedKeys.has(itemKey)) continue;
+
+    const staffIdStr = String(item.staffId);
+    if (!staffGroups[staffIdStr]) {
+      staffGroups[staffIdStr] = {
+        staffId: item.staffId,
+        items: [],
+      };
+    }
+
+    staffGroups[staffIdStr].items.push(item);
+  }
+
+  if (Object.keys(staffGroups).length === 0) {
+    return [];
+  }
+
+  const createdCommissionRecords = [];
+  const settings = await CommissionSystemSetting.findOne();
+  const month = new Date().toISOString().slice(0, 7);
+  const dateStr = new Date().toISOString().slice(0, 10);
+
+  for (const staffId of Object.keys(staffGroups)) {
+    const group = staffGroups[staffId];
+    const staffUser = await User.findById(group.staffId).populate("roleId");
+
+    if (!staffUser || staffUser.roleId?.roleName !== "Staff") {
+      continue;
+    }
+
+    let staffCommissionPercent = Number(staffUser.commissionPercent) || 0;
+    if (staffCommissionPercent === 0) {
+      staffCommissionPercent = Number(settings?.commissionPercent || 0);
+    }
+
+    if (staffCommissionPercent <= 0) {
+      continue;
+    }
+
+    const commissionItems = [];
+    let totalCommissionForDoc = 0;
+
+    for (const item of group.items) {
+      const productId = item.product_id || item.productId;
+      if (!productId) continue;
+
+      const { qty, rate, basePrice } = getCommissionBase(item);
+      const itemCommission = (basePrice * staffCommissionPercent) / 100;
+
+      commissionItems.push({
+        rowId: item.rowId || item.id || null,
+        productId,
+        variantId: item.variantId || null,
+        designNo: item.designNo || item.design_no || item.product_name || item.name || "",
+        qty,
+        rate,
+        saleRate: rate,
+        amount: basePrice,
+        commissionPercent: staffCommissionPercent,
+        commissionAmount: itemCommission,
+      });
+
+      totalCommissionForDoc += itemCommission;
+    }
+
+    if (commissionItems.length === 0) continue;
+
+    const commissionRecord = await Commission.create({
+      staffId: group.staffId,
+      invoiceId,
+      items: commissionItems,
+      totalCommissionAmount: totalCommissionForDoc,
+      month,
+      date: dateStr,
+      createdBy,
+    });
+
+    createdCommissionRecords.push(commissionRecord);
+
+    await User.findByIdAndUpdate(group.staffId, {
+      $inc: { commissionEarned: totalCommissionForDoc },
+    });
+
+    const existingMonth = await User.findOne({
+      _id: group.staffId,
+      "monthlyCommission.month": month,
+    });
+
+    if (existingMonth) {
+      await User.findOneAndUpdate(
+        { _id: group.staffId, "monthlyCommission.month": month },
+        {
+          $inc: { "monthlyCommission.$.commission": totalCommissionForDoc },
+          $push: { "monthlyCommission.$.records": commissionRecord._id },
+        }
+      );
+    } else {
+      await User.findByIdAndUpdate(group.staffId, {
+        $push: {
+          monthlyCommission: {
+            month,
+            commission: totalCommissionForDoc,
+            records: [commissionRecord._id],
+          },
+        },
+      });
+    }
+
+    const existingDate = await User.findOne({
+      _id: group.staffId,
+      "dailyCommission.date": dateStr,
+    });
+
+    if (existingDate) {
+      await User.findOneAndUpdate(
+        { _id: group.staffId, "dailyCommission.date": dateStr },
+        {
+          $inc: { "dailyCommission.$.commission": totalCommissionForDoc },
+          $push: { "dailyCommission.$.records": commissionRecord._id },
+        }
+      );
+    } else {
+      await User.findByIdAndUpdate(group.staffId, {
+        $push: {
+          dailyCommission: {
+            date: dateStr,
+            commission: totalCommissionForDoc,
+            records: [commissionRecord._id],
+          },
+        },
+      });
+    }
+  }
+
+  return createdCommissionRecords;
+};
+
+const attachCostSnapshotsToItems = async (items = [], existingItems = []) => {
+  const existingSnapshotMap = new Map(
+    (existingItems || []).map((item) => [getInvoiceItemKey(item), item])
+  );
+
+  const variantIds = [
+    ...new Set(
+      (items || [])
+        .map((item) => item?.variantId)
+        .filter((variantId) => mongoose.Types.ObjectId.isValid(String(variantId)))
+        .map((variantId) => String(variantId))
+    ),
+  ];
+
+  const variants = variantIds.length
+    ? await ProductVariant.find({ _id: { $in: variantIds } })
+      .select("_id purchase_price")
+      .lean()
+    : [];
+
+  const variantCostMap = new Map(
+    variants.map((variant) => [String(variant._id), Number(variant.purchase_price || 0)])
+  );
+
+  return (items || []).map((item) => {
+    const existing = existingSnapshotMap.get(getInvoiceItemKey(item));
+    const qty = Number(item?.qty || 0);
+    const snapshotCost =
+      existing?.costPriceSnapshot !== undefined && existing?.costPriceSnapshot !== null
+        ? Number(existing.costPriceSnapshot || 0)
+        : item?.costPriceSnapshot !== undefined && item?.costPriceSnapshot !== null
+          ? Number(item.costPriceSnapshot || 0)
+          : variantCostMap.get(String(item?.variantId || "")) || 0;
+
+    const totalCostSnapshot =
+      item?.totalCostSnapshot !== undefined && item?.totalCostSnapshot !== null
+        ? Number(item.totalCostSnapshot || 0)
+        : Number((snapshotCost * qty).toFixed(2));
+
+    return {
+      ...item,
+      costPriceSnapshot: Number(snapshotCost.toFixed(2)),
+      totalCostSnapshot: Number(totalCostSnapshot.toFixed(2)),
+    };
+  });
+};
+
 const getOrCreateInventoryRecord = async ({
   productId,
   variantId,
@@ -45,19 +317,30 @@ const getOrCreateInventoryRecord = async ({
   createdBy,
   note,
 }) => {
+  let resolvedProductId = productId;
+
+  if (!resolvedProductId && variantId) {
+    const variant = await ProductVariant.findById(variantId)
+      .select("productId")
+      .lean();
+    resolvedProductId = variant?.productId || null;
+  }
+
   let inventory = await Inventory.findOne({
-    productId,
     variantId,
     userId,
     isDeleted: false,
   });
 
   if (inventory) {
+    if (!inventory.productId && resolvedProductId) {
+      inventory.productId = resolvedProductId;
+      await inventory.save();
+    }
     return { inventory, created: false };
   }
 
   const deletedInventory = await Inventory.findOne({
-    productId,
     variantId,
     userId,
     isDeleted: true,
@@ -65,10 +348,17 @@ const getOrCreateInventoryRecord = async ({
 
   if (deletedInventory) {
     deletedInventory.isDeleted = false;
+    if (!deletedInventory.productId && resolvedProductId) {
+      deletedInventory.productId = resolvedProductId;
+    }
     inventory = deletedInventory;
   } else {
+    if (!resolvedProductId) {
+      throw new Error("Unable to resolve productId for inventory record");
+    }
+
     inventory = new Inventory({
-      productId,
+      productId: resolvedProductId,
       variantId,
       quantity: 0,
       userId,
@@ -90,7 +380,23 @@ const getOrCreateInventoryRecord = async ({
     });
   }
 
-  await inventory.save();
+  try {
+    await inventory.save();
+  } catch (error) {
+    // Another request may create the same inventory row concurrently.
+    if (error?.code === 11000) {
+      const existingInventory = await Inventory.findOne({
+        variantId,
+        userId,
+        isDeleted: false,
+      });
+
+      if (existingInventory) {
+        return { inventory: existingInventory, created: false };
+      }
+    }
+    throw error;
+  }
 
   return { inventory, created: true };
 };
@@ -102,236 +408,7 @@ const CommissionSystemSetting = require("@models/CommissionSystemSetting");
 const ExcelJS = require("exceljs");
 const fs = require('fs');
 const Customer = require('@models/Customer');
-
-// const createInvoice = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       invoiceNumber, invoiceDate, dueDate, referenceNo, items, payment_method,
-//       notes, termsAndCondition, taxableAmount, TotalAmount, vat, totalDiscount,
-//       roundOff, bank, isRecurring, repeatEvery, customIntervalNumber, customIntervalType,
-//       startOn, endsOn, neverExpire, stopped,
-//       sign_type, signatureName, signatureId, billFrom, billTo,
-//       status, payment_date, payment_notes
-//     } = req.body;
-
-//     const customerId = req.user;
-//     const userId = req.user;
-
-//     // Check for duplicate invoiceNumber if provided
-//     if (invoiceNumber) {
-//       const existingInvoice = await Invoice.findOne({ invoiceNumber });
-//       if (existingInvoice) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({
-//           success: false,
-//           message: `Invoice number ${invoiceNumber} already exists`,
-//           errors: { invoiceNumber: `Invoice number ${invoiceNumber} already exists` }
-//         });
-//       }
-//     }
-
-//     // Auto calculate totals
-//     let calculatedTaxableAmount = taxableAmount || items.reduce((sum, item) => sum + (item.rate * item.qty), 0);
-//     let calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-//     let calculatedVat = vat || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-//     let calculatedTotalAmount = TotalAmount || (calculatedTaxableAmount + calculatedVat - calculatedTotalDiscount);
-
-//     // Signature Handling
-//     let signatureImage = null;
-//     let savedSignatureId = null;
-//     if (sign_type === 'eSignature' && req.file) {
-//       signatureImage = req.file.path;
-//     } else if (sign_type === 'digitalSignature' && signatureId) {
-//       savedSignatureId = signatureId;
-//     }
-
-//     // Calculate nextRecurringDate if recurring is enabled
-//     let nextRecurringDate = null;
-//     if (isRecurring) {
-//       const startDate = startOn ? new Date(startOn) : new Date();
-//       if (repeatEvery && repeatEvery !== 'custom') {
-//         nextRecurringDate = startDate;
-//       } else if (repeatEvery === 'custom' && customIntervalNumber && customIntervalType) {
-//         nextRecurringDate = startDate; // initial, will be incremented by cron later
-//       }
-//     }
-
-//     // Create invoice
-//     const invoice = new Invoice({
-//       invoiceNumber,
-//       customerId,
-//       invoiceDate: new Date(invoiceDate),
-//       dueDate: dueDate ? new Date(dueDate) : null,
-//       referenceNo: referenceNo || '',
-//       items: items.map(item => {
-//         const itemData = {
-//           id: item.id,
-//           name: item.name,
-//           key: item.key,
-//           qty: item.qty,
-//           unit: item.unit,
-//           rate: item.rate,
-//           discount: item.discount || 0,
-//           tax: item.tax || 0,
-//           tax_group_id: item.tax_group_id,
-//           amount: item.amount || (item.rate * item.qty),
-//           discount_type: item.discount_type,
-//           discount_value: item.discount_value
-//         };
-//         return itemData;
-//       }),
-//       status: status || 'DRAFT',
-//       payment_method: payment_method,
-//       taxableAmount: req.body.subTotal || calculatedTaxableAmount,
-//       TotalAmount: req.body.grandTotal || calculatedTotalAmount,
-//       vat: req.body.totalTax || calculatedVat,
-//       totalDiscount: req.body.totalDiscount || calculatedTotalDiscount,
-//       roundOff: roundOff || false,
-//       bank: bank || null,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-
-//       // ----------------------------
-//       // Recurring fields
-//       // ----------------------------
-//       isRecurring: isRecurring || false,
-//       repeatEvery: isRecurring ? repeatEvery : null,
-//       customIntervalNumber: isRecurring ? customIntervalNumber : null,
-//       customIntervalType: isRecurring ? customIntervalType : null,
-//       startOn: isRecurring ? (startOn ? new Date(startOn) : new Date()) : null,
-//       endsOn: isRecurring ? (endsOn ? new Date(endsOn) : null) : null,
-//       neverExpire: isRecurring ? (neverExpire || false) : false,
-//       stopped: isRecurring ? (stopped || false) : false,
-//       nextRecurringDate: nextRecurringDate,
-
-//       sign_type: sign_type || 'none',
-//       signatureName: sign_type === 'eSignature' ? signatureName : null,
-//       signatureImage,
-//       signatureId: sign_type === 'digitalSignature' ? savedSignatureId : null,
-//       billFrom,
-//       billTo,
-//       userId
-//     });
-
-//     await invoice.save({ session });
-
-//     // ----------------------------
-//     // Update inventory for each item
-//     // ----------------------------
-//     for (const item of items) {
-//       const productId = item.productId || item.id;
-//       if (!productId) continue;
-
-//       let inventory = null;
-//       if (mongoose.Types.ObjectId.isValid(productId)) {
-//         inventory = await Inventory.findOne({
-//           productId: new mongoose.Types.ObjectId(productId),
-//           isDeleted: false
-//         }).session(session);
-//       }
-
-//       if (!inventory || inventory.quantity < item.qty) continue;
-//       const previousQuantity = inventory.quantity;
-//       inventory.quantity -= item.qty;
-
-//       inventory.inventory_history.push({
-//         unitId: item.unit || null,
-//         quantity: previousQuantity,
-//         notes: `Stock reduced due to Invoice #${invoice.referenceNo || invoice._id}`,
-//         type: 'stock_out',
-//         adjustment: -item.qty,
-//         referenceId: invoice._id,
-//         referenceType: 'invoice',
-//         createdBy: userId
-//       });
-
-//       await inventory.save({ session });
-//     }
-
-//     // ----------------------------
-//     // Add Invoice Payment if status is PAID
-//     // ----------------------------
-//     if ((status && status.toUpperCase() === 'PAID') || (!status && req.body.status === 'PAID')) {
-//       const invoicePayment = new InvoicePayment({
-//         invoiceId: invoice._id,
-//         amount: invoice.TotalAmount,
-//         payment_method: payment_method,
-//         received_on: payment_date ? new Date(payment_date) : new Date(),
-//         notes: payment_notes || 'Full payment received upon invoice creation',
-//         received_by: userId
-//       });
-
-//       await invoicePayment.save({ session });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       message: 'Invoice created successfully and inventory updated',
-//       data: invoice
-//     });
-
-//     // ----------------------------
-//     // Optional: Send email if status is SENT
-//     // ----------------------------
-//     const billToUser = await User.findById(billTo);
-//     if (billToUser?.email && process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-//       if ((status && status.toUpperCase() === 'SENT') || (!status && req.body.status === 'SENT')) {
-//         try {
-//           const mailOptions = {
-//             from: `"Your Company" <${process.env.SMTP_EMAIL}>`,
-//             to: billToUser.email,
-//             cc: req.body.cc || undefined,
-//             subject: req.body.subject || `Invoice #${invoice.invoiceNumber || invoice.referenceNo}`,
-//             html: req.body.htmlContent || `
-//               <h3>Hello ${billToUser.name},</h3>
-//               <p>Your invoice has been generated and sent to you.</p>
-//               <p><strong>Reference No:</strong> ${invoice.referenceNo}</p>
-//               <p><strong>Total Amount:</strong> ${invoice.TotalAmount}</p>
-//               <p><strong>Status:</strong> ${invoice.status}</p>
-//               <p><strong>Invoice Date:</strong> ${new Date(invoice.invoiceDate).toLocaleDateString()}</p>
-//               ${invoice.dueDate ? `<p><strong>Due Date:</strong> ${new Date(invoice.dueDate).toLocaleDateString()}</p>` : ""}
-//               <br>
-//               <p>Best Regards,<br>Your Company</p>
-//             `,
-//           };
-
-//           if (req.body.sendAttachment) {
-//             mailOptions.attachments = [
-//               {
-//                 filename: `Invoice-${invoice._id}.pdf`,
-//                 path: `${process.env.INVOICE_UPLOAD_PATH || "./uploads/invoices"}/${invoice._id}.pdf`
-//               }
-//             ];
-//           }
-
-//           await sendMail(mailOptions);
-//           console.log(`Invoice email sent to ${billToUser.email}`);
-//         } catch (emailErr) {
-//           console.error("Failed to send invoice email (SENT):", emailErr.message);
-//         }
-//       }
-//     }
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Create invoice error:', err);
-//     res.status(500).json({ message: 'Error creating invoice', error: err.message });
-//   }
-// };
+const { triggerWhatsAppSend } = require('../../../whatsapp-module');
 
 const createInvoice = async (req, res) => {
   try {
@@ -343,12 +420,15 @@ const createInvoice = async (req, res) => {
     const {
       invoiceNumber,
       invoiceDate,
-      // dueDate,        hide it
+      dueDate,
       referenceNo,
       items,
       payment_method,
       notes,
       termsAndCondition,
+      customerGstin,
+      ewayBillNumber,
+      shippingAddress,
       taxableAmount,
       TotalAmount,
       vat,
@@ -398,11 +478,6 @@ const createInvoice = async (req, res) => {
       }
     }
 
-    // Auto calculate totals
-    // let calculatedTaxableAmount = taxableAmount || items.reduce((sum, item) => sum + (item.rate * item.qty), 0);
-    // let calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-    // let calculatedVat = vat || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-    // let calculatedTotalAmount = TotalAmount || (calculatedTaxableAmount + calculatedVat - calculatedTotalDiscount);
 
     // Auto calculate totals
     let calculatedTaxableAmount;
@@ -420,7 +495,7 @@ const createInvoice = async (req, res) => {
 
     // ✅ Calculate based on GST Mode
     let calculatedTotalAmount;
-    
+
     if (taxType === "GST" && gstType === "Inclusive") {
       // For Inclusive: item amounts already include tax, so just sum them
       calculatedTaxableAmount = items.reduce(
@@ -447,21 +522,6 @@ const createInvoice = async (req, res) => {
       );
     }
 
-    // Signature
-    // let signatureImage = null;                  hide them
-    // let savedSignatureId = null;
-    // if (sign_type === "eSignature" && req.file) {
-    //   signatureImage = req.file.path;
-    // } else if (sign_type === "digitalSignature" && signatureId) {
-    //   savedSignatureId = signatureId;
-    // }
-
-    // Recurring next date
-    // let nextRecurringDate = null;                       // hide them
-    // if (isRecurring) {
-    //   const startDate = startOn ? new Date(startOn) : new Date();
-    //   nextRecurringDate = startDate;
-    // }
 
     const inventoryCache = new Map();
     const autoCreatedInventoryKeys = new Set();
@@ -517,7 +577,7 @@ const createInvoice = async (req, res) => {
     let finalPaymentMethod = payment_method || null;
 
     if (finalStatus === "PAID") {
-      if (!["CASH", "MIXED", "PHONEPE", "UPI"].includes(finalPaymentMethod)) {
+      if (!["CASH", "CARD", "MIXED", "PHONEPE", "UPI"].includes(finalPaymentMethod)) {
         return res.status(400).json({
           success: false,
           message: "Invalid payment method for PAID invoice",
@@ -525,9 +585,6 @@ const createInvoice = async (req, res) => {
       }
     }
 
-    // if (req.body.status === "PAID") {
-    //   console.warn("Frontend attempted to set PAID status directly");
-    // }
 
     // Create invoice
     const parsedExchangeOriginalItems = (() => {
@@ -540,13 +597,19 @@ const createInvoice = async (req, res) => {
       }
     })();
 
+    const itemsWithSnapshots = await attachCostSnapshotsToItems(items);
+    const exchangeOriginalItemsWithSnapshots =
+      finalStatus === "EXCHANGE"
+        ? await attachCostSnapshotsToItems(parsedExchangeOriginalItems)
+        : [];
+
     const invoice = new Invoice({
       invoiceNumber,
       customerId,
       invoiceDate: new Date(invoiceDate),
-      // dueDate: dueDate ? new Date(dueDate) : null,        hide it
+      dueDate: dueDate ? new Date(dueDate) : null,
       referenceNo: referenceNo || "",
-      items: items.map((item) => ({
+      items: itemsWithSnapshots.map((item) => ({
         // id: item.id,
         rowId: item.id,                     //  UUID from UI (safe)
         product_id: item.product_id,        //  REAL MongoDB ObjectId
@@ -571,9 +634,11 @@ const createInvoice = async (req, res) => {
         amount: item.amount || item.rate * item.qty,
         discount_type: item.discount_type,
         discount_value: item.discount_value,
+        costPriceSnapshot: item.costPriceSnapshot || 0,
+        totalCostSnapshot: item.totalCostSnapshot || 0,
       })),
       exchangeOriginalItems: finalStatus === "EXCHANGE"
-        ? (parsedExchangeOriginalItems || []).map((item) => ({
+        ? (exchangeOriginalItemsWithSnapshots || []).map((item) => ({
           rowId: item.id || item.rowId,
           product_id: item.product_id,
           variantId: item.variantId,
@@ -593,6 +658,8 @@ const createInvoice = async (req, res) => {
           amount: item.amount,
           discount_type: item.discount_type,
           discount_value: item.discount_value,
+          costPriceSnapshot: item.costPriceSnapshot || 0,
+          totalCostSnapshot: item.totalCostSnapshot || 0,
         }))
         : [],
       // status: status || "DRAFT",
@@ -610,6 +677,9 @@ const createInvoice = async (req, res) => {
       bank: null,      // ❌ DO NOT FORCE BANK ANYMORE
       notes: notes || "",
       termsAndCondition: termsAndCondition || "",
+      customerGstin: String(customerGstin || "").trim(),
+      ewayBillNumber: String(ewayBillNumber || "").trim(),
+      shippingAddress: normalizeInvoiceShippingAddress(shippingAddress),
       // isRecurring,                      // hide them
       // repeatEvery,
       // customIntervalNumber,
@@ -629,167 +699,22 @@ const createInvoice = async (req, res) => {
       taxType: taxType || "GST",           // ✅ Save tax type
       gstType: taxType === "Non-GST" ? null : (gstType || "Exclusive"),     // ✅ Save GST mode only for GST, null for Non-GST
       cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
+      cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
       upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
     });
 
+    // Generate publicShareId eagerly so every invoice immediately has a shareable link
+    const { getOrCreatePublicShareId } = require('../../../services/publicShareService');
+    await getOrCreatePublicShareId(invoice);
+
     await invoice.save();
 
-    // COMMISSION CALCULATION START — PER STAFF AGGREGATION
-    // 1. Group items by staffId
-    const staffGroups = {};
-
-    for (const item of items) {
-      if (!item.staffId) continue;
-      const staffIdStr = item.staffId.toString();
-
-      if (!staffGroups[staffIdStr]) {
-        staffGroups[staffIdStr] = {
-          staffId: item.staffId,
-          items: []
-        };
-      }
-      staffGroups[staffIdStr].items.push(item);
-    }
-
-    // 2. Process each staff group
-    for (const staffId of Object.keys(staffGroups)) {
-      const group = staffGroups[staffId];
-      const staffUser = await User.findById(group.staffId).populate("roleId");
-
-      // Verify Staff Role
-      if (!staffUser || staffUser.roleId.roleName !== "Staff") {
-        console.log(`Skipping commission for ${staffUser?.firstName || 'Unknown'}: Not a Staff role.`);
-        continue;
-      }
-
-      // Determine Commission %
-      let staffCommissionPercent = Number(staffUser.commissionPercent) || 0;
-      if (staffCommissionPercent === 0) {
-        const settings = await CommissionSystemSetting.findOne();
-        staffCommissionPercent = Number(settings?.commissionPercent || 0);
-      }
-
-      if (staffCommissionPercent <= 0) {
-        console.log(`Skipping commission for ${staffUser.firstName}: 0% commission.`);
-        continue;
-      }
-
-      const commissionItems = [];
-      let totalCommissionForDoc = 0;
-
-      // 3. Process items for this staff
-      for (const item of group.items) {
-        // Load product (to ensure validity)
-        const productId = item.product_id;
-        if (!productId) continue;
-        
-        // We trust the item details from the invoice, but could verify product existence
-        // const product = await Product.findById(productId);
-
-        const qty = Number(item.qty);
-        const rate = Number(item.rate);
-        const basePrice = qty * rate; // Commission on pre-tax amount
-
-        const itemCommission = Number(
-          ((basePrice * staffCommissionPercent) / 100).toFixed(2)
-        );
-
-        commissionItems.push({
-          productId: productId,
-          variantId: item.variantId || null,
-          designNo: item.designNo || item.design_no || item.product_name || "",
-          qty: qty,
-          rate: rate,
-          amount: basePrice,
-          commissionPercent: staffCommissionPercent,
-          commissionAmount: itemCommission
-        });
-
-        totalCommissionForDoc += itemCommission;
-      }
-
-      if (commissionItems.length === 0) continue;
-
-      totalCommissionForDoc = Number(totalCommissionForDoc.toFixed(2));
-
-      // 4. Create ONE Commission Document
-      const month = new Date().toISOString().slice(0, 7);    // YYYY-MM
-      const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-
-      const commissionRecord = await Commission.create({
-        staffId: group.staffId,
-        invoiceId: invoice._id,
-        items: commissionItems, // ✅ Array of items
-        totalCommissionAmount: totalCommissionForDoc, // ✅ Aggregated Total
-        month,
-        date: dateStr,
-        createdBy: req.user,
-      });
-
-      // 5. Update User Stats (Total, Monthly, Daily)
-      await User.findByIdAndUpdate(group.staffId, {
-        $inc: { commissionEarned: totalCommissionForDoc }
-      });
-
-      // MONTHLY UPDATE
-      const monthExists = await User.findOne({
-        _id: group.staffId,
-        "monthlyCommission.month": month
-      });
-
-      if (monthExists) {
-        await User.updateOne(
-          { _id: group.staffId, "monthlyCommission.month": month },
-          {
-            $inc: { "monthlyCommission.$.commission": totalCommissionForDoc },
-            $push: { "monthlyCommission.$.records": commissionRecord._id }
-          }
-        );
-      } else {
-        await User.updateOne(
-          { _id: group.staffId },
-          {
-            $push: {
-              monthlyCommission: {
-                month,
-                commission: totalCommissionForDoc,
-                records: [commissionRecord._id]
-              }
-            }
-          }
-        );
-      }
-
-      // DAILY UPDATE
-      const dayExists = await User.findOne({
-        _id: group.staffId,
-        "dailyCommission.date": dateStr
-      });
-
-      if (dayExists) {
-        await User.updateOne(
-          { _id: group.staffId, "dailyCommission.date": dateStr },
-          {
-            $inc: { "dailyCommission.$.commission": totalCommissionForDoc },
-            $push: { "dailyCommission.$.records": commissionRecord._id }
-          }
-        );
-      } else {
-        await User.updateOne(
-          { _id: group.staffId },
-          {
-            $push: {
-              dailyCommission: {
-                date: dateStr,
-                commission: totalCommissionForDoc,
-                records: [commissionRecord._id]
-              }
-            }
-          }
-        );
-      }
-    }
-    // COMMISSION CALCULATION END 
+    await createCommissionRecordsForInvoiceItems({
+      invoiceId: invoice._id,
+      items,
+      createdBy: req.user,
+    });
+    // COMMISSION CALCULATION END
 
     // Update inventory for each item (skip for draft)
     if (invoice.status !== "DRAFT") {
@@ -824,9 +749,8 @@ const createInvoice = async (req, res) => {
         inventory.inventory_history.push({
           unitId: item.unit || null,
           quantity: previousQuantity,
-          notes: `Stock reduced due to Invoice #${
-            invoice.referenceNo || invoice._id
-          }`,
+          notes: `Stock reduced due to Invoice #${invoice.referenceNo || invoice._id
+            }`,
           type: "stock_out",
           adjustment: -item.qty,
           referenceId: invoice._id,
@@ -838,34 +762,8 @@ const createInvoice = async (req, res) => {
       }
     }
 
-    // Payment if PAID
-    // if (status && status.toUpperCase() === "PAID") {
-    //   const invoicePayment = new InvoicePayment({
-    //     invoiceId: invoice._id,
-    //     amount: invoice.TotalAmount,
-    //     payment_method,
-    //     received_on: payment_date ? new Date(payment_date) : new Date(),
-    //     notes: payment_notes || "Full payment received upon invoice creation",
-    //     received_by: userId,
-    //   });
 
-    //   await invoicePayment.save();
-    // }
-
-    // if (status === "PAID") {
-    //   const invoicePayment = new InvoicePayment({
-    //     invoiceId: invoice._id,
-    //     amount: invoice.TotalAmount,
-    //     payment_method: payment_method || "RAZORPAY",
-    //     bankId: payment_method === "RAZORPAY" ? null : bank,
-    //     received_on: payment_date ? new Date(payment_date) : new Date(),
-    //     notes: payment_notes || "Online payment via Razorpay",
-    //     received_by: userId,
-    //   });
-
-    //   await invoicePayment.save();
-    //   await updateInvoiceStatus(invoice._id);
-    // }
+    await syncCreditNotificationForInvoice(invoice._id);
 
     res.status(201).json({
       message: "Invoice created successfully",
@@ -879,71 +777,6 @@ const createInvoice = async (req, res) => {
   }
 };
 
-// const updateInvoiceStatus = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { invoiceId, status } = req.body;
-
-//     if (!invoiceId || !status) {
-//       return res
-//         .status(400)
-//         .json({ message: "Invoice ID and new status are required" });
-//     }
-
-//     const invoice = await Invoice.findById(invoiceId).session(session);
-//     if (!invoice) {
-//       return res.status(404).json({ message: "Invoice not found" });
-//     }
-
-//     // Update the status
-//     invoice.status = status.toUpperCase();
-//     await invoice.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: `Invoice status updated to ${status}`,
-//       data: invoice,
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error("Update invoice status error:", err);
-//     res
-//       .status(500)
-//       .json({ message: "Error updating invoice status", error: err.message });
-//   }
-// };
-
-// async function updateInvoiceStatus(invoiceId) {
-//   const invoice = await Invoice.findById(invoiceId);
-//   if (!invoice) return;
-
-//   const payments = await InvoicePayment.find({ invoiceId });
-
-//   // ✅ ROUND EVERYTHING TO 2 DECIMALS
-//   const totalPaid = Number(
-//     payments.reduce((sum, p) => sum + Number(p.amount || 0), 0).toFixed(2)
-//   );
-
-//   const invoiceTotal = Number(
-//     Number(invoice.TotalAmount || 0).toFixed(2)
-//   );
-
-//   // 🔒 FINAL DECISION
-//   if (totalPaid >= invoiceTotal && invoiceTotal > 0) {
-//     invoice.status = "PAID";
-//   } else if (totalPaid > 0) {
-//     invoice.status = "PARTIALLY_PAID";
-//   } else {
-//     invoice.status = "UNPAID";
-//   }
-
-//   await invoice.save();
-// }
 
 async function updateInvoiceStatus(invoiceId) {
   const invoice = await Invoice.findById(invoiceId);
@@ -962,7 +795,7 @@ async function updateInvoiceStatus(invoiceId) {
   if (Math.abs(totalPaid - invoiceTotal) <= 0.01) {
     // ✅ Check if this is an exchange transaction
     const isExchange = invoice.isExchange === true;
-    
+
     if (isExchange) {
       newStatus = "EXCHANGE";
     } else {
@@ -988,26 +821,10 @@ async function updateInvoiceStatus(invoiceId) {
       { $set: { status: "PAID" } }
     );
   }
+
+  await syncCreditNotificationForInvoice(invoiceId);
 }
 
-// async function updateInvoiceStatus(invoiceId) {
-//   const invoice = await Invoice.findById(invoiceId);
-//   if (!invoice) return;
-
-//   const payments = await InvoicePayment.find({ invoiceId });
-//   // const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount) || 0);
-//   const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-//   if (totalPaid >= invoice.TotalAmount) {
-//     invoice.status = "PAID";
-//   } else if (totalPaid > 0) {
-//     invoice.status = "PARTIALLY_PAID";
-//   } else {
-//     invoice.status = "UNPAID";
-//   }
-
-//   await invoice.save();
-// }
 
 const sendInvoiceEmail = async (req, res) => {
   try {
@@ -1041,9 +858,8 @@ const sendInvoiceEmail = async (req, res) => {
       mailOptions.attachments = [
         {
           filename: `Invoice-${invoiceId}.pdf`,
-          path: `${
-            process.env.INVOICE_UPLOAD_PATH || "./uploads/invoices"
-          }/${invoiceId}.pdf`,
+          path: `${process.env.INVOICE_UPLOAD_PATH || "./uploads/invoices"
+            }/${invoiceId}.pdf`,
         },
       ];
     }
@@ -1076,185 +892,6 @@ const sendInvoiceEmail = async (req, res) => {
   }
 };
 
-// const updateInvoice = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       invoiceDate,
-//       dueDate,
-//       referenceNo,
-//       items,
-//       payment_method,
-//       notes,
-//       termsAndCondition,
-//       taxableAmount,
-//       TotalAmount,
-//       vat,
-//       totalDiscount,
-//       roundOff,
-//       bank,
-//       isRecurring,
-//       repeatEvery,
-//       customIntervalNumber,
-//       customIntervalType,
-//       startOn,
-//       endsOn,
-//       neverExpire,
-//       stopped,
-//       sign_type,
-//       signatureName,
-//       signatureId,
-//       billFrom,
-//       billTo,
-//       status,
-//       payment_date,
-//       payment_notes
-//     } = req.body;
-
-//     const invoiceId = req.params.id;
-//     const userId = req.user;
-
-//     const existingInvoice = await Invoice.findById(invoiceId).session(session);
-//     if (!existingInvoice) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Invoice not found' });
-//     }
-
-//     // Calculate totals if not provided
-//     let calculatedTaxableAmount = taxableAmount || 0;
-//     let calculatedVat = vat || 0;
-//     let calculatedTotalDiscount = totalDiscount || 0;
-//     let calculatedTotalAmount = TotalAmount || 0;
-
-//     if (!taxableAmount || !TotalAmount || !vat || !totalDiscount) {
-//       calculatedTaxableAmount = items.reduce((sum, item) => sum + (item.rate * item.qty), 0);
-//       calculatedTotalDiscount = items.reduce((sum, item) => sum + (item.discount || 0), 0);
-//       calculatedVat = items.reduce((sum, item) => sum + (item.tax || 0), 0);
-//       calculatedTotalAmount = calculatedTaxableAmount + calculatedVat - calculatedTotalDiscount;
-//     }
-
-//     // Handle signature logic
-//     let signatureImage = existingInvoice.signatureImage || null;
-//     let updatedSignatureId = existingInvoice.signatureId || null;
-//     let updatedSignatureName = existingInvoice.signatureName || null;
-
-//     if (sign_type === 'eSignature') {
-//       signatureImage = req.file ? req.file.path : existingInvoice.signatureImage;
-//       updatedSignatureName = signatureName || existingInvoice.signatureName;
-//       updatedSignatureId = null;
-//     } else if (sign_type === 'digitalSignature') {
-//       if (!signatureId) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({ message: 'Signature ID is required for digital signatures' });
-//       }
-//       const signatureExists = await Signature.findById(signatureId);
-//       if (!signatureExists) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(404).json({ message: 'Digital Signature not found' });
-//       }
-//       updatedSignatureId = signatureId;
-//       updatedSignatureName = null;
-//       signatureImage = null;
-//     }
-
-//     // Safe dates
-//     const safeInvoiceDate = invoiceDate && !isNaN(new Date(invoiceDate)) ? new Date(invoiceDate) : existingInvoice.invoiceDate;
-//     const safeDueDate = dueDate && !isNaN(new Date(dueDate)) ? new Date(dueDate) : existingInvoice.dueDate || null;
-
-//     // Calculate nextRecurringDate if recurring is enabled
-//     let nextRecurringDate = existingInvoice.nextRecurringDate || null;
-//     if (isRecurring) {
-//       const startDate = startOn ? new Date(startOn) : existingInvoice.startOn || new Date();
-//       if (repeatEvery && repeatEvery !== 'custom') {
-//         nextRecurringDate = startDate;
-//       } else if (repeatEvery === 'custom' && customIntervalNumber && customIntervalType) {
-//         nextRecurringDate = startDate; // initial, cron will handle next increment
-//       }
-//     } else {
-//       // If recurrence is turned off, clear recurring fields
-//       nextRecurringDate = null;
-//     }
-
-//     // Prepare update data
-//     const updateData = {
-//       invoiceDate: safeInvoiceDate,
-//       dueDate: safeDueDate,
-//       referenceNo: referenceNo || '',
-//       items: items.map(item => ({
-//         id: item.id,
-//         name: item.name,
-//         key: item.key,
-//         qty: item.qty,
-//         unit: item.unit,
-//         rate: item.rate,
-//         discount: item.discount,
-//         tax: item.tax,
-//         tax_group_id: item.tax_group_id,
-//         amount: item.amount || (item.rate * item.qty),
-//         discount_type: item.discount_type,
-//         discount_value: item.discount_value,
-//       })),
-//       status: status || existingInvoice.status,
-//       payment_method: payment_method,
-//       taxableAmount: req.body.subTotal || calculatedTaxableAmount,
-//       TotalAmount: req.body.grandTotal || calculatedTotalAmount,
-//       vat: req.body.totalTax || calculatedVat,
-//       totalDiscount: req.body.totalDiscount || calculatedTotalDiscount,
-//       roundOff: roundOff || false,
-//       bank: bank || null,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-//       isRecurring: isRecurring || false,
-//       repeatEvery: isRecurring ? repeatEvery : null,
-//       customIntervalNumber: isRecurring ? customIntervalNumber : null,
-//       customIntervalType: isRecurring ? customIntervalType : null,
-//       startOn: isRecurring ? (startOn ? new Date(startOn) : existingInvoice.startOn || new Date()) : null,
-//       endsOn: isRecurring ? (endsOn ? new Date(endsOn) : existingInvoice.endsOn || null) : null,
-//       neverExpire: isRecurring ? (neverExpire || false) : false,
-//       stopped: isRecurring ? (stopped || false) : false,
-//       nextRecurringDate: nextRecurringDate,
-//       sign_type: sign_type || 'none',
-//       signatureName: updatedSignatureName,
-//       signatureImage,
-//       signatureId: updatedSignatureId,
-//       billFrom,
-//       billTo,
-//       userId
-//     };
-
-//     const invoice = await Invoice.findByIdAndUpdate(invoiceId, updateData, { new: true, session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Invoice updated successfully',
-//       data: invoice
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error(err);
-//     res.status(500).json({
-//       message: 'Error updating invoice',
-//       error: err.message
-//     });
-//   }
-// };
-
 const updateInvoice = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1272,12 +909,15 @@ const updateInvoice = async (req, res) => {
 
     const {
       invoiceDate,
-      // dueDate,           // hdie it
+      dueDate,
       referenceNo,
       items,
       payment_method,
       notes,
       termsAndCondition,
+      customerGstin,
+      ewayBillNumber,
+      shippingAddress,
       taxableAmount,
       TotalAmount,
       vat,
@@ -1309,22 +949,6 @@ const updateInvoice = async (req, res) => {
       exchangeOriginalItems,
     } = req.body;
 
-    // Handle signature logic
-    // let signatureImage = existingInvoice.signatureImage || null;          // hide them
-    // let updatedSignatureId = existingInvoice.signatureId || null;
-    // let updatedSignatureName = existingInvoice.signatureName || null;
-
-    // if (sign_type === "eSignature") {                  // hide it
-    //   signatureImage = req.file
-    //     ? req.file.path
-    //     : existingInvoice.signatureImage;
-    //   updatedSignatureName = signatureName || existingInvoice.signatureName;
-    //   updatedSignatureId = null;
-    // } else if (sign_type === "digitalSignature") {
-    //   updatedSignatureId = signatureId;
-    //   updatedSignatureName = null;
-    //   signatureImage = null;
-    // }
 
     // ✅ Merge incoming items with existing to prevent losing variant fields
     const existingItems = (existingInvoice.items || []).map((it) =>
@@ -1353,6 +977,8 @@ const updateInvoice = async (req, res) => {
       });
     }
 
+    mergedItems = await attachCostSnapshotsToItems(mergedItems, existingItems);
+
     // ✅ Calculate discount and tax totals
     const lineDiscountTotal = mergedItems.reduce(
       (sum, item) => sum + toMoney(item.discount || 0),
@@ -1369,13 +995,13 @@ const updateInvoice = async (req, res) => {
 
     const calculatedVat = toMoney(
       vat ??
-        mergedItems.reduce((sum, item) => sum + toMoney(item.tax || 0), 0)
+      mergedItems.reduce((sum, item) => sum + toMoney(item.tax || 0), 0)
     );
 
     // ✅ Calculate based on GST Mode
     let calculatedTaxableAmount;
     let calculatedTotalAmount;
-    
+
     if (taxType === "GST" && gstType === "Inclusive") {
       // For Inclusive: item amounts already include tax, so just sum them
       calculatedTaxableAmount = toMoney(
@@ -1391,47 +1017,29 @@ const updateInvoice = async (req, res) => {
       // For Exclusive or Non-GST: use rate*qty as base, then add tax
       calculatedTaxableAmount = toMoney(
         taxableAmount ??
-          mergedItems.reduce(
-            (sum, item) => sum + toMoney(item.rate) * Number(item.qty),
-            0
-          )
+        mergedItems.reduce(
+          (sum, item) => sum + toMoney(item.rate) * Number(item.qty),
+          0
+        )
       );
       calculatedTotalAmount = toMoney(
         calculatedTaxableAmount + calculatedVat - calculatedTotalDiscount
       );
     }
 
-    // let calculatedTaxableAmount =
-    //   taxableAmount ||
-    //   items.reduce((sum, item) => sum + item.rate * item.qty, 0);
-    // let calculatedTotalDiscount =
-    //   totalDiscount ||
-    //   items.reduce((sum, item) => sum + (item.discount || 0), 0);
-    // let calculatedVat =
-    //   vat || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-    // let calculatedTotalAmount =
-    //   TotalAmount ||
-    //   calculatedTaxableAmount + calculatedVat - calculatedTotalDiscount;
-
-    // let nextRecurringDate = existingInvoice.nextRecurringDate || null;         // hide them
-    // if (isRecurring) {
-    //   const startDate = startOn
-    //     ? new Date(startOn)
-    //     : existingInvoice.startOn || new Date();
-    //   nextRecurringDate = startDate;
-    // } else {
-    //   nextRecurringDate = null;
-    // }
 
     const updateData = {
       invoiceDate: invoiceDate
         ? new Date(invoiceDate)
         : existingInvoice.invoiceDate,
-      // dueDate: dueDate ? new Date(dueDate) : existingInvoice.dueDate,           // hide it
+      dueDate:
+        dueDate !== undefined
+          ? (dueDate ? new Date(dueDate) : null)
+          : existingInvoice.dueDate,
       referenceNo,
       items: mergedItems,
       status,
-      payment_method,
+      ...(existingInvoice.status === "DRAFT" ? { payment_method } : {}),
       taxableAmount: calculatedTaxableAmount,
       TotalAmount: calculatedTotalAmount,
       vat: calculatedVat,
@@ -1441,6 +1049,12 @@ const updateInvoice = async (req, res) => {
       bank,
       notes,
       termsAndCondition,
+      customerGstin: customerGstin ?? existingInvoice.customerGstin ?? "",
+      ewayBillNumber: ewayBillNumber ?? existingInvoice.ewayBillNumber ?? "",
+      shippingAddress:
+        shippingAddress !== undefined
+          ? normalizeInvoiceShippingAddress(shippingAddress)
+          : normalizeInvoiceShippingAddress(existingInvoice.shippingAddress),
       // isRecurring,          // hide them
       // repeatEvery,
       // customIntervalNumber,
@@ -1459,8 +1073,11 @@ const updateInvoice = async (req, res) => {
       userId,
       taxType: taxType || existingInvoice.taxType || "GST",     // ✅ Save tax type
       gstType: (taxType || existingInvoice.taxType) === "Non-GST" ? null : (gstType || existingInvoice.gstType || "Exclusive"), // ✅ Save GST mode only for GST, null for Non-GST
-      cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
-      upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
+      ...(existingInvoice.status === "DRAFT" ? {
+        cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
+        cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
+        upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
+      } : {}),
     };
 
     const parsedExchangeOriginalItems = (() => {
@@ -1473,18 +1090,27 @@ const updateInvoice = async (req, res) => {
       }
     })();
 
-    if (parsedExchangeOriginalItems.length > 0) {
-      updateData.exchangeOriginalItems = parsedExchangeOriginalItems;
+    const exchangeOriginalSnapshotSource =
+      existingInvoice.exchangeOriginalItems && existingInvoice.exchangeOriginalItems.length > 0
+        ? existingInvoice.exchangeOriginalItems
+        : existingInvoice.items;
+    const parsedExchangeOriginalItemsWithSnapshots =
+      parsedExchangeOriginalItems.length > 0
+        ? await attachCostSnapshotsToItems(
+          parsedExchangeOriginalItems,
+          exchangeOriginalSnapshotSource
+        )
+        : [];
+
+    if (parsedExchangeOriginalItemsWithSnapshots.length > 0) {
+      updateData.exchangeOriginalItems = parsedExchangeOriginalItemsWithSnapshots;
     }
 
-    const skipExchangeDetection = String(req.body.skipExchangeDetection || "")
-      .trim()
-      .toLowerCase() === "true";
+    const skipExchangeDetection = req.body.skipExchangeDetection !== undefined 
+      ? String(req.body.skipExchangeDetection).trim().toLowerCase() === "true"
+      : true; // Default to true so regular edits don't become exchanges
 
-    // ===== PRODUCT EXCHANGE LOGIC START =====
-    // Detect if this is a product exchange transaction
-    // IMPORTANT: This must be AFTER updateData creation to override status
-    const isExchangeTransaction = 
+    const isExchangeTransaction =
       !skipExchangeDetection &&
       ['PAID', 'PARTIALLY_PAID', 'EXCHANGE'].includes(existingInvoice.status) &&
       itemsHaveChanged(existingInvoice.items, mergedItems);
@@ -1493,8 +1119,8 @@ const updateInvoice = async (req, res) => {
 
     if (isExchangeTransaction) {
       const exchangeBaseItems =
-        parsedExchangeOriginalItems.length > 0
-          ? parsedExchangeOriginalItems
+        parsedExchangeOriginalItemsWithSnapshots.length > 0
+          ? parsedExchangeOriginalItemsWithSnapshots
           : (existingInvoice.exchangeOriginalItems && existingInvoice.exchangeOriginalItems.length > 0
             ? existingInvoice.exchangeOriginalItems
             : existingInvoice.items);
@@ -1519,19 +1145,16 @@ const updateInvoice = async (req, res) => {
           });
         }
       }
-      // Keep original invoice number for exchanges (do not change ID)
-      // console.log('???? Exchange detected! Products have changed in PAID/PARTIALLY_PAID invoice');
-      
+
       // Get items that were removed/exchanged (to restock)
       // Compare both product_id AND variantId to handle variant exchanges
-      exchangedItems = existingInvoice.items.filter(oldItem => 
-        !mergedItems.some(newItem => 
+      exchangedItems = existingInvoice.items.filter(oldItem =>
+        !mergedItems.some(newItem =>
           String(newItem.product_id) === String(oldItem.product_id) &&
           String(newItem.variantId || '') === String(oldItem.variantId || '')
         )
       );
 
-      // console.log(`???? Restocking ${exchangedItems.length} exchanged items`);
 
       // Restock exchanged or reduced-quantity items back to inventory
       const restockAdjustments = [];
@@ -1593,7 +1216,6 @@ const updateInvoice = async (req, res) => {
         )
       );
 
-      // console.log(`???? Deducting stock for ${newItems.length} new items`);
 
       for (const item of newItems) {
         if (item.variantId) {
@@ -1609,7 +1231,7 @@ const updateInvoice = async (req, res) => {
 
             // Deduct quantity
             inventoryRecord.quantity -= item.qty;
-            
+
             // Add history entry
             inventoryRecord.inventory_history.push({
               unitId: item.unit || 'pcs',
@@ -1623,15 +1245,12 @@ const updateInvoice = async (req, res) => {
             });
 
             await inventoryRecord.save();
-            // console.log(`??? Deducted variant ${item.variantId}: -${item.qty} (New stock: ${inventoryRecord.quantity})`);
           } catch (err) {
             console.log("?????? Inventory deduction error (non-critical):", err.message);
           }
         }
       }
 
-      // ===== EXCHANGE AMOUNT CALCULATION =====
-      // Calculate the difference between old and new invoice amounts
       const parsedExchangeOldTotal = Number(exchangeOldTotal);
       const hasProvidedOldTotal =
         exchangeOldTotal !== undefined &&
@@ -1653,18 +1272,14 @@ const updateInvoice = async (req, res) => {
           message: "Invalid exchange amount difference",
         });
       }
-      
-      // console.log(`???? Exchange Amount Analysis:`);
-      // console.log(`   Old Total: ???${oldTotal}`);
-      // console.log(`   New Total: ???${newTotal}`);
-      // console.log(`   Difference: ???${amountDifference}`);
-      
+
+
       // Store the difference for frontend logic
       updateData.amountDifference = amountDifference;
       updateData.isExchange = true;
       updateData.exchangeOldTotal = oldTotal;
       updateData.exchangeNewTotal = newTotal;
-      
+
       // Case 1: Customer returns value (downgrade - new product is cheaper)
       if (amountDifference < 0) {
         const refundAmount = Math.abs(amountDifference);
@@ -1673,8 +1288,6 @@ const updateInvoice = async (req, res) => {
         updateData.profit_amount = existingInvoice.profit_amount || null;
         updateData.status = "EXCHANGE";
         updateData.exchangePending = false;
-        // console.log(`???? Downgrade Exchange: Returned Amount = ???${updateData.returned_amount}`);
-        // Update existing payment record to reflect new total
         const existingPayment = await InvoicePayment.findOne({ invoiceId: existingInvoice._id });
         if (existingPayment) {
           await InvoicePayment.findByIdAndUpdate(
@@ -1689,25 +1302,21 @@ const updateInvoice = async (req, res) => {
           );
         }
       }
-      
+
       // Case 2: Customer pays more (upgrade - new product is more expensive)
       else if (amountDifference > 0) {
         updateData.returned_amount = existingInvoice.returned_amount || null;
-        // profit_amount will be set ONLY after additional payment is received
-        // console.log(`???? Upgrade Exchange: Additional Payment Required = ???${amountDifference}`);
         updateData.status = "EXCHANGE";
         updateData.exchangePending = false;
       }
-      
+
       // Case 3: Same amount (variant exchange, same price)
       else {
         updateData.returned_amount = existingInvoice.returned_amount || null;
         updateData.profit_amount = existingInvoice.profit_amount || null;
-        // console.log(`?????? Same Price Exchange: No amount adjustment needed`);
         updateData.status = "EXCHANGE";
         updateData.exchangePending = false;
       }
-      // ===== EXCHANGE AMOUNT CALCULATION END =====
 
       // Status handled above per exchange case
     }
@@ -1732,18 +1341,10 @@ const updateInvoice = async (req, res) => {
         if (Number(newQty) !== Number(oldQty)) return true;
       }
       const changed = false;
-      
-      // Detailed logging for debugging
-      // console.log('???? Exchange Detection - Detailed Analysis:');
-      // console.log('Old Items (product-variant):', oldItemKeys);
-      // console.log('New Items (product-variant):', newItemKeys);
-      // console.log('Old Items Count:', oldItemKeys.length);
-      // console.log('New Items Count:', newItemKeys.length);
-      // console.log('Products/Variants Changed:', changed);
-      
+
+
       return changed;
     }
-    // ===== PRODUCT EXCHANGE LOGIC END =====
 
     const invoice = await Invoice.findByIdAndUpdate(invoiceId, updateData, {
       new: true,
@@ -1887,9 +1488,9 @@ const updateInvoice = async (req, res) => {
       }
     }
 
-    const skipPaymentSync = String(req.body.skipPaymentSync || "")
-      .trim()
-      .toLowerCase() === "true";
+    const skipPaymentSync = req.body.skipPaymentSync !== undefined
+      ? String(req.body.skipPaymentSync).trim().toLowerCase() === "true"
+      : true; // Default to true so regular edits don't magically change payments without explicit payment actions
 
     // ✅ Update existing invoice payment amount if invoice total changed (non-exchange)
     if (invoice && !isExchangeTransaction && !skipPaymentSync) {
@@ -1931,167 +1532,21 @@ const updateInvoice = async (req, res) => {
       }
     }
 
-    // COMMISSION CALCULATION START — Prevent duplicates
-    const Commission = require("../../../models/Commission");
-    const existingCommissions = await Commission.find({ invoiceId });
-    
-    if (existingCommissions.length > 0) {
-      console.log(`⏭️  Skipping commission - ${existingCommissions.length} already exist`);
-    } else {
-      // console.log('💰 Calculating commissions');
-      const settings = await CommissionSystemSetting.findOne();
-    
-      // 1. Group items by staffId
-      const staffGroups = {};
-
-      for (const item of items) {
-        if (!item.staffId) continue;
-        const staffIdStr = item.staffId.toString();
-
-        if (!staffGroups[staffIdStr]) {
-          staffGroups[staffIdStr] = {
-            staffId: item.staffId,
-            items: []
-          };
-        }
-        staffGroups[staffIdStr].items.push(item);
-      }
-
-      // 2. Process each staff group
-      for (const staffId of Object.keys(staffGroups)) {
-        const group = staffGroups[staffId];
-        const staffUser = await User.findById(group.staffId).populate("roleId");
-
-        // Verify Staff Role
-        if (!staffUser || staffUser.roleId.roleName !== "Staff") continue;
-
-        // Determine Commission %
-        let staffCommissionPercent = Number(staffUser.commissionPercent) || 0;
-        if (staffCommissionPercent === 0) {
-          const settings = await CommissionSystemSetting.findOne();
-          staffCommissionPercent = Number(settings?.commissionPercent || 0);
-        }
-
-        if (staffCommissionPercent <= 0) continue;
-
-        const commissionItems = [];
-        let totalCommissionForDoc = 0;
-
-        // 3. Process items for this staff
-        for (const item of group.items) {
-          const productId = item.product_id;
-          if (!productId) continue;
-
-          // const product = await Product.findById(productId);
-          
-          const qty = Number(item.qty);
-          const rate = Number(item.rate);
-          const basePrice = qty * rate;
-
-          const itemCommission = Number(
-            ((basePrice * staffCommissionPercent) / 100).toFixed(2)
-          );
-
-          commissionItems.push({
-            productId: productId,
-            variantId: item.variantId || null,
-            designNo: item.designNo || item.design_no || item.product_name || "",
-            qty: qty,
-            rate: rate,
-            amount: basePrice,
-            commissionPercent: staffCommissionPercent,
-            commissionAmount: itemCommission
-          });
-
-          totalCommissionForDoc += itemCommission;
-        }
-
-        if (commissionItems.length === 0) continue;
-
-        totalCommissionForDoc = Number(totalCommissionForDoc.toFixed(2));
-
-        const month = new Date().toISOString().slice(0, 7);
-        const dateStr = new Date().toISOString().slice(0, 10);
-
-        const commissionRecord = await Commission.create({
-          staffId: group.staffId,
-          invoiceId,
-          items: commissionItems, // ✅ Aggregated Items
-          totalCommissionAmount: totalCommissionForDoc, // ✅ Total
-          month,
-          date: dateStr,
-          createdBy: req.user,
-        });
-
-        // 5. Update User Stats
-        await User.findByIdAndUpdate(group.staffId, {
-          $inc: { commissionEarned: totalCommissionForDoc }
-        });
-
-        // MONTHLY UPDATE
-        const existingMonth = await User.findOne({
-          _id: group.staffId,
-          "monthlyCommission.month": month
-        });
-
-        if (existingMonth) {
-          await User.findOneAndUpdate(
-            { _id: group.staffId, "monthlyCommission.month": month },
-            {
-              $inc: { "monthlyCommission.$.commission": totalCommissionForDoc },
-              $push: { "monthlyCommission.$.records": commissionRecord._id }
-            }
-          );
-        } else {
-          await User.findByIdAndUpdate(group.staffId, {
-            $push: {
-              monthlyCommission: {
-                month,
-                commission: totalCommissionForDoc,
-                records: [commissionRecord._id]
-              }
-            }
-          });
-        }
-
-        // DAILY UPDATE
-        const existingDate = await User.findOne({
-          _id: group.staffId,
-          "dailyCommission.date": dateStr
-        });
-
-        if (existingDate) {
-          await User.findOneAndUpdate(
-            { _id: group.staffId, "dailyCommission.date": dateStr },
-            {
-              $inc: { "dailyCommission.$.commission": totalCommissionForDoc },
-              $push: { "dailyCommission.$.records": commissionRecord._id }
-            }
-          );
-        } else {
-          await User.findByIdAndUpdate(group.staffId, {
-            $push: {
-              dailyCommission: {
-                date: dateStr,
-                commission: totalCommissionForDoc,
-                records: [commissionRecord._id]
-              }
-            }
-          });
-        }
-      }
-    } // End if-else for commission duplicate prevention
+    const existingCommissions = await Commission.find({ invoiceId }).select("items");
+    await createCommissionRecordsForInvoiceItems({
+      invoiceId,
+      items,
+      createdBy: req.user,
+      existingCommissions,
+    });
     // COMMISSION CALCULATION END
 
-    // res.status(200).json({
-    //   message: "Invoice updated successfully",
-    //   data: invoice,
-    // });
-    // Updated to include exchange flags and metadata
+    await syncCreditNotificationForInvoice(invoiceId);
+
     res.status(200).json({
       success: true,
-      message: isExchangeTransaction 
-        ? 'Invoice updated - Exchange transaction' 
+      message: isExchangeTransaction
+        ? 'Invoice updated - Exchange transaction'
         : 'Invoice updated successfully',
       data: invoice,
       isExchange: isExchangeTransaction,
@@ -2125,8 +1580,6 @@ const getInvoice = async (req, res) => {
         "bank",
         "accountHoldername bankName branchName accountNumber IFSCCode"
       )
-      // hide it
-      // .populate("signatureId", "signatureName signatureImage"); // Add signature population
 
     if (!invoice) {
       return res.status(404).json({
@@ -2140,141 +1593,122 @@ const getInvoice = async (req, res) => {
     // Customer details
     const customerDetails =
       invoice.customerId &&
-      typeof invoice.customerId === "object" &&
-      invoice.customerId.name
+        typeof invoice.customerId === "object" &&
+        invoice.customerId.name
         ? {
-            id: invoice.customerId._id,
-            name: invoice.customerId.name || "",
-            email: invoice.customerId.email || null,
-            phone: invoice.customerId.phone || null,
-            image: invoice.customerId.image
-              ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
-              : "",
-            billingAddress: invoice.customerId.billingAddress || null,
-          }
+          id: invoice.customerId._id,
+          name: invoice.customerId.name || "",
+          email: invoice.customerId.email || null,
+          phone: invoice.customerId.phone || null,
+          image: invoice.customerId.image
+            ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
+            : "",
+          billingAddress: invoice.customerId.billingAddress || null,
+        }
         : invoice.customerId === "UNKNOWN"
           ? {
-              id: null,
-              name: "UNKNOWN",
-              email: null,
-              phone: "N/A",
-              image: "",
-              billingAddress: null,
-            }
+            id: null,
+            name: "UNKNOWN",
+            email: null,
+            phone: "N/A",
+            image: "",
+            billingAddress: null,
+          }
           : null;
 
     // BillFrom details (from User model)
     const billFromDetails = invoice.billFrom
       ? {
-          id: invoice.billFrom._id,
-          name: `${invoice.billFrom.firstName || ""} ${
-            invoice.billFrom.lastName || ""
+        id: invoice.billFrom._id,
+        name: `${invoice.billFrom.firstName || ""} ${invoice.billFrom.lastName || ""
           }`.trim(),
-          email: invoice.billFrom.email || null,
-          phone: invoice.billFrom.phone || null,
-          address: invoice.billFrom.address || null,
-          image: invoice.billFrom.profileImage
-            ? `${baseUrl}${invoice.billFrom.profileImage.replace(/\\/g, "/")}`
-            : "",
-        }
+        email: invoice.billFrom.email || null,
+        phone: invoice.billFrom.phone || null,
+        address: invoice.billFrom.address || null,
+        image: invoice.billFrom.profileImage
+          ? `${baseUrl}${invoice.billFrom.profileImage.replace(/\\/g, "/")}`
+          : "",
+      }
       : null;
 
     // BillTo details
     const billToDetails = invoice.billTo
       ? {
-          id: invoice.billTo._id,
-          name: invoice.billTo.name || "",
-          email: invoice.billTo.email || null,
-          phone: invoice.billTo.phone || null,
-          billingAddress: invoice.billTo.billingAddress || null,
-          image: invoice.billTo.image
-            ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
-            : "",
-        }
+        id: invoice.billTo._id,
+        name: invoice.billTo.name || "",
+        email: invoice.billTo.email || null,
+        phone: invoice.billTo.phone || null,
+        billingAddress: invoice.billTo.billingAddress || null,
+        image: invoice.billTo.image
+          ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
+          : "",
+      }
       : null;
 
     // Bank details
     const bankDetails = invoice.bank
       ? {
-          id: invoice.bank.id || "",
-          accountHoldername: invoice.bank.accountHoldername || "",
-          bankName: invoice.bank.bankName || "",
-          branchName: invoice.bank.branchName || "",
-          accountNumber: invoice.bank.accountNumber || "",
-          IFSCCode: invoice.bank.IFSCCode || "",
+        id: invoice.bank.id || "",
+        accountHoldername: invoice.bank.accountHoldername || "",
+        bankName: invoice.bank.bankName || "",
+        branchName: invoice.bank.branchName || "",
+        accountNumber: invoice.bank.accountNumber || "",
+        IFSCCode: invoice.bank.IFSCCode || "",
       }
       : null;
 
-    // Enrich items with variant MRP for printing
-    const normalizeItems = (items) =>
-      (items || []).map((item) =>
-        typeof item?.toObject === "function" ? item.toObject() : item
-      );
+    // Enrich invoice snapshots with current print metadata when older rows are incomplete.
+    const normalizedItems = normalizeInvoiceItems(invoice.items);
+    const normalizedExchangeItems = normalizeInvoiceItems(invoice.exchangeOriginalItems);
 
     const allVariantIds = [
-      ...normalizeItems(invoice.items).map((i) => i?.variantId).filter(Boolean),
-      ...normalizeItems(invoice.exchangeOriginalItems).map((i) => i?.variantId).filter(Boolean),
+      ...normalizedItems.map((i) => i?.variantId).filter(Boolean),
+      ...normalizedExchangeItems.map((i) => i?.variantId).filter(Boolean),
+    ];
+    const allProductIds = [
+      ...normalizedItems.map((i) => i?.product_id).filter(Boolean),
+      ...normalizedExchangeItems.map((i) => i?.product_id).filter(Boolean),
     ];
 
     const uniqueVariantIds = Array.from(
       new Set(allVariantIds.map((id) => String(id)))
     );
+    const uniqueProductIds = Array.from(
+      new Set(allProductIds.map((id) => String(id)))
+    );
 
     const variantMrpMap = new Map();
-    if (uniqueVariantIds.length > 0) {
-      const variants = await ProductVariant.find({
-        _id: { $in: uniqueVariantIds },
-      })
-        .select("_id mrp")
-        .lean();
+    const productHsnMap = new Map();
+    const [variants, products] = await Promise.all([
+      uniqueVariantIds.length > 0
+        ? ProductVariant.find({
+          _id: { $in: uniqueVariantIds },
+        })
+          .select("_id mrp")
+          .lean()
+        : [],
+      uniqueProductIds.length > 0
+        ? Product.find({ _id: { $in: uniqueProductIds } })
+          .select("_id hsn_code")
+          .lean()
+        : [],
+    ]);
 
-      variants.forEach((v) => {
-        variantMrpMap.set(String(v._id), Number(v.mrp || 0));
-      });
-    }
+    variants.forEach((v) => {
+      variantMrpMap.set(String(v._id), Number(v.mrp || 0));
+    });
+    products.forEach((product) => {
+      productHsnMap.set(String(product._id), String(product.hsn_code || "").trim());
+    });
 
-    const enrichedItems = normalizeItems(invoice.items).map((item) => ({
-      ...item,
-      variantMrp:
-        item?.variantMrp ??
-        variantMrpMap.get(String(item?.variantId || "")) ??
-        null,
-    }));
+    const printMetadata = { variantMrpMap, productHsnMap };
+    const enrichedItems = enrichInvoicePrintItems(invoice.items, printMetadata);
 
-    const enrichedExchangeItems = normalizeItems(
-      invoice.exchangeOriginalItems
-    ).map((item) => ({
-      ...item,
-      variantMrp:
-        item?.variantMrp ??
-        variantMrpMap.get(String(item?.variantId || "")) ??
-        null,
-    }));
+    const enrichedExchangeItems = enrichInvoicePrintItems(
+      invoice.exchangeOriginalItems,
+      printMetadata
+    );
 
-    // Signature details
-    // let signatureDetails = null;                            // hide them
-    // if (invoice.sign_type === "eSignature") {
-    //   signatureDetails = {
-    //     name: invoice.signatureName || null,
-    //     image: invoice.signatureImage
-    //       ? `${baseUrl}${invoice.signatureImage.replace(/\\/g, "/")}`
-    //       : null,
-    //   };
-    // } else if (
-    //   invoice.sign_type === "digitalSignature" &&
-    //   invoice.signatureId
-    // ) {
-    //   signatureDetails = {
-    //     id: invoice.signatureId._id || null,
-    //     name: invoice.signatureId.signatureName || null,
-    //     image: invoice.signatureId.signatureImage
-    //       ? `${baseUrl}${invoice.signatureId.signatureImage.replace(
-    //           /\\/g,
-    //           "/"
-    //         )}`
-    //       : null,
-    //   };
-    // }
 
     // Response object
     const responseData = {
@@ -2282,7 +1716,7 @@ const getInvoice = async (req, res) => {
       invoiceNumber: invoice.invoiceNumber,
       customer: customerDetails,
       invoiceDate: invoice.invoiceDate,
-      // dueDate: invoice.dueDate,              // hide it
+      dueDate: invoice.dueDate,
       referenceNo: invoice.referenceNo,
       status: invoice.status,
       payment_method: invoice.payment_method,
@@ -2300,9 +1734,13 @@ const getInvoice = async (req, res) => {
       bank: bankDetails,
       notes: invoice.notes,
       termsAndCondition: invoice.termsAndCondition,
+      customerGstin: invoice.customerGstin || "",
+      ewayBillNumber: invoice.ewayBillNumber || "",
+      shippingAddress: normalizeInvoiceShippingAddress(invoice.shippingAddress),
       taxType: invoice.taxType || "GST",       // ✅ Return taxType
       gstType: invoice.gstType || "Exclusive", // ✅ Return gstType
       cashAmount: invoice.cashAmount || 0,
+      cardAmount: invoice.cardAmount || 0,
       upiAmount: invoice.upiAmount || 0,
       exchangeOldTotal: invoice.exchangeOldTotal ?? null,
       exchangeNewTotal: invoice.exchangeNewTotal ?? null,
@@ -2329,8 +1767,8 @@ const getInvoice = async (req, res) => {
 
       // sign_type: invoice.sign_type,             // hide signature
       // signature: signatureDetails,
-      createdAt: invoice.createdAt,
-      updatedAt: invoice.updatedAt,
+      createdAt: toIsoWithoutMilliseconds(invoice.createdAt),
+      updatedAt: toIsoWithoutMilliseconds(invoice.updatedAt),
     };
 
     res.status(200).json({
@@ -2380,6 +1818,7 @@ const getAllInvoices = async (req, res) => {
         "CANCELLED",
         "REFUNDED",
         "PARTIALLY_PAID",
+        "PENDING",
         "EXCHANGE", // ✅ Added EXCHANGE status
       ].includes(status)
     ) {
@@ -2485,58 +1924,58 @@ const getAllInvoices = async (req, res) => {
 
       const customerDetails =
         invoice.customerId &&
-        typeof invoice.customerId === "object" &&
-        invoice.customerId.name
+          typeof invoice.customerId === "object" &&
+          invoice.customerId.name
           ? {
-              id: invoice.customerId._id,
-              name: invoice.customerId.name || "",
-              email: invoice.customerId.email || null,
-              phone: invoice.customerId.phone || null,
-              image: invoice.customerId.image
-                ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
-                : "",
-            }
+            id: invoice.customerId._id,
+            name: invoice.customerId.name || "",
+            email: invoice.customerId.email || null,
+            phone: invoice.customerId.phone || null,
+            image: invoice.customerId.image
+              ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
+              : "",
+          }
           : invoice.customerId === "UNKNOWN"
             ? {
-                id: null,
-                name: "UNKNOWN",
-                email: null,
-                phone: "N/A",
-                image: "",
-              }
+              id: null,
+              name: "UNKNOWN",
+              email: null,
+              phone: "N/A",
+              image: "",
+            }
             : null;
 
       const billFromDetails = invoice.billFrom
         ? {
-            id: invoice.billFrom._id,
-            name: invoice.billFrom.name || "",
-            email: invoice.billFrom.email || null,
-            phone: invoice.billFrom.phone || null,
-            companyName: invoice.billFrom.companyName || null,
-          }
+          id: invoice.billFrom._id,
+          name: invoice.billFrom.name || "",
+          email: invoice.billFrom.email || null,
+          phone: invoice.billFrom.phone || null,
+          companyName: invoice.billFrom.companyName || null,
+        }
         : null;
 
       const billToDetails = invoice.billTo
         ? {
-            id: invoice.billTo._id,
-            name: invoice.billTo.name || "",
-            email: invoice.billTo.email || null,
-            phone: invoice.billTo.phone || null,
-            billingAddress: invoice.billTo.billingAddress || null,
-            image: invoice.billTo.image
-              ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
-              : "",
-          }
+          id: invoice.billTo._id,
+          name: invoice.billTo.name || "",
+          email: invoice.billTo.email || null,
+          phone: invoice.billTo.phone || null,
+          billingAddress: invoice.billTo.billingAddress || null,
+          image: invoice.billTo.image
+            ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
+            : "",
+        }
         : null;
 
       const bankDetails = invoice.bank
         ? {
-            accountHoldername: invoice.bank.accountHoldername || "",
-            bankName: invoice.bank.bankName || "",
-            branchName: invoice.bank.branchName || "",
-            accountNumber: invoice.bank.accountNumber || "",
-            IFSCCode: invoice.bank.IFSCCode || "",
-          }
+          accountHoldername: invoice.bank.accountHoldername || "",
+          bankName: invoice.bank.bankName || "",
+          branchName: invoice.bank.branchName || "",
+          accountNumber: invoice.bank.accountNumber || "",
+          IFSCCode: invoice.bank.IFSCCode || "",
+        }
         : null;
 
       const signatureImage = invoice.signatureImage
@@ -2546,9 +1985,9 @@ const getAllInvoices = async (req, res) => {
       const signatureDetails =
         invoice.sign_type === "eSignature"
           ? {
-              name: invoice.signatureName || null,
-              image: signatureImage,
-            }
+            name: invoice.signatureName || null,
+            image: signatureImage,
+          }
           : null;
 
       const formattedItems = invoice.items.map((item) => ({
@@ -2561,10 +2000,10 @@ const getAllInvoices = async (req, res) => {
         units: item.units,
         unit: item.unit
           ? {
-              id: item.unit._id,
-              name: item.unit.name,
-              symbol: item.unit.symbol,
-            }
+            id: item.unit._id,
+            name: item.unit.name,
+            symbol: item.unit.symbol,
+          }
           : null,
         rate: item.rate,
         discount: item.discount,
@@ -2579,6 +2018,12 @@ const getAllInvoices = async (req, res) => {
         totalPaid: 0,
         lastPaymentDate: null,
       };
+      const rawTotalPaid = Number(paymentInfo.totalPaid || 0);
+      const invoiceTotalAmount = Number(invoice.TotalAmount || 0);
+      const normalizedTotalPaid =
+        invoice.status === "EXCHANGE"
+          ? Math.min(rawTotalPaid, invoiceTotalAmount)
+          : rawTotalPaid;
 
       return {
         id: invoice._id,
@@ -2590,14 +2035,15 @@ const getAllInvoices = async (req, res) => {
         status: invoice.status,
         payment_method: invoice.payment_method,
         cashAmount: invoice.cashAmount || 0,
+        cardAmount: invoice.cardAmount || 0,
         upiAmount: invoice.upiAmount || 0,
         taxableAmount: invoice.taxableAmount,
         totalDiscount: invoice.totalDiscount,
         vat: invoice.vat,
         TotalAmount: invoice.TotalAmount,
         roundOff: invoice.roundOff,
-        totalPaid: paymentInfo.totalPaid,
-        remainingBalance: invoice.TotalAmount - paymentInfo.totalPaid,
+        totalPaid: normalizedTotalPaid,
+        remainingBalance: Math.max(invoiceTotalAmount - normalizedTotalPaid, 0),
         lastPaymentDate: formatDate(paymentInfo.lastPaymentDate),
         items: formattedItems,
         itemsCount: invoice.items.length,
@@ -2606,6 +2052,9 @@ const getAllInvoices = async (req, res) => {
         bank: bankDetails,
         notes: invoice.notes,
         termsAndCondition: invoice.termsAndCondition,
+        customerGstin: invoice.customerGstin || "",
+        ewayBillNumber: invoice.ewayBillNumber || "",
+        shippingAddress: normalizeInvoiceShippingAddress(invoice.shippingAddress),
         isRecurring: invoice.isRecurring,
         recurring: invoice.isRecurring ? invoice.recurring : null,
         recurringDuration: invoice.isRecurring
@@ -2613,8 +2062,8 @@ const getAllInvoices = async (req, res) => {
           : null,
         sign_type: invoice.sign_type,
         signature: signatureDetails,
-        createdAt: formatDate(invoice.createdAt),
-        updatedAt: formatDate(invoice.updatedAt),
+        createdAt: toIsoWithoutMilliseconds(invoice.createdAt),
+        updatedAt: toIsoWithoutMilliseconds(invoice.updatedAt),
       };
     });
 
@@ -2652,13 +2101,13 @@ const getNextInvoiceNumber = async (req, res) => {
 
     const invoicePrefix =
       invoicePrefixSetting?.value &&
-      typeof invoicePrefixSetting.value === "string"
+        typeof invoicePrefixSetting.value === "string"
         ? invoicePrefixSetting.value
         : "INV_";
 
     const invoiceNumberType =
       invoiceNumberTypeSetting?.value &&
-      typeof invoiceNumberTypeSetting.value === "string"
+        typeof invoiceNumberTypeSetting.value === "string"
         ? invoiceNumberTypeSetting.value
         : "auto";
 
@@ -2864,58 +2313,58 @@ const getChildInvoices = async (req, res) => {
 
       const customerDetails =
         invoice.customerId &&
-        typeof invoice.customerId === "object" &&
-        invoice.customerId.name
+          typeof invoice.customerId === "object" &&
+          invoice.customerId.name
           ? {
-              id: invoice.customerId._id,
-              name: invoice.customerId.name || "",
-              email: invoice.customerId.email || null,
-              phone: invoice.customerId.phone || null,
-              image: invoice.customerId.image
-                ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
-                : "",
-            }
+            id: invoice.customerId._id,
+            name: invoice.customerId.name || "",
+            email: invoice.customerId.email || null,
+            phone: invoice.customerId.phone || null,
+            image: invoice.customerId.image
+              ? `${baseUrl}${invoice.customerId.image.replace(/\\/g, "/")}`
+              : "",
+          }
           : invoice.customerId === "UNKNOWN"
             ? {
-                id: null,
-                name: "UNKNOWN",
-                email: null,
-                phone: "N/A",
-                image: "",
-              }
+              id: null,
+              name: "UNKNOWN",
+              email: null,
+              phone: "N/A",
+              image: "",
+            }
             : null;
 
       const billFromDetails = invoice.billFrom
         ? {
-            id: invoice.billFrom._id,
-            name: invoice.billFrom.name || "",
-            email: invoice.billFrom.email || null,
-            phone: invoice.billFrom.phone || null,
-            companyName: invoice.billFrom.companyName || null,
-          }
+          id: invoice.billFrom._id,
+          name: invoice.billFrom.name || "",
+          email: invoice.billFrom.email || null,
+          phone: invoice.billFrom.phone || null,
+          companyName: invoice.billFrom.companyName || null,
+        }
         : null;
 
       const billToDetails = invoice.billTo
         ? {
-            id: invoice.billTo._id,
-            name: invoice.billTo.name || "",
-            email: invoice.billTo.email || null,
-            phone: invoice.billTo.phone || null,
-            billingAddress: invoice.billTo.billingAddress || null,
-            image: invoice.billTo.image
-              ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
-              : "",
-          }
+          id: invoice.billTo._id,
+          name: invoice.billTo.name || "",
+          email: invoice.billTo.email || null,
+          phone: invoice.billTo.phone || null,
+          billingAddress: invoice.billTo.billingAddress || null,
+          image: invoice.billTo.image
+            ? `${baseUrl}${invoice.billTo.image.replace(/\\/g, "/")}`
+            : "",
+        }
         : null;
 
       const bankDetails = invoice.bank
         ? {
-            accountHoldername: invoice.bank.accountHoldername || "",
-            bankName: invoice.bank.bankName || "",
-            branchName: invoice.bank.branchName || "",
-            accountNumber: invoice.bank.accountNumber || "",
-            IFSCCode: invoice.bank.IFSCCode || "",
-          }
+          accountHoldername: invoice.bank.accountHoldername || "",
+          bankName: invoice.bank.bankName || "",
+          branchName: invoice.bank.branchName || "",
+          accountNumber: invoice.bank.accountNumber || "",
+          IFSCCode: invoice.bank.IFSCCode || "",
+        }
         : null;
 
       const signatureImage = invoice.signatureImage
@@ -2925,9 +2374,9 @@ const getChildInvoices = async (req, res) => {
       const signatureDetails =
         invoice.sign_type === "eSignature"
           ? {
-              name: invoice.signatureName || null,
-              image: signatureImage,
-            }
+            name: invoice.signatureName || null,
+            image: signatureImage,
+          }
           : null;
 
       const formattedItems = invoice.items.map((item) => ({
@@ -2940,10 +2389,10 @@ const getChildInvoices = async (req, res) => {
         units: item.units,
         unit: item.unit
           ? {
-              id: item.unit._id,
-              name: item.unit.name,
-              symbol: item.unit.symbol,
-            }
+            id: item.unit._id,
+            name: item.unit.name,
+            symbol: item.unit.symbol,
+          }
           : null,
         rate: item.rate,
         discount: item.discount,
@@ -2983,6 +2432,9 @@ const getChildInvoices = async (req, res) => {
         bank: bankDetails,
         notes: invoice.notes,
         termsAndCondition: invoice.termsAndCondition,
+        customerGstin: invoice.customerGstin || "",
+        ewayBillNumber: invoice.ewayBillNumber || "",
+        shippingAddress: normalizeInvoiceShippingAddress(invoice.shippingAddress),
         isRecurring: invoice.isRecurring,
         recurring: invoice.isRecurring ? invoice.recurring : null,
         recurringDuration: invoice.isRecurring
@@ -2990,8 +2442,8 @@ const getChildInvoices = async (req, res) => {
           : null,
         sign_type: invoice.sign_type,
         signature: signatureDetails,
-        createdAt: formatDate(invoice.createdAt),
-        updatedAt: formatDate(invoice.updatedAt),
+        createdAt: toIsoWithoutMilliseconds(invoice.createdAt),
+        updatedAt: toIsoWithoutMilliseconds(invoice.updatedAt),
       };
     });
 
@@ -3081,8 +2533,8 @@ const listInvoicesMinimal = async (req, res) => {
         totalAmount: invoice.TotalAmount,
         customer:
           invoice.customerId &&
-          typeof invoice.customerId === "object" &&
-          invoice.customerId.name
+            typeof invoice.customerId === "object" &&
+            invoice.customerId.name
             ? { id: invoice.customerId._id, name: invoice.customerId.name }
             : invoice.customerId === "UNKNOWN"
               ? { id: null, name: "UNKNOWN" }
@@ -3177,8 +2629,8 @@ const listInvoicesMinimalWithoutChallan = async (req, res) => {
         totalAmount: invoice.TotalAmount,
         customer:
           invoice.customerId &&
-          typeof invoice.customerId === "object" &&
-          invoice.customerId.name
+            typeof invoice.customerId === "object" &&
+            invoice.customerId.name
             ? { id: invoice.customerId._id, name: invoice.customerId.name }
             : invoice.customerId === "UNKNOWN"
               ? { id: null, name: "UNKNOWN" }
@@ -3284,21 +2736,21 @@ const getInvoicePaymentDetails = async (req, res) => {
       totalAmount: invoice.TotalAmount,
       customer:
         invoice.customerId &&
-        typeof invoice.customerId === "object" &&
-        invoice.customerId.name
+          typeof invoice.customerId === "object" &&
+          invoice.customerId.name
           ? {
-              id: invoice.customerId._id,
-              name: invoice.customerId.name,
-              email: invoice.customerId.email || null,
-              phone: invoice.customerId.phone || null,
-            }
+            id: invoice.customerId._id,
+            name: invoice.customerId.name,
+            email: invoice.customerId.email || null,
+            phone: invoice.customerId.phone || null,
+          }
           : invoice.customerId === "UNKNOWN"
             ? {
-                id: null,
-                name: "UNKNOWN",
-                email: null,
-                phone: "N/A",
-              }
+              id: null,
+              name: "UNKNOWN",
+              email: null,
+              phone: "N/A",
+            }
             : null,
       payment: {
         totalPaid,
@@ -3332,41 +2784,6 @@ const getInvoicePaymentDetails = async (req, res) => {
   }
 };
 
-// const deleteInvoice = async (req, res) => {
-
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const invoice = await Invoice.findByIdAndUpdate(
-//       req.params.id,
-//       { isDeleted: true },
-//       { new: true, session }
-//     );
-
-//     if (!invoice) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Invoice not found' });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Invoice deleted successfully',
-//       data: invoice
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error(err);
-//     res.status(500).json({ message: 'Error deleting invoice', error: err.message });
-//   }
-// };
-
-// remove invoice only from I not from DB because of history purpose
-
 const deleteInvoiceById = async (invoiceId) => {
   const invoice = await Invoice.findById(invoiceId);
   if (!invoice) return false;
@@ -3378,6 +2795,7 @@ const deleteInvoiceById = async (invoiceId) => {
   }
 
   await Invoice.findByIdAndDelete(invoice._id);
+  await resolveNotificationForInvoice(invoice._id);
   return true;
 };
 
@@ -3468,12 +2886,14 @@ const convertQuotationToInvoice = async (req, res) => {
       staffId: item.staffId || null,
     }));
 
+    const invoiceItemsWithSnapshots = await attachCostSnapshotsToItems(invoiceItems);
+
     const invoice = new Invoice({
       customerId: quotation.billTo || quotation.customerId || userId,
       invoiceDate: new Date(),
       dueDate: quotation.expiryDate,
       referenceNo: quotation.referenceNo,
-      items: invoiceItems,
+      items: invoiceItemsWithSnapshots,
       status: "DRAFT",
       taxableAmount: quotation.taxableAmount,
       TotalAmount: quotation.TotalAmount,
@@ -3498,6 +2918,10 @@ const convertQuotationToInvoice = async (req, res) => {
       quotationId: quotation._id,
     });
 
+    // Generate publicShareId eagerly
+    const { getOrCreatePublicShareId } = require('../../../services/publicShareService');
+    await getOrCreatePublicShareId(invoice);
+
     await invoice.save();
 
     // 4. Save invoiceId in quotation
@@ -3516,164 +2940,26 @@ const convertQuotationToInvoice = async (req, res) => {
   }
 };
 
-// const recordInvoicePayment = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { amount, payment_method, received_on, invoiceId, notes, bankId } =
-//       req.body;
-
-//     if (!amount || amount <= 0) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: { amount: "Invalid payment amount." },
-//       });
-//     }
-
-//     // Find invoice
-//     const invoice = await Invoice.findById(invoiceId).session(session);
-//     if (!invoice) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: { invoiceId: "Invoice not found." },
-//       });
-//     }
-
-//     if (invoice.status === "PAID") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: { invoiceId: "Invoice is already fully paid." },
-//       });
-//     }
-
-//     // Total already paid
-//     const totalPaidResult = await InvoicePayment.aggregate([
-//       { $match: { invoiceId: new mongoose.Types.ObjectId(invoiceId) } },
-//       { $group: { _id: null, total: { $sum: "$amount" } } },
-//     ]).session(session);
-
-//     const alreadyPaid =
-//       totalPaidResult.length > 0 ? totalPaidResult[0].total : 0;
-//     const remainingBalance = invoice.TotalAmount - alreadyPaid;
-
-//     if (amount > remainingBalance) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: {
-//           amount: `Payment exceeds remaining balance. Remaining: ${remainingBalance}`,
-//         },
-//       });
-//     }
-
-//     // Find bank account
-//     const bank = await BankDetail.findById(bankId).session(session);
-//     if (!bank) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: { bankId: "Bank account not found." },
-//       });
-//     }
-
-//     // Find payment mode
-//     const paymentModeDoc = await PaymentMode.findById(payment_method).session(
-//       session
-//     );
-//     if (!paymentModeDoc) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Validation failed.",
-//         errors: { payment_method: "Payment mode not found." },
-//       });
-//     }
-
-//     // Determine transaction type
-//     const transactionType =
-//       paymentModeDoc.slug?.toLowerCase() === "cash" ? "DEPOSIT" : "TRANSFER_IN";
-
-//     // Update bank balance
-//     const balanceBefore = bank.currentBalance || 0;
-//     const newBalance =
-//       parseFloat(balanceBefore.toString()) + parseFloat(amount);
-//     bank.currentBalance = newBalance;
-//     bank.asOnDate = new Date();
-//     await bank.save({ session });
-
-//     const payment = new InvoicePayment({
-//       invoiceId,
-//       amount,
-//       payment_method: paymentModeDoc._id,
-//       received_on: new Date(received_on),
-//       notes: notes || "",
-//       received_by: req.user || null,
-//       bankId,
-//     });
-
-//     await payment.save({ session });
-
-//     const bankTransaction = new BankTransaction({
-//       bankAccountId: bank._id,
-//       transactionDate: new Date(received_on),
-//       type: transactionType,
-//       amount,
-//       balanceBefore,
-//       balanceAfter: newBalance,
-//       paymentModeId: paymentModeDoc._id,
-//       remarks:
-//         notes || `Invoice Payment - ${invoice.invoiceNumber || invoice._id}`,
-//       relatedType: "INVOICE_PAYMENT",
-//       relatedId: payment._id,
-//     });
-
-//     await bankTransaction.save({ session });
-
-//     // Update invoice status
-//     const newTotalPaid = alreadyPaid + amount;
-//     if (newTotalPaid === invoice.TotalAmount) invoice.status = "PAID";
-//     else if (newTotalPaid > 0) invoice.status = "PARTIALLY_PAID";
-//     await invoice.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       success: true,
-//       message: "Payment recorded successfully",
-//       data: {
-//         payment,
-//         bank_transaction: bankTransaction,
-//         invoice_status: invoice.status,
-//         remaining_balance: invoice.TotalAmount - newTotalPaid,
-//       },
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     res.status(500).json({
-//       success: false,
-//       message: "Error recording payment",
-//       error: err.message,
-//     });
-//   }
-// };
-
 const recordInvoicePayment = async (req, res) => {
   try {
-    // const { invoiceId, amount, payment_method, received_on, notes } = req.body;
-    const { invoiceId, payment_method, received_on, notes, cashAmount, upiAmount } = req.body;
+    const { invoiceId, payment_method, received_on, notes, cashAmount, cardAmount, upiAmount, creditAmount } = req.body;
     const updateExistingPayment = String(req.body.updateExistingPayment || "")
       .trim()
       .toLowerCase() === "true";
-  
+    const finalizePayment = String(req.body.finalize || "")
+      .trim()
+      .toLowerCase() === "true";
+
     const rawAmount = Number(req.body.amount);
     const amount = toMoney(rawAmount);
 
-    if (!invoiceId || !amount || amount <= 0) {
+    const normalizedCreditAmount = toMoney(Number(creditAmount || 0));
+
+    if (
+      !invoiceId ||
+      amount < 0 ||
+      (amount <= 0 && !(payment_method === "CREDIT" && normalizedCreditAmount > 0) && !updateExistingPayment)
+    ) {
       return res.status(400).json({ message: "Invalid data" });
     }
 
@@ -3686,17 +2972,14 @@ const recordInvoicePayment = async (req, res) => {
     for (const item of invoice.items || []) {
       if (!item.product_id || !item.variantId) continue;
 
-      const inventory = await Inventory.findOne({
+      const { inventory } = await getOrCreateInventoryRecord({
         productId: item.product_id,
         variantId: item.variantId,
-        isDeleted: false,
+        userId: invoice.userId || req.user,
+        unitId: item.unit || null,
+        createdBy: req.user,
+        note: `Inventory auto-created from payment settlement for Invoice #${invoice.invoiceNumber || invoice.referenceNo || ""}`,
       });
-
-      if (!inventory) {
-        return res.status(400).json({
-          message: `Inventory not found for variant: ${item.variantDesignNo || ""}`,
-        });
-      }
 
       const alreadyDeducted = (inventory.inventory_history || []).some(
         (h) =>
@@ -3706,12 +2989,6 @@ const recordInvoicePayment = async (req, res) => {
       );
 
       if (alreadyDeducted) continue;
-
-      if (inventory.quantity < item.qty) {
-        return res.status(400).json({
-          message: `Insufficient stock for variant: ${item.variantDesignNo || ""}`,
-        });
-      }
 
       const previousQuantity = inventory.quantity;
       inventory.quantity -= item.qty;
@@ -3730,7 +3007,6 @@ const recordInvoicePayment = async (req, res) => {
 
     // 🔒 Total paid till now
     const payments = await InvoicePayment.find({ invoiceId });
-    // const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
     const totalPaid = Number(
       payments.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)
     );
@@ -3739,56 +3015,135 @@ const recordInvoicePayment = async (req, res) => {
       Number(invoice.TotalAmount || 0).toFixed(2)
     );
 
+    const requiresManualVerification = (method, pendingUpiAmount = 0) => {
+      const normalizedMethod = String(method || "").toUpperCase();
+      return (
+        normalizedMethod === "UPI" ||
+        normalizedMethod === "PHONEPE" ||
+        (normalizedMethod === "MIXED" && Number(pendingUpiAmount || 0) > 0)
+      );
+    };
 
-    // if (totalPaid >= invoice.TotalAmount) {
-    if (totalPaid >= invoiceTotal) {
+
+    if (totalPaid >= invoiceTotal && amount > 0) {
       return res.status(400).json({ message: "Invoice already paid" });
     }
 
-    // if (totalPaid + amount > invoice.TotalAmount) {
     if (toMoney(totalPaid + amount) > invoiceTotal) {
-      return res.status(400).json({
-        message: "Payment exceeds remaining balance",
-      });
+      if (updateExistingPayment && amount <= 0) {
+        // Allow updating payment method when invoice total decreases or stays the same
+      } else {
+        return res.status(400).json({
+          message: "Payment exceeds remaining balance",
+        });
+      }
     }
 
-    if (updateExistingPayment) {
-      const latestPayment = await InvoicePayment.findOne({ invoiceId }).sort({ createdAt: -1 });
+    const latestPayment = await InvoicePayment.findOne({ invoiceId }).sort({ createdAt: -1 });
+    const existingCreditPayment =
+      invoice.payment_method === "CREDIT"
+        ? await InvoicePayment.findOne({ invoiceId, payment_method: "CREDIT" }).sort({ createdAt: -1 })
+        : null;
+    const shouldMergeCreditPayment =
+      invoice.payment_method === "CREDIT" &&
+      existingCreditPayment &&
+      Number(existingCreditPayment.creditAmount || 0) > 0;
+    const paymentToUpdate = shouldMergeCreditPayment ? existingCreditPayment : latestPayment;
 
-      if (latestPayment) {
-        const newAmount = toMoney(totalPaid + amount);
+    if (updateExistingPayment || shouldMergeCreditPayment) {
+
+      if (paymentToUpdate) {
+        let newAmount = toMoney(totalPaid + amount);
+        if (updateExistingPayment && amount <= 0) {
+          newAmount = Math.min(newAmount, invoiceTotal);
+        }
         const updateFields = {
           amount: newAmount,
+          payment_method: payment_method || paymentToUpdate.payment_method,
           received_on: received_on ? new Date(received_on) : new Date(),
           notes: notes || `Payment updated due to Invoice Edit (New Total: ₹${newAmount})`,
         };
 
-        if (latestPayment.payment_method === "MIXED") {
-          const baseCash = Number(latestPayment.cashAmount || 0);
-          const baseUpi = Number(latestPayment.upiAmount || 0);
+        if (shouldMergeCreditPayment) {
+          updateFields.payment_method = payment_method || paymentToUpdate.payment_method;
+          updateFields.notes =
+            notes || `Credit invoice payment settled via ${payment_method}. Total received: Rs.${newAmount}`;
+          updateFields.creditAmount = Math.max(0, Number((invoiceTotal - newAmount).toFixed(2)));
+        }
+
+        const effectivePaymentMethod =
+          updateFields.payment_method || paymentToUpdate.payment_method;
+
+        if (effectivePaymentMethod === "MIXED") {
+          const baseCash = Number(paymentToUpdate.cashAmount || 0);
+          const baseCard = Number(paymentToUpdate.cardAmount || 0);
+          const baseUpi = Number(paymentToUpdate.upiAmount || 0);
           const addCash = Number(cashAmount || 0);
+          const addCard = Number(cardAmount || 0);
           const addUpi = Number(upiAmount || 0);
 
           let nextCash = baseCash + addCash;
+          let nextCard = baseCard + addCard;
           let nextUpi = baseUpi + addUpi;
-          const totalSplit = nextCash + nextUpi;
+          const totalSplit = nextCash + nextCard + nextUpi;
 
           if (totalSplit > 0 && toMoney(totalSplit) !== toMoney(newAmount)) {
-            nextUpi = Number((newAmount - nextCash).toFixed(2));
+            nextUpi = Number((newAmount - nextCash - nextCard).toFixed(2));
           } else if (totalSplit === 0) {
             nextCash = 0;
+            nextCard = 0;
             nextUpi = newAmount;
           }
 
           updateFields.cashAmount = Math.max(0, Number(nextCash.toFixed(2)));
+          updateFields.cardAmount = Math.max(0, Number(nextCard.toFixed(2)));
           updateFields.upiAmount = Math.max(0, Number(nextUpi.toFixed(2)));
         }
 
-        await InvoicePayment.findByIdAndUpdate(latestPayment._id, {
+        const updateQuery = {
           $set: updateFields,
-        });
+          ...(effectivePaymentMethod !== "MIXED"
+            ? { $unset: { cashAmount: "", cardAmount: "", upiAmount: "" } }
+            : {}),
+        };
 
-        await updateInvoiceStatus(invoiceId);
+        await InvoicePayment.findByIdAndUpdate(paymentToUpdate._id, updateQuery);
+
+        await Invoice.findByIdAndUpdate(
+          invoiceId,
+          {
+            $set: {
+              payment_method: effectivePaymentMethod,
+              cashAmount:
+                effectivePaymentMethod === "MIXED"
+                  ? Math.max(0, Number(updateFields.cashAmount || 0))
+                  : 0,
+              cardAmount:
+                effectivePaymentMethod === "MIXED"
+                  ? Math.max(0, Number(updateFields.cardAmount || 0))
+                  : 0,
+              upiAmount:
+                effectivePaymentMethod === "MIXED"
+                  ? Math.max(0, Number(updateFields.upiAmount || 0))
+                  : 0,
+            },
+          },
+          { runValidators: false }
+        );
+
+        if (
+          requiresManualVerification(effectivePaymentMethod, updateFields.upiAmount) &&
+          !finalizePayment
+        ) {
+          await Invoice.findByIdAndUpdate(
+            invoiceId,
+            { $set: { status: "PENDING" } },
+            { runValidators: false }
+          );
+          await syncCreditNotificationForInvoice(invoiceId);
+        } else {
+          await updateInvoiceStatus(invoiceId);
+        }
 
         const updatedInvoice = await Invoice.findById(invoiceId);
 
@@ -3807,6 +3162,7 @@ const recordInvoicePayment = async (req, res) => {
       invoiceId,
       amount,
       payment_method, // "CASH" | "PHONEPE" | "MIXED"
+      ...(payment_method === "CREDIT" ? { creditAmount: normalizedCreditAmount } : {}),
       received_on: received_on ? new Date(received_on) : new Date(),
       notes: notes || "",
       received_by: req.user,
@@ -3816,39 +3172,76 @@ const recordInvoicePayment = async (req, res) => {
     if (payment_method === "MIXED") {
       // ✅ Resolve split amounts and keep them consistent with the payment amount
       const invoiceCash = Number(invoice.cashAmount || 0);
+      const invoiceCard = Number(invoice.cardAmount || 0);
       const invoiceUpi = Number(invoice.upiAmount || 0);
 
       let resolvedCash =
         cashAmount !== undefined && cashAmount !== null ? Number(cashAmount) : invoiceCash;
+      let resolvedCard =
+        cardAmount !== undefined && cardAmount !== null ? Number(cardAmount) : invoiceCard;
       let resolvedUpi =
         upiAmount !== undefined && upiAmount !== null ? Number(upiAmount) : invoiceUpi;
 
-      // If only one side is present, derive the other from total amount
-      if (!resolvedCash && resolvedUpi) {
-        resolvedCash = Number((amount - resolvedUpi).toFixed(2));
-      } else if (!resolvedUpi && resolvedCash) {
-        resolvedUpi = Number((amount - resolvedCash).toFixed(2));
+      const offlineSplit = Number((resolvedCash + resolvedCard).toFixed(2));
+
+      if (!resolvedUpi && offlineSplit > 0) {
+        resolvedUpi = Number((amount - offlineSplit).toFixed(2));
       }
 
       // If both missing, default UPI to full amount
-      if (!resolvedCash && !resolvedUpi) {
+      if (!resolvedCash && !resolvedCard && !resolvedUpi) {
         resolvedCash = 0;
+        resolvedCard = 0;
         resolvedUpi = amount;
       }
 
-      // Normalize to ensure cash + upi = amount (prefer cash as given)
-      if (toMoney(resolvedCash + resolvedUpi) !== toMoney(amount)) {
-        resolvedUpi = Number((amount - resolvedCash).toFixed(2));
+      if (toMoney(resolvedCash + resolvedCard + resolvedUpi) !== toMoney(amount)) {
+        resolvedUpi = Number((amount - resolvedCash - resolvedCard).toFixed(2));
       }
 
       paymentData.cashAmount = Math.max(0, resolvedCash);
+      paymentData.cardAmount = Math.max(0, resolvedCard);
       paymentData.upiAmount = Math.max(0, resolvedUpi);
     }
 
     await InvoicePayment.create(paymentData);
 
-    // ✅ Recalculate invoice status
-    await updateInvoiceStatus(invoiceId);
+    await Invoice.findByIdAndUpdate(
+      invoiceId,
+      {
+        $set: {
+          payment_method,
+          cashAmount:
+            payment_method === "MIXED"
+              ? Math.max(0, Number(paymentData.cashAmount || 0))
+              : 0,
+          cardAmount:
+            payment_method === "MIXED"
+              ? Math.max(0, Number(paymentData.cardAmount || 0))
+              : 0,
+          upiAmount:
+            payment_method === "MIXED"
+              ? Math.max(0, Number(paymentData.upiAmount || 0))
+              : 0,
+        },
+      },
+      { runValidators: false }
+    );
+
+    // ✅ Recalculate invoice status, except manual-verification payments stay pending
+    if (
+      requiresManualVerification(payment_method, paymentData.upiAmount) &&
+      !finalizePayment
+    ) {
+      await Invoice.findByIdAndUpdate(
+        invoiceId,
+        { $set: { status: "PENDING" } },
+        { runValidators: false }
+      );
+      await syncCreditNotificationForInvoice(invoiceId);
+    } else {
+      await updateInvoiceStatus(invoiceId);
+    }
 
     const updatedInvoice = await Invoice.findById(invoiceId);
 
@@ -3866,14 +3259,13 @@ const recordInvoicePayment = async (req, res) => {
 };
 
 
-
 const cancelInvoice = async (req, res) => {
   try {
     const { id } = req.params;
 
     // 1. Find the invoice and populate customer (billTo)
     const invoice = await Invoice.findById(id).populate('billTo', 'name phone email');
-    
+
     if (!invoice) {
       return res.status(404).json({
         success: false,
@@ -3897,8 +3289,7 @@ const cancelInvoice = async (req, res) => {
     // 4. Revert inventory for each item
     for (const item of invoice.items) {
       try {
-        // console.log('Processing item:', item.name, 'Variant:', item.variantId, 'Qty:', item.qty);
-        
+
         // Find the inventory record for this variant
         const inventoryRecord = await Inventory.findOne({
           variantId: item.variantId,
@@ -3906,11 +3297,10 @@ const cancelInvoice = async (req, res) => {
         });
 
         if (inventoryRecord) {
-          // console.log(`Current stock: ${inventoryRecord.quantity}`);
-          
+
           // Increase stock quantity (revert the sale)
           const newQuantity = inventoryRecord.quantity + item.qty;
-          
+
           // Add stock_in history entry
           inventoryRecord.inventory_history.push({
             unitId: item.unit,
@@ -3922,12 +3312,11 @@ const cancelInvoice = async (req, res) => {
             referenceType: 'invoice',  // Using 'invoice' as referenceType
             createdBy: req.user
           });
-          
+
           // Update the quantity
           inventoryRecord.quantity = newQuantity;
           await inventoryRecord.save();
-          
-          // console.log(`✅ Inventory reverted: ${item.qty} units added. New stock: ${newQuantity}`);
+
         } else {
           console.log(`⚠️ Inventory record not found for variant ID: ${item.variantId}`);
         }
@@ -3947,14 +3336,15 @@ const cancelInvoice = async (req, res) => {
       { $set: { status: "CANCELLED" } }
     );
 
+    await syncCreditNotificationForInvoice(invoice._id);
+
     // 6. Customer balance is automatically handled:
     // - When status changes to 'CANCELLED', this invoice will be excluded from:
     //   * Outstanding balance calculations
     //   * Unpaid invoices reports
     //   * Customer ledger queries
     // - The billTo customer reference remains intact for historical records
-    
-    // console.log(`✅ Invoice #${invoice.invoiceNumber} cancelled. Customer: ${customerName}, Amount: ₹${originalTotal}`);
+
 
     res.status(200).json({
       success: true,
@@ -3980,47 +3370,42 @@ const cancelInvoice = async (req, res) => {
 const handleExchangePayment = async (req, res) => {
   try {
     const { invoiceId } = req.params;
-    const { payment_method, amount, cashAmount, upiAmount } = req.body;
+    const { payment_method, amount, cashAmount, cardAmount, upiAmount } = req.body;
     const finalize = Boolean(req.body.finalize);
-    
+
     // Validate invoice exists
     const invoice = await Invoice.findById(invoiceId);
-    
+
     if (!invoice) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Invoice not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found'
       });
     }
-    
+
     // Validate this is an exchange invoice (or still pending exchange)
-    if (!["EXCHANGE", "PARTIALLY_PAID", "PAID", "PENDING"].includes(invoice.status)) {
+    if (!["EXCHANGE", "PARTIALLY_PAID", "PAID", "PENDING", "UNPAID"].includes(invoice.status)) {
       return res.status(400).json({
         success: false,
         message: "This endpoint is only for exchange invoices",
       });
     }
-    
+
     // Validate amount
     if (!amount || amount <= 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid payment amount' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment amount'
       });
     }
-    
-    const paymentAgg = await InvoicePayment.aggregate([
-      { $match: { invoiceId: invoice._id } },
-      { $group: { _id: "$invoiceId", totalPaid: { $sum: "$amount" } } },
-    ]);
-    const totalPaid = paymentAgg.length > 0 ? Number(paymentAgg[0].totalPaid) : 0;
-    const invoiceTotal = toMoney(Number(invoice.TotalAmount || 0));
-    const remainingDue = Math.max(toMoney(invoiceTotal - totalPaid), 0);
+
+    const { getInvoiceOutstandingAmount } = require("../../../services/invoicePaymentService");
+    const { outstandingAmount: remainingDue } = await getInvoiceOutstandingAmount(invoice._id, invoice);
 
     if (remainingDue <= 0) {
       return res.status(400).json({
         success: false,
-        message: "No remaining due for this exchange",
+        message: "This invoice has already been fully paid.",
       });
     }
 
@@ -4032,24 +3417,33 @@ const handleExchangePayment = async (req, res) => {
       });
     }
 
-    // Update existing payment record (do not create a new one)
-    const existingPayment = await InvoicePayment.findOne({ invoiceId: invoice._id });
+    // Find or create a payment record
+    let existingPayment = await InvoicePayment.findOne({ invoiceId: invoice._id });
     if (!existingPayment) {
-      return res.status(404).json({
-        success: false,
-        message: "Original payment record not found",
+      // Original invoice had no payment (UNPAID/CREDIT) — create a fresh record
+      existingPayment = await InvoicePayment.create({
+        invoiceId: invoice._id,
+        userId: invoice.userId,
+        payment_method,
+        amount: 0,
+        received_on: new Date(),
+        notes: 'Exchange payment record created',
       });
     }
 
     const cashPortion = toMoney(Number(cashAmount || 0));
+    const cardPortion = toMoney(Number(cardAmount || 0));
     const upiPortion = toMoney(Number(upiAmount || 0));
     const effectivePaid = finalize
       ? payAmount
       : payment_method === "MIXED"
-      ? cashPortion
-      : payment_method === "CASH"
-      ? payAmount
-      : 0;
+        ? cashPortion + cardPortion
+        : payment_method === "CASH" || payment_method === "CARD"
+          ? payAmount
+          : 0;
+
+    const invoiceTotal = toMoney(Number(invoice.grandTotal || invoice.total || 0));
+    const totalPaid = toMoney(Number(invoice.totalPaid || existingPayment.amount || 0));
 
     const newTotalPaid = toMoney(totalPaid + effectivePaid);
     const newRemainingDue = Math.max(toMoney(invoiceTotal - newTotalPaid), 0);
@@ -4063,6 +3457,7 @@ const handleExchangePayment = async (req, res) => {
 
     if (payment_method === "MIXED") {
       paymentUpdate.cashAmount = cashPortion;
+      paymentUpdate.cardAmount = cardPortion;
       paymentUpdate.upiAmount = upiPortion;
     }
 
@@ -4075,7 +3470,7 @@ const handleExchangePayment = async (req, res) => {
 
     const invoiceUpdate = {
       profit_amount:
-        finalize || payment_method === "CASH"
+        finalize || payment_method === "CASH" || payment_method === "CARD"
           ? Math.max((invoice.profit_amount || 0) + Number(amount), 0)
           : invoice.profit_amount || null,
       status: nextStatus,
@@ -4084,6 +3479,9 @@ const handleExchangePayment = async (req, res) => {
       isExchange: true,
       ...(payment_method === "MIXED" && req.body?.cashAmount !== undefined
         ? { cashAmount: Number(req.body.cashAmount) || 0 }
+        : {}),
+      ...(payment_method === "MIXED" && req.body?.cardAmount !== undefined
+        ? { cardAmount: Number(req.body.cardAmount) || 0 }
         : {}),
       ...(payment_method === "MIXED" && req.body?.upiAmount !== undefined
         ? { upiAmount: Number(req.body.upiAmount) || 0 }
@@ -4095,24 +3493,24 @@ const handleExchangePayment = async (req, res) => {
       { $set: invoiceUpdate },
       { new: true, runValidators: false }
     );
-    
+
+    await syncCreditNotificationForInvoice(updatedInvoice._id);
+
     // Don't call updateInvoiceStatus - we want to keep status as EXCHANGE
-    
-    
-    // console.log(`✅ Exchange payment recorded: ₹${amount} for invoice ${invoice.invoiceNumber}`);
-    
+
+
     return res.status(200).json({
       success: true,
       message: 'Exchange payment recorded successfully',
       data: updatedInvoice
     });
-    
+
   } catch (err) {
     console.error('Exchange payment error:', err);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Error processing exchange payment', 
-      error: err.message 
+    return res.status(500).json({
+      success: false,
+      message: 'Error processing exchange payment',
+      error: err.message
     });
   }
 };
@@ -4272,8 +3670,6 @@ const exportInvoicesExcel = async (req, res) => {
       if (invoice.items && invoice.items.length > 0) {
         invoice.items.forEach((item, index) => {
           const variantInfo = [
-            // item.variantName,
-            // item.variantDesignNo,
             item.variantColor,
             item.variantSize,
           ]
@@ -4387,7 +3783,7 @@ const downloadInvoiceTemplate = async (req, res) => {
     };
 
     // Add sample data rows - 3 different invoice types
-    
+
     // Example 1: GST Exclusive Invoice (2 items)
     worksheet.addRow({
       invoiceNumber: 'INV-000001',
@@ -4679,7 +4075,7 @@ const uploadInvoicesFromExcel = async (req, res) => {
         // Extract additional invoice-level fields from export format
         const taxType = getVal(['Tax Type', 'TaxType']) || 'GST';
         const gstType = getVal(['GST Type', 'GSTType']);
-        
+
         const status = (getVal(['Status']) || 'PAID').toUpperCase();
         // Normalize payment method to uppercase to match enum
         const paymentMethod = (getVal(['Payment Method', 'PaymentMethod']) || 'CASH').toString().toUpperCase();
@@ -4755,6 +4151,8 @@ const uploadInvoicesFromExcel = async (req, res) => {
           throw new Error('No valid items found');
         }
 
+        const invoiceItemsWithSnapshots = await attachCostSnapshotsToItems(invoiceItems);
+
         // Use provided Invoice Total or calculate
         const finalTotalAmount = invoiceTotal > 0 ? invoiceTotal : (taxableAmount + totalTax);
 
@@ -4768,7 +4166,7 @@ const uploadInvoicesFromExcel = async (req, res) => {
           invoiceDate: invoiceDate,
           dueDate: invoiceDate,
           referenceNo: '',
-          items: invoiceItems,
+          items: invoiceItemsWithSnapshots,
           status: status,
           payment_method: paymentMethod,
           taxableAmount: taxableAmount,
@@ -4783,7 +4181,6 @@ const uploadInvoicesFromExcel = async (req, res) => {
           termsAndCondition: '',
         });
 
-        // Record payment if paidAmount > 0
         if (paidAmount > 0 && status !== 'DRAFT') {
           await InvoicePayment.create({
             invoiceId: newInvoice._id,
@@ -4823,7 +4220,7 @@ const uploadInvoicesFromExcel = async (req, res) => {
     if (req.file?.path) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     console.error('Invoice Excel Upload Error:', error);
@@ -4858,4 +4255,3 @@ module.exports = {
   downloadInvoiceTemplate,
   uploadInvoicesFromExcel,
 };
-

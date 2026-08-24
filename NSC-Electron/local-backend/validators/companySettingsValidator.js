@@ -9,7 +9,7 @@ const validate = (req, res, next) => {
                 formattedErrors[err.path] = err.msg;
             }
         });
-        return res.status(422).json({ 
+        return res.status(422).json({
             message: 'Validation failed',
             errors: formattedErrors
          });

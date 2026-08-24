@@ -1,6 +1,60 @@
 const MonthlyExpense = require('@models/MonthlyExpense');
 const ExpenseCategory = require('@models/ExpenseCategory');
+const Purchase = require('@models/Purchase');
 const { body, validationResult } = require('express-validator');
+const mongoose = require('mongoose');
+
+const buildPurchaseExpenseMetaMap = async (expenses = []) => {
+  const purchaseSourceIds = Array.from(
+    new Set(
+      expenses
+        .filter((expense) => expense?.sourceType === 'PURCHASE' && expense?.sourceId)
+        .map((expense) => String(expense.sourceId))
+    )
+  );
+
+  if (!purchaseSourceIds.length) {
+    return {};
+  }
+
+  const validObjectIds = purchaseSourceIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const purchaseCodeIds = purchaseSourceIds.filter((id) => !mongoose.Types.ObjectId.isValid(id));
+
+  const purchaseQuery = {
+    $or: [
+      ...(validObjectIds.length ? [{ _id: { $in: validObjectIds } }] : []),
+      ...(purchaseCodeIds.length ? [{ purchaseId: { $in: purchaseCodeIds } }] : []),
+    ],
+  };
+
+  if (!purchaseQuery.$or.length) {
+    return {};
+  }
+
+  const purchases = await Purchase.find(purchaseQuery)
+    .select('_id purchaseId supplier_bill_number supplierName billTo')
+    .populate('billTo', 'firstName lastName')
+    .lean();
+
+  return purchases.reduce((acc, purchase) => {
+    const supplierFromBillTo = purchase.billTo
+      ? `${purchase.billTo.firstName || ''} ${purchase.billTo.lastName || ''}`.trim()
+      : '';
+    const supplierName = purchase.supplierName || supplierFromBillTo || null;
+
+    acc[String(purchase._id)] = {
+      purchaseId: purchase.purchaseId || null,
+      supplierBillNumber: purchase.supplier_bill_number || null,
+      supplierName,
+    };
+
+    if (purchase.purchaseId) {
+      acc[String(purchase.purchaseId)] = acc[String(purchase._id)];
+    }
+
+    return acc;
+  }, {});
+};
 
 // Create a new monthly expense
 const createMonthlyExpense = async (req, res) => {
@@ -23,7 +77,6 @@ const createMonthlyExpense = async (req, res) => {
       sourceId,
     } = req.body;
 
-    // console.log('Creating expense with customFields:', customFields);
 
     const userId = req.user;
 
@@ -163,9 +216,23 @@ const getAllMonthlyExpenses = async (req, res) => {
       .skip(skip)
       .limit(Number(limit));
 
+    const purchaseExpenseMetaMap = await buildPurchaseExpenseMetaMap(expenses);
+    const enrichedExpenses = expenses.map((expense) => {
+      const expenseObject = expense.toObject();
+      const purchaseMeta =
+        expenseObject.sourceType === 'PURCHASE'
+          ? purchaseExpenseMetaMap[String(expenseObject.sourceId)] || null
+          : null;
+
+      return {
+        ...expenseObject,
+        purchase: purchaseMeta,
+      };
+    });
+
     res.status(200).json({
       message: 'Monthly expenses retrieved successfully',
-      data: expenses,
+      data: enrichedExpenses,
       pagination: {
         total,
         page: Number(page),
@@ -197,9 +264,19 @@ const getMonthlyExpenseById = async (req, res) => {
       return res.status(404).json({ message: 'Monthly expense not found' });
     }
 
+    const purchaseExpenseMetaMap = await buildPurchaseExpenseMetaMap([expense]);
+    const expenseObject = expense.toObject();
+    const purchaseMeta =
+      expenseObject.sourceType === 'PURCHASE'
+        ? purchaseExpenseMetaMap[String(expenseObject.sourceId)] || null
+        : null;
+
     res.status(200).json({
       message: 'Monthly expense retrieved successfully',
-      data: expense,
+      data: {
+        ...expenseObject,
+        purchase: purchaseMeta,
+      },
     });
   } catch (error) {
     console.error('Error fetching monthly expense:', error);
@@ -324,9 +401,6 @@ const getExpenseSummary = async (req, res) => {
       if (endDate) matchQuery.expenseDate.$lte = new Date(endDate);
     }
 
-    // console.log('Summary match query:', JSON.stringify(matchQuery, null, 2));
-    // console.log('User ID:', userId);
-    // console.log('User ID type:', typeof userId);
 
     // Convert userId to ObjectId if it's a string
     const mongoose = require('mongoose');
@@ -337,7 +411,6 @@ const getExpenseSummary = async (req, res) => {
     // Check total documents for debugging
     const totalDocs = await MonthlyExpense.countDocuments({ isDeleted: false });
     const userDocs = await MonthlyExpense.countDocuments(matchQuery);
-    // console.log(`Total non-deleted expenses: ${totalDocs}, User's expenses: ${userDocs}`);
 
     const summary = await MonthlyExpense.aggregate([
       { $match: matchQuery },
@@ -370,7 +443,6 @@ const getExpenseSummary = async (req, res) => {
 
     const grandTotal = summary.reduce((sum, item) => sum + item.totalAmount, 0);
 
-    // console.log('Expense summary calculation:', { summary, grandTotal });
 
     res.status(200).json({
       message: 'Expense summary retrieved successfully',

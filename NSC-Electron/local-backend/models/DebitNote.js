@@ -1,5 +1,47 @@
 const mongoose = require('mongoose');
 
+const debitNoteItemSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true,
+  },
+  name: {
+    type: String,
+    required: true
+  },
+  hsn_code: String,
+  productId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+    default: null,
+  },
+  variantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ProductVariant',
+    default: null,
+  },
+  variantName: String,
+  variantDesignNo: String,
+  variantColor: String,
+  variantSize: String,
+  unit: {
+    type: String,
+    required: false
+  },
+  qty: {
+    type: Number,
+    required: false
+  },
+  rate: {
+    type: Number,
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+}, { _id: false });
+
 const debitNoteSchema = new mongoose.Schema({
   debitNoteId: {
     type: String,
@@ -26,103 +68,42 @@ const debitNoteSchema = new mongoose.Schema({
   },
   referenceNo: {
     type: String,
-    default: ""
+    default: ''
   },
-  items: [{
-    // id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: 'Product',
-    //   required: false
-    // },
-    id: {
-      type: String, // product ID (same as Purchase)
-      required: true,
-    },
-    name: {
-      type: String,
-      required: true
-    },
-    hsn_code: String,
-
-    // ✅ VARIANT SUPPORT
-    variantId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "ProductVariant",
-      default: null,
-    },
-    variantName: String,
-    variantDesignNo: String,
-    variantColor: String,
-    variantSize: String,
-
-    unit: {
-      type: String,
-      required: false
-    },
-    qty: {
-      type: Number,
-      required: false
-    },
-    rate: {
-      type: Number,
-      required: true
-    },
-    // discount: {
-    //   type: Number,
-    //   default: 0
-    // },
-    // tax: {
-    //   type: Number,
-    //   default: 0
-    // },
-    // tax_group_id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: 'TaxGroup'
-    // },
-    // discount_type: {
-    //   type: String,
-    //   enum: ['Fixed', 'Percentage'],
-    //   default: 'Fixed'
-    // },
-    // discount_value: {
-    //   type: Number,
-    //   default: 0
-    // },
-    amount: {
-      type: Number,
-      required: true
-    },
-  }],
+  items: {
+    type: [debitNoteItemSchema],
+    default: []
+  },
+  replacementItems: {
+    type: [debitNoteItemSchema],
+    default: []
+  },
   status: {
     type: String,
-    enum: ['new', 'pending', 'completed', 'cancelled', 'partially_paid', 'paid', 'return'],
+    enum: ['new', 'pending', 'completed', 'cancelled', 'partially_paid', 'paid', 'return', 'replaced'],
     default: 'draft'
   },
-  // paymentMode: {
-  //   type: String,
-  //   ref: 'PaymentMode',
-  //   required: false
-  // },
   paymentMode: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "PaymentMode",
+    ref: 'PaymentMode',
     default: null,
   },
-  // taxableAmount: {
-  //   type: Number,
-  //   required: true
-  // },
-  // totalDiscount: {
-  //   type: Number,
-  //   default: 0
-  // },
-  // totalTax: {
-  //   type: Number,
-  //   default: 0
-  // },
   totalAmount: {
     type: Number,
     required: true
+  },
+  replacementAmount: {
+    type: Number,
+    default: 0
+  },
+  netAdjustment: {
+    type: Number,
+    default: 0
+  },
+  adjustmentType: {
+    type: String,
+    enum: ['supplier_credit', 'supplier_payable', 'even_exchange'],
+    default: 'even_exchange'
   },
   paidAmount: {
     type: Number,
@@ -132,35 +113,16 @@ const debitNoteSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-
   finalAmount: {
     type: Number,
     required: true,
   },
-
   bank: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'BankDetail',
   },
   notes: String,
   termsAndCondition: String,
-  // sign_type: {
-  //   type: String,
-  //   enum: ['none', 'digitalSignature', 'eSignature'],
-  //   default: 'none'
-  // },
-  // signatureId: {
-  //   type: String,
-  //   default: null
-  // },
-  // signatureImage: {
-  //   type: String,
-  //   default: null
-  // },
-  // signatureName: {
-  //   type: String,
-  //   default: null
-  // },
   checkNumber: {
     type: String,
     default: null
@@ -197,7 +159,6 @@ const debitNoteSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Pre-save hook to generate debit note ID
 debitNoteSchema.pre('save', async function (next) {
   if (!this.debitNoteId) {
     try {

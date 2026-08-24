@@ -42,7 +42,6 @@ const createExpense = async (req, res) => {
 
     const userId = req.user;
 
-    // ===== Validation =====
     if (!["BANK", "PETTY_CASH"].includes(sourceType)) {
       return res.status(400).json({ success: false, message: 'Validation failed.', errors: { sourceType: 'Invalid source type. Must be BANK or PETTY_CASH.' } });
     }
@@ -68,7 +67,6 @@ const createExpense = async (req, res) => {
 
     let attachment = req.file ? req.file.path : null;
 
-    // ===== BALANCE VALIDATION =====
     if (sourceType === "BANK") {
       const bank = await BankDetail.findById(bankId).session(session);
       if (!bank) throw new Error("Bank not found.");
@@ -93,7 +91,6 @@ const createExpense = async (req, res) => {
       }
     }
 
-    // ===== Create Expense =====
     const expense = new Expense({
       referenceNo: referenceNo || "",
       amount: expenseAmount,
@@ -110,7 +107,6 @@ const createExpense = async (req, res) => {
 
     await expense.save({ session });
 
-    // ===== Handle Transactions =====
     if (sourceType === "BANK") {
       const paymentModeDetails = await PaymentMode.findById(paymentMode).session(session);
       if (!paymentModeDetails) {
@@ -169,7 +165,6 @@ const createExpense = async (req, res) => {
       );
     }
 
-    // ===== Create Change Log =====
     await ExpenseChangeLog.create(
       [
         {
@@ -183,7 +178,6 @@ const createExpense = async (req, res) => {
       { session }
     );
 
-    // ===== Commit Transaction =====
     await session.commitTransaction();
     session.endSession();
 

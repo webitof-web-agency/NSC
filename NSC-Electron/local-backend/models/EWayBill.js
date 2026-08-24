@@ -1,4 +1,3 @@
-// ===================== MODEL: models/EWayBill.model.js =====================
 const mongoose = require('mongoose');
 
 const eWayBillItemSchema = new mongoose.Schema({

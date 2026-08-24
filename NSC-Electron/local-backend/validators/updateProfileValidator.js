@@ -90,6 +90,20 @@ exports.updateProfileValidator = [
         .isLength({ max: 6 }).withMessage('Postal code cannot exceed 6 characters')
         .isLength({ min: 5 }).withMessage('Postal code must be at least 5 characters')
         .isNumeric().withMessage('Postal code must be a number'),
+
+    body('newPassword')
+        .optional({ checkFalsy: true })
+        .isLength({ min: 8, max: 50 }).withMessage('New password must be between 8 and 50 characters'),
+
+    body('confirmNewPassword')
+        .optional({ checkFalsy: true })
+        .custom((value, { req }) => {
+            if (req.body.newPassword && value !== req.body.newPassword) {
+                throw new Error('Confirm new password must match new password');
+            }
+            return true;
+        }),
+
     // Final validation result handler
     handleValidationResult
 ];

@@ -347,8 +347,22 @@ class SyncManager {
 
     let cursor = this._getCursor();
 
-    if (!cursor) {
-      this._log('info', 'No existing sync cursor found. Initiating full Initial Bootstrap Snapshot...');
+    // Check if local database is empty
+    let isLocalEmpty = false;
+    try {
+      const statsRes = await axios.get(`${this.localBackendUrl}/api/local/sync-stats`, { timeout: 3000 });
+      if (statsRes.data && typeof statsRes.data.totalRecords === 'number' && statsRes.data.totalRecords === 0) {
+        isLocalEmpty = true;
+      }
+    } catch (statsErr) {
+      // Ignore error
+    }
+
+    if (!cursor || isLocalEmpty) {
+      this._log('info', isLocalEmpty 
+        ? 'Local database is empty. Initiating full Initial Bootstrap Snapshot...'
+        : 'No existing sync cursor found. Initiating full Initial Bootstrap Snapshot...'
+      );
       await this._bootstrapSync(authToken);
       return;
     }

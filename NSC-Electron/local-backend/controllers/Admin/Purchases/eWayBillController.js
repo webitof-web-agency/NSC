@@ -1,4 +1,3 @@
-// ===================== CONTROLLER: controllers/ewaybill.mock.controller.js =====================
 const EWayBill = require('../../../models/EWayBill');
 const Purchase = require('../../../models/Purchase');
 const ProductVariant = require('../../../models/ProductVariant');

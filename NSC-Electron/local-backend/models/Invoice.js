@@ -1,5 +1,5 @@
-const mongoose = require("mongoose");
 const offlineSyncPlugin = require('../middleware/offlineSync');
+const mongoose = require("mongoose");
 
 const invoiceSchema = new mongoose.Schema(
   {
@@ -26,10 +26,6 @@ const invoiceSchema = new mongoose.Schema(
     },
     items: [
       {
-        // id: {
-        //   type: String,
-        //   required: true,
-        // },
         rowId: {
           type: String,
           required: true,  // UUID from frontend
@@ -89,6 +85,14 @@ const invoiceSchema = new mongoose.Schema(
         amount: {
           type: Number,
           required: true,
+        },
+        costPriceSnapshot: {
+          type: Number,
+          default: 0,
+        },
+        totalCostSnapshot: {
+          type: Number,
+          default: 0,
         },
       },
     ],
@@ -152,6 +156,14 @@ const invoiceSchema = new mongoose.Schema(
         amount: {
           type: Number,
         },
+        costPriceSnapshot: {
+          type: Number,
+          default: 0,
+        },
+        totalCostSnapshot: {
+          type: Number,
+          default: 0,
+        },
       },
     ],
     status: {
@@ -171,7 +183,7 @@ const invoiceSchema = new mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ["CASH", "RAZORPAY", "MIXED", "CREDIT", "PHONEPE", "UPI"],
+      enum: ["CASH", "CARD", "RAZORPAY", "MIXED", "CREDIT", "PHONEPE", "UPI"],
       default: null,
     },
     taxableAmount: {
@@ -204,64 +216,25 @@ const invoiceSchema = new mongoose.Schema(
     },
     notes: String,
     termsAndCondition: String,
-    // isRecurring: {                      // hide the isRecurring logic
-    //   type: Boolean,
-    //   default: false,
-    // },
-    // parentInvoice: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "Invoice",
-    //   default: null,
-    // },
-    // repeatEvery: {
-    //   type: String,
-    //   enum: ["day", "week", "month", "year", "custom"],
-    //   default: "month",
-    // },
-    // customIntervalNumber: {
-    //   type: Number,
-    //   default: null,
-    // },
-    // customIntervalType: {
-    //   type: String,
-    //   enum: ["day", "week", "month", "year"],
-    //   default: null,
-    // },
-    // startOn: {
-    //   type: Date,
-    //   default: null,
-    // },
-    // endsOn: {
-    //   type: Date,
-    //   default: null,
-    // },
-    // neverExpire: {
-    //   type: Boolean,
-    //   default: false,
-    // },
-    // stopped: {
-    //   type: Boolean,
-    //   default: false,
-    // },
-    // lastRecurringDate: {
-    //   type: Date,
-    //   default: null,
-    // },
-    // nextRecurringDate: {
-    //   type: Date,
-    //   default: null,
-    // },
-    // sign_type: {                      // hide the signature logic
-    //   type: String,
-    //   enum: ["none", "digitalSignature", "eSignature"],
-    //   default: "none",
-    // },
-    // signatureName: String,
-    // signatureId: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "Signature",
-    // },
-    // signatureImage: String,
+    customerGstin: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    ewayBillNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    shippingAddress: {
+      name: { type: String, trim: true, default: "" },
+      addressLine1: { type: String, trim: true, default: "" },
+      addressLine2: { type: String, trim: true, default: "" },
+      country: { type: String, trim: true, default: "" },
+      state: { type: String, trim: true, default: "" },
+      city: { type: String, trim: true, default: "" },
+      pincode: { type: String, trim: true, default: "" },
+    },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -300,30 +273,27 @@ const invoiceSchema = new mongoose.Schema(
     // ✅ PhonePe Integration Fields
     phonepeTransactionId: { type: String, default: null },
     phonepeQRCode: { type: String, default: null }, // base64 image
-    phonepePaymentStatus: { 
-      type: String, 
-      enum: ['PENDING', 'SUCCESS', 'FAILED', 'TIMEOUT'], 
-      default: null 
+    phonepePaymentStatus: {
+      type: String,
+      enum: ['PENDING', 'SUCCESS', 'FAILED', 'TIMEOUT'],
+      default: null
     },
     // ✅ UPI Integration Fields
     upiTransactionId: { type: String, default: null },
     upiQRCode: { type: String, default: null }, // base64 image or data URI
-    upiPaymentStatus: { 
-      type: String, 
-      enum: ['PENDING', 'SUCCESS', 'FAILED'], 
-      default: null 
+    upiPaymentStatus: {
+      type: String,
+      enum: ['PENDING', 'SUCCESS', 'FAILED'],
+      default: null
     },
     // ✅ Exchange Transaction Fields
     returned_amount: {
       type: Number,
       default: null,
-      // Only populated for EXCHANGE status invoices when new amount < old amount
     },
     profit_amount: {
       type: Number,
       default: null,
-      // Only populated for EXCHANGE status invoices when new amount > old amount
-      // and additional payment is received
     },
     exchangeOldTotal: {
       type: Number,
@@ -351,11 +321,27 @@ const invoiceSchema = new mongoose.Schema(
       default: null,
       // Cash portion for MIXED payment method
     },
+    cardAmount: {
+      type: Number,
+      default: null,
+      // Card portion for MIXED payment method
+    },
     upiAmount: {
       type: Number,
       default: null,
       // UPI portion for MIXED payment method (previously phonePeAmount)
-    }
+    },
+    publicShareId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    publicShareEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    publicShareCreatedAt: Date,
+    publicShareRegeneratedAt: Date
   },
   { timestamps: true }
 );
@@ -363,8 +349,8 @@ const invoiceSchema = new mongoose.Schema(
 invoiceSchema.pre("save", async function (next) {
   try {
     if (!this.invoiceNumber) {
-      const { getNextNumber } = require('../utils/numberAllocator');
-      this.invoiceNumber = await getNextNumber('INVOICE');
+      const count = await this.constructor.countDocuments();
+      this.invoiceNumber = `INV-${String(count + 1).padStart(6, "0")}`;
     }
     next();
   } catch (err) {
@@ -373,4 +359,5 @@ invoiceSchema.pre("save", async function (next) {
 });
 
 invoiceSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model("Invoice", invoiceSchema);

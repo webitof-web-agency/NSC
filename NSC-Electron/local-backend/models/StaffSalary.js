@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require("mongoose");
 
 const staffSalarySchema = new mongoose.Schema(
@@ -78,4 +78,5 @@ const staffSalarySchema = new mongoose.Schema(
 staffSalarySchema.index({ staffId: 1, month: 1 });
 
 staffSalarySchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model("StaffSalary", staffSalarySchema);

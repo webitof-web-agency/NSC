@@ -5,161 +5,11 @@ const Product = require('@models/Product');
 const Customer = require('@models/Customer');
 const { sendMail } = require("@utils/mailer");
 const CompanySettings = require('@models/CompanySettings');
-
-// const createQuotation = async (req, res) => {
-//     const session = await mongoose.startSession();
-//     session.startTransaction();
-
-//     try {
-//         const {
-//             customerId,
-//             quotationDate,
-//             expiryDate,
-//             referenceNo,
-//             items,
-//             status,
-//             paymentTerms,
-//             notes,
-//             termsAndCondition,
-//             sign_type,
-//             signatureId,
-//             signatureName,
-//             billFrom,
-//             billTo,
-//             bank,
-//             salesPerson,
-//             convert_type
-//         } = req.body;
-
-//         const userId = req.user;
-//         const user = await User.findById(userId).session(session);
-//         if (!user) throw new Error('Invalid user ID');
-
-//         const billFromUser = await User.findById(billFrom).session(session);
-//         const billToUser = await Customer.findById(billTo).session(session);
-
-//         if (!billFromUser || !billToUser) {
-//             throw new Error('Invalid bill from or bill to user ID');
-//         }
-
-//         // Signature type validation
-//         const validSignatureTypes = ['none', 'digitalSignature', 'eSignature'];
-//         if (sign_type && !validSignatureTypes.includes(sign_type)) {
-//             throw new Error('Invalid signature type');
-//         }
-
-//         if (sign_type === 'eSignature') {
-//             if (!req.file) throw new Error('Signature image is required for eSignature');
-//             if (!signatureName) throw new Error('Signature name is required for eSignature');
-//         }
-
-//         // Calculate totals
-//         let taxableAmount = 0;
-//         let totalDiscount = 0;
-//         let vat = 0;
-//         let totalAmount = 0;
-
-//         items.forEach(item => {
-//             const itemAmount = item.amount || (item.qty * (item.rate || 0));
-//             taxableAmount += itemAmount;
-//             totalDiscount += item.discount || 0;
-//             vat += item.tax || 0;
-//             totalAmount += itemAmount;
-//         });
-
-//         // Create quotation (initially draft by default)
-//         const quotation = new Quotation({
-//             customerId,
-//             quotationDate: new Date(quotationDate),
-//             expiryDate: expiryDate,
-//             referenceNo: referenceNo || '',
-//             items: items.map(item => ({
-//                 id: item.id,
-//                 name: item.name,
-//                 unit: item.unit,
-//                 qty: item.qty,
-//                 rate: item.rate,
-//                 discount: item.discount,
-//                 tax: item.tax,
-//                 tax_group_id: item.tax_group_id,
-//                 discount_type: item.discount_type,
-//                 discount_value: item.discount_value,
-//                 amount: item.amount
-//             })),
-//             status: status || 'draft', // default is draft
-//             bank: bank || null,
-//             paymentTerms: paymentTerms || '',
-//             taxableAmount: req.body.subTotal || taxableAmount,
-//             totalDiscount: req.body.totalDiscount || totalDiscount,
-//             vat: req.body.totalTax || vat,
-//             roundOff: req.body.roundOff || false,
-//             TotalAmount: req.body.grandTotal || totalAmount,
-//             notes: notes || '',
-//             termsAndCondition: termsAndCondition || '',
-//             sign_type: sign_type || 'none',
-//             signatureId: signatureId || null,
-//             signatureImage: sign_type === 'eSignature' ? req.file?.path : null,
-//             signatureName: sign_type === 'eSignature' ? signatureName : null,
-//             userId,
-//             salesPerson: salesPerson || null,
-//             billFrom,
-//             billTo,
-//             convert_type: convert_type || 'quotation'
-//         });
-
-//         await quotation.save({ session });
-
-//         // Commit DB transaction
-//         await session.commitTransaction();
-//         session.endSession();
-
-
-//         if (
-//             quotation.status === 'sent' &&
-//             billToUser?.email &&
-//             process.env.SMTP_EMAIL &&
-//             process.env.SMTP_PASSWORD
-//         ) {
-//             try {
-//                 await sendMail({
-//                     from: `"${billFromUser.name || 'Your Company'}" <${process.env.SMTP_EMAIL}>`,
-//                     to: billToUser.email,
-//                     subject: "New Quotation Sent",
-//                     html: `
-//             <h3>Hello ${billToUser.name},</h3>
-//             <p>A new quotation has been sent to you.</p>
-//             <p><strong>Reference No:</strong> ${quotation.referenceNo}</p>
-//             <p><strong>Total Amount:</strong> ${quotation.TotalAmount}</p>
-//             <p><strong>Status:</strong> ${quotation.status}</p>
-//             <p><strong>Quotation Date:</strong> ${new Date(quotation.quotationDate).toLocaleDateString()}</p>
-//             <p><strong>Expiry Date:</strong> ${new Date(quotation.expiryDate).toLocaleDateString()}</p>
-//             <br>
-//             <p>Best Regards,<br>${billFromUser.name || 'Your Company'}</p>
-//           `
-//                 });
-//             } catch (emailErr) {
-//                 console.error("Failed to send quotation email:", emailErr.message);
-//             }
-//         }
-
-//         res.status(200).json({
-//             success: true,
-//             message: 'Quotation created successfully',
-//             data: quotation
-//         });
-
-//     } catch (err) {
-//         await session.abortTransaction();
-//         session.endSession();
-
-//         res.status(500).json({
-//             success: false,
-//             message: 'Error creating quotation',
-//             error: err.message
-//         });
-//     }
-// };
-
+const {
+    syncQuotationNotificationForQuotation,
+    resolveNotificationForQuotation,
+} = require('@services/notificationService');
+const { triggerWhatsAppSend } = require('../../../whatsapp-module');
 
 
 const createQuotation = async (req, res) => {
@@ -263,6 +113,7 @@ const createQuotation = async (req, res) => {
     });
 
     await quotation.save();
+    await syncQuotationNotificationForQuotation(quotation._id);
 
     // Send Email if status is "sent"
     if (
@@ -291,10 +142,9 @@ const createQuotation = async (req, res) => {
       }
     }
 
-    return res.status(200).json({
-      success: true,
+    res.status(201).json({
       message: "Quotation created successfully",
-      data: quotation
+      data: quotation,
     });
 
   } catch (err) {
@@ -306,7 +156,6 @@ const createQuotation = async (req, res) => {
     });
   }
 };
-
 
 
 const getQuotationById = async (req, res) => {
@@ -472,98 +321,6 @@ const getQuotationById = async (req, res) => {
     }
 };
 
-// const updateQuotation = async (req, res) => {
-//     const session = await mongoose.startSession();
-//     session.startTransaction();
-
-//     try {
-//         const { id } = req.params;
-//         const updateData = req.body;
-
-//         // Check if quotation exists
-//         const quotation = await Quotation.findById(id).session(session);
-//         if (!quotation) {
-//             throw new Error('Quotation not found');
-//         }
-
-//         // Update fields
-//         if (updateData.quotationDate) quotation.quotationDate = new Date(updateData.quotationDate);
-//         if (updateData.salesPerson) quotation.salesPerson = updateData.salesPerson;
-//         if (updateData.expiryDate) quotation.expiryDate = updateData.expiryDate;
-//         if (updateData.referenceNo !== undefined) quotation.referenceNo = updateData.referenceNo;
-//         if (updateData.status) quotation.status = updateData.status;
-//         if (updateData.paymentTerms !== undefined) quotation.paymentTerms = updateData.paymentTerms;
-//         if (updateData.notes !== undefined) quotation.notes = updateData.notes;
-//         if (updateData.termsAndCondition !== undefined) quotation.termsAndCondition = updateData.termsAndCondition;
-//         if (updateData.sign_type !== undefined) quotation.sign_type = updateData.sign_type;
-//         if (updateData.signatureId !== undefined) quotation.signatureId = updateData.signatureId;
-//         if (updateData.convert_type !== undefined) quotation.convert_type = updateData.convert_type;
-//         if (updateData.bank !== undefined) quotation.bank = updateData.bank || null;
-
-//         // Handle signature image if being updated
-//         if (updateData.sign_type === 'eSignature' && req.file) {
-//             quotation.signatureImage = req.file.path;
-//             quotation.signatureName = updateData.signatureName;
-//         }
-
-//         // Handle items update
-//         if (updateData.items) {
-//             quotation.items = updateData.items.map(item => ({
-//                 id: item.id,
-//                 name: item.name,
-//                 unit: item.unit,
-//                 qty: item.qty,
-//                 rate: item.rate,
-//                 discount: item.discount,
-//                 tax: item.tax,
-//                 tax_group_id: item.tax_group_id,
-//                 discount_type: item.discount_type,
-//                 discount_value: item.discount_value,
-//                 amount: item.amount
-//             }));
-
-//             // Recalculate amounts if items changed
-//             let taxableAmount = 0;
-//             let totalDiscount = 0;
-//             let vat = 0;
-//             let totalAmount = 0;
-
-//             updateData.items.forEach(item => {
-//                 const itemAmount = item.amount || (item.qty * (item.rate || 0));
-//                 taxableAmount += itemAmount;
-//                 totalDiscount += item.discount || 0;
-//                 vat += item.tax || 0;
-//                 totalAmount += itemAmount;
-//             });
-
-//             quotation.taxableAmount = updateData.subTotal || taxableAmount;
-//             quotation.totalDiscount = updateData.totalDiscount || totalDiscount;
-//             quotation.vat = updateData.totalTax || vat;
-//             quotation.TotalAmount = updateData.grandTotal || totalAmount;
-//         }
-
-//         await quotation.save({ session });
-
-//         // Commit transaction
-//         await session.commitTransaction();
-//         session.endSession();
-
-//         res.status(200).json({
-//             message: 'Quotation updated successfully',
-//             data: quotation
-//         });
-
-//     } catch (err) {
-//         // Rollback transaction
-//         await session.abortTransaction();
-//         session.endSession();
-//         res.status(500).json({
-//             message: 'Error updating quotation',
-//             error: err.message
-//         });
-//     }
-// };
-
 
 const updateQuotation = async (req, res) => {
   try {
@@ -640,6 +397,7 @@ const updateQuotation = async (req, res) => {
     }
 
     await quotation.save();
+    await syncQuotationNotificationForQuotation(quotation._id);
 
     res.status(200).json({
       message: "Quotation updated successfully",
@@ -654,8 +412,6 @@ const updateQuotation = async (req, res) => {
     });
   }
 };
-
-
 
 
 const deleteQuotation = async (req, res) => {
@@ -674,6 +430,8 @@ const deleteQuotation = async (req, res) => {
             });
         }
 
+        await resolveNotificationForQuotation(quotation._id);
+
         res.status(200).json({
             message: 'Quotation deleted successfully',
             data: quotation
@@ -690,7 +448,9 @@ const bulkDeleteQuotations = async (req, res) => {
     const { ids, all } = req.body;
     try {
         if (all) {
+            const quotations = await Quotation.find({}).select('_id');
             const result = await Quotation.deleteMany({});
+            await Promise.all(quotations.map((quotation) => resolveNotificationForQuotation(quotation._id)));
             return res.status(200).json({
                 message: 'Quotations deleted successfully',
                 deletedCount: result.deletedCount || 0
@@ -700,6 +460,7 @@ const bulkDeleteQuotations = async (req, res) => {
             return res.status(400).json({ message: 'Please provide quotation ids.' });
         }
         const result = await Quotation.deleteMany({ _id: { $in: ids } });
+        await Promise.all(ids.map((id) => resolveNotificationForQuotation(id)));
         return res.status(200).json({
             message: 'Quotations deleted successfully',
             deletedCount: result.deletedCount || 0
@@ -1043,6 +804,7 @@ const updateQuotationStatus = async (req, res) => {
 
         quotation.status = status;
         await quotation.save();
+        await syncQuotationNotificationForQuotation(quotation._id);
 
         res.status(200).json({
             success: true,
@@ -1091,6 +853,7 @@ const sendQuotationEmailAndUpdateStatus = async (req, res) => {
         // Update status
         quotation.status = status;
         await quotation.save();
+        await syncQuotationNotificationForQuotation(quotation._id);
         const companySettings = await CompanySettings.findOne().sort({ createdAt: -1 }); // get latest entry
         const companyName = companySettings?.companyName || "Dreams Technogoies";
         // Prepare mail options

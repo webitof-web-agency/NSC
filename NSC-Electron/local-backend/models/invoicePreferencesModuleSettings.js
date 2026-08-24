@@ -2,12 +2,6 @@ const mongoose = require("mongoose");
 
 const invoicePreferencesSchema = new mongoose.Schema(
   {
-    // user_id: {
-    //   type: mongoose.Schema.Types.ObjectId,
-    //   ref: "User",
-    //   required: true,
-    //   unique: true, // one preference per admin/company
-    // },
 
     termsAndConditions: {
       type: String,

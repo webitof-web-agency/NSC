@@ -29,12 +29,10 @@ const supplierPaymentValidator = [
     .isNumeric().withMessage('Due amount must be a number')
     .toFloat(),
 
-  // body('createdBy')
-  //   .notEmpty().withMessage('CreatedBy is required')
-  //   .isMongoId().withMessage('Invalid createdBy format'),
 
   // Optional fields
   body('referenceNumber').optional().isString(),
+  body('chequeNumber').optional().isString(),
   body('notes').optional().isString(),
   body('attachment').optional().isString(),
   body('paymentMode').optional().isMongoId().withMessage('Invalid payment mode ID')

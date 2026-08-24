@@ -9,7 +9,7 @@ exports.getAllTaxGroups = async (req, res) => {
     try {
         const { search, page = 1, limit = 10 } = req.query;
         const skip = (page - 1) * limit;
-        
+
         // Build the query
         const query = {};
         if (search) {
@@ -51,49 +51,13 @@ exports.getAllTaxGroups = async (req, res) => {
             }
         });
     } catch (err) {
-        res.status(500).json({ 
-            message: 'Failed to fetch tax groups', 
-            error: err.message 
+        res.status(500).json({
+            message: 'Failed to fetch tax groups',
+            error: err.message
         });
     }
 };
 
-// Create new tax group
-// exports.createTaxGroup = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { tax_name, tax_rate, tax_rate_ids } = req.body;
-
-//     const newGroup = new TaxGroup({
-//       tax_name,
-//       tax_rate,
-//       tax_rate_ids
-//     });
-
-//     await newGroup.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       success: true,
-//       message: 'Tax group created successfully',
-//       data: newGroup
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-
-//     console.error('Tax group creation error:', err);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Failed to create tax group',
-//       error: err.message
-//     });
-//   }
-// };
 
 exports.createTaxGroup = async (req, res) => {
     try {
@@ -133,48 +97,6 @@ exports.getTaxGroupById = async (req, res) => {
         res.status(500).json({ message: 'Failed to fetch tax group', error: err.message });
     }
 };
-
-// Update a tax group
-// exports.updateTaxGroup = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const updated = await TaxGroup.findByIdAndUpdate(
-//       req.params.id,
-//       { $set: req.body },
-//       { new: true, runValidators: true, session }
-//     );
-
-//     if (!updated) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({
-//         success: false,
-//         message: 'Tax group not found'
-//       });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       success: true,
-//       message: 'Tax group updated successfully',
-//       data: updated
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-
-//     console.error('Tax group update error:', err);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Failed to update tax group',
-//       error: err.message
-//     });
-//   }
-// };
 
 
 // Update a tax group
@@ -235,7 +157,7 @@ exports.uploadUnifiedTaxExcel = async (req, res) => {
 
         const workbook = new exceljs.Workbook();
         await workbook.xlsx.readFile(req.file.path);
-        
+
         let summary = {
             rates: { inserted: 0, skipped: [] },
             groups: { inserted: 0, skipped: [] }
@@ -331,7 +253,7 @@ exports.uploadUnifiedTaxExcel = async (req, res) => {
                     } else {
                         allFound = false;
                         summary.groups.skipped.push({ row: rowNumber, reason: `Tax Rate '${rateName}' not found` });
-                        break; 
+                        break;
                     }
                 }
 

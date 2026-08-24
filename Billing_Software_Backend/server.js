@@ -93,7 +93,8 @@ app.use(express.json({
     }
   }
 }));
-app.use('/uploads', express.static('uploads'));
+const { getUploadsRoot } = require('./utils/storagePaths');
+app.use('/uploads', express.static(getUploadsRoot()));
 
 app.get('/', (req, res) => {
   res.json({

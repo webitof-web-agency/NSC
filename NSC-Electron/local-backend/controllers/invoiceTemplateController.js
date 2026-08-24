@@ -49,7 +49,7 @@ exports.createOrUpdateTemplate = async (req, res) => {
 exports.getMyTemplate = async (req, res) => {
   try {
     const userId = req.user;
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,

@@ -26,7 +26,7 @@ const inventoryHistorySchema = new mongoose.Schema({
   },
   referenceType: {
     type: String,
-    enum: ['purchase', 'invoice', 'return', 'adjustment', 'exchange', 'opening_stock']
+    enum: ['purchase', 'invoice', 'return', 'adjustment', 'exchange', 'opening_stock', 'debit_note']
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

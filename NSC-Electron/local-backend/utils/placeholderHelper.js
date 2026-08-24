@@ -16,7 +16,7 @@ const replacePlaceholders = async (template, invoice, user) => {
   let result = template;
 
   // Calculate overdue days
-  const overdueDays = invoice.dueDate 
+  const overdueDays = invoice.dueDate
     ? Math.max(0, Math.floor((new Date() - new Date(invoice.dueDate)) / (1000 * 60 * 60 * 24)))
     : 0;
 
@@ -33,7 +33,7 @@ const replacePlaceholders = async (template, invoice, user) => {
   // Get user who created the invoice
   const createdByUser = invoice.userId || invoice.billFrom;
   let createdByName = '';
-  
+
   if (createdByUser) {
     if (typeof createdByUser === 'object') {
       // If populated as an object
@@ -129,4 +129,3 @@ module.exports = {
   replacePlaceholders,
   replaceSubjectPlaceholders
 };
-

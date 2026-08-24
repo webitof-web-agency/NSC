@@ -23,22 +23,50 @@ const listSizes = async (req, res) => {
 
 const createSize = async (req, res) => {
   try {
-    const name = normalizeName(req.body.name || '');
-    if (!name) {
+    const rawName = req.body.name || '';
+    if (!rawName) {
       return res.status(400).json({ success: false, message: 'Size name is required' });
     }
-    const existing = await Size.findOne({ nameLower: name.toLowerCase() });
-    if (existing) {
-      return res.status(409).json({ success: false, message: 'Size already exists' });
+
+    const items = rawName.split(',').map(s => s.trim()).filter(Boolean);
+    if (items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Valid size name is required' });
     }
-    const created = await Size.create({ name, nameLower: name.toLowerCase() });
+
+    const createdItems = [];
+    for (const itemName of items) {
+      const existing = await Size.findOne({ nameLower: itemName.toLowerCase() });
+      if (!existing) {
+        const created = await Size.create({ name: itemName, nameLower: itemName.toLowerCase() });
+        createdItems.push({ id: created._id, name: created.name });
+      } else if (items.length === 1) {
+        return res.status(409).json({ success: false, message: 'Size already exists' });
+      }
+    }
+
+    if (createdItems.length === 0 && items.length > 1) {
+        return res.status(409).json({ success: false, message: 'All sizes already exist' });
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Size created',
-      data: { id: created._id, name: created.name },
+      message: items.length > 1 ? `Created ${createdItems.length} sizes` : 'Size created',
+      data: items.length > 1 ? createdItems : createdItems[0],
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to create size' });
+  }
+};
+
+const deleteSize = async (req, res) => {
+  try {
+    const deleted = await Size.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Size not found' });
+    }
+    res.status(200).json({ success: true, message: 'Size deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to delete size' });
   }
 };
 
@@ -62,29 +90,59 @@ const listColors = async (req, res) => {
 
 const createColor = async (req, res) => {
   try {
-    const name = normalizeName(req.body.name || '');
+    const rawName = req.body.name || '';
     const hexCode = req.body.hexCode ? String(req.body.hexCode).trim() : null;
-    if (!name) {
+    if (!rawName) {
       return res.status(400).json({ success: false, message: 'Color name is required' });
     }
-    const existing = await Color.findOne({ nameLower: name.toLowerCase() });
-    if (existing) {
-      return res.status(409).json({ success: false, message: 'Color already exists' });
+
+    const items = rawName.split(',').map(c => c.trim()).filter(Boolean);
+    if (items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Valid color name is required' });
     }
-    const created = await Color.create({ name, nameLower: name.toLowerCase(), hexCode });
+
+    const createdItems = [];
+    for (const itemName of items) {
+      const existing = await Color.findOne({ nameLower: itemName.toLowerCase() });
+      if (!existing) {
+        const created = await Color.create({ name: itemName, nameLower: itemName.toLowerCase(), hexCode });
+        createdItems.push({ id: created._id, name: created.name, hexCode: created.hexCode || null });
+      } else if (items.length === 1) {
+        return res.status(409).json({ success: false, message: 'Color already exists' });
+      }
+    }
+
+    if (createdItems.length === 0 && items.length > 1) {
+        return res.status(409).json({ success: false, message: 'All colors already exist' });
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Color created',
-      data: { id: created._id, name: created.name, hexCode: created.hexCode || null },
+      message: items.length > 1 ? `Created ${createdItems.length} colors` : 'Color created',
+      data: items.length > 1 ? createdItems : createdItems[0],
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to create color' });
   }
 };
 
+const deleteColor = async (req, res) => {
+  try {
+    const deleted = await Color.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'Color not found' });
+    }
+    res.status(200).json({ success: true, message: 'Color deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to delete color' });
+  }
+};
+
 module.exports = {
   listSizes,
   createSize,
+  deleteSize,
   listColors,
   createColor,
+  deleteColor,
 };

@@ -18,6 +18,35 @@ const Broker = require('@models/Broker');
 const BrokerDetail = require('@models/BrokerDetail');
 const TaxGroup = require('@models/TaxGroup');
 const TaxRate = require('@models/TaxRate');
+const CompanySettings = require('@models/CompanySettings');
+const State = require('@models/State');
+const { syncPurchaseNotificationForPurchase, resolveNotificationForPurchase } = require("@services/notificationService");
+
+const normalizeStateValue = (state) => {
+  if (!state) return "";
+  if (typeof state === "object") {
+    return String(state.name || state.state || state.stateName || "").trim().toLowerCase();
+  }
+  return String(state).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+};
+
+const resolveStateName = async (stateValue) => {
+  if (!stateValue) return "";
+
+  const stateText = String(stateValue).trim();
+  const stateId = Number(stateText);
+  if (Number.isFinite(stateId)) {
+    const state = await State.findById(stateId).select("name").lean();
+    if (state?.name) return normalizeStateValue(state.name);
+  }
+
+  return normalizeStateValue(stateText);
+};
+
+const getGstinStateCode = (gstin) => {
+  const value = String(gstin || "").trim();
+  return /^\d{2}/.test(value) ? value.slice(0, 2) : "";
+};
 
 const findTaxGroupByRate = async (gstRate) => {
   const rateNumber = Number(gstRate);
@@ -63,217 +92,6 @@ const upsertBrokerDealForPurchase = async ({ brokerDetail, purchase, commissionT
   await broker.save();
 };
 
-// const createPurchase = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       purchaseOrderId,
-//       userId,
-//       billFrom,
-//       billTo,
-//       referenceNo,
-//       purchaseDate,
-//       items,
-//       notes,
-//       termsAndCondition,
-//       paymentMode,
-//       subTotal,
-//       totalTax,
-//       totalDiscount,
-//       grandTotal,
-//       sign_type,
-//       signatureId,
-//       signatureName,
-//       checkNumber,
-//       bank,
-//       sp_amount,
-//       sp_paid_amount
-//     } = req.body;
-
-//     const billFromUser = await User.findById(billFrom).session(session);
-//     const billToUser = await User.findById(billTo).session(session);
-//     if (!billFromUser || !billToUser) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(422).json({ message: 'Invalid bill from or bill to user ID' });
-//     }
-
-
-
-//     const validSignatureTypes = ['none', 'digitalSignature', 'eSignature'];
-//     if (sign_type && !validSignatureTypes.includes(sign_type)) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: 'Invalid signature type' });
-//     }
-
-//     if (sign_type === 'eSignature') {
-//       if (!req.file) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({ message: 'Signature image is required for eSignature' });
-//       }
-//       if (!signatureName) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({ message: 'Signature name is required for eSignature' });
-//       }
-//     }
-
-//     const calculatedSubTotal = subTotal || items.reduce((sum, item) => sum + (item.amount || (item.quantity * (item.rate || 0))), 0);
-//     const calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-//     const calculatedTotalTax = totalTax || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-//     const calculatedGrandTotal = grandTotal || (calculatedSubTotal + calculatedTotalTax - calculatedTotalDiscount);
-
-//     let status = req.body.status || 'pending';
-//     let paidAmount = 0;
-//     let balanceAmount = calculatedGrandTotal;
-//     if (sp_amount && sp_paid_amount && status === 'paid') {
-//       if (sp_paid_amount === sp_amount) {
-//         status = 'paid';
-//         paidAmount = sp_paid_amount;
-//         balanceAmount = 0;
-//       } else {
-//         status = 'partially_paid';
-//         paidAmount = sp_paid_amount;
-//         balanceAmount = sp_amount - sp_paid_amount;
-//       }
-//     }
-
-//     let purchaseId = req.body.purchaseId;
-//     if (!purchaseId) {
-//       purchaseId = `PO-${String(count + 1).padStart(6, '0')}`;
-//     }
-
-//     const purchase = new Purchase({
-//       purchaseOrderId,
-//       vendorId: billTo,
-//       purchaseDate: purchaseDate ? new Date(purchaseDate) : new Date(),
-//       dueDate: new Date(purchaseDate ? new Date(purchaseDate) : new Date()),
-//       referenceNo: referenceNo || '',
-//       items: items.map(item => ({
-//         id: item.id,
-//         name: item.name,
-//         unit: item.unit,
-//         qty: item.qty,
-//         rate: item.rate,
-//         discount: item.discount,
-//         tax: item.tax,
-//         tax_group_id: item.tax_group_id,
-//         discount_type: item.discount_type,
-//         discount_value: item.discount_value,
-//         amount: item.amount
-//       })),
-//       status,
-//       paymentMode,
-//       taxableAmount: subTotal || calculatedSubTotal,
-//       totalDiscount: totalDiscount || calculatedTotalDiscount,
-//       totalTax: totalTax || calculatedTotalTax,
-//       roundOff: req.body.roundOff || false,
-//       totalAmount: grandTotal || calculatedGrandTotal,
-//       paidAmount,
-//       balanceAmount,
-//       bank: bank || null,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-//       sign_type: sign_type || 'none',
-//       signatureId: signatureId || null,
-//       signatureImage: sign_type === 'eSignature' ? req.file.path : null,
-//       signatureName: sign_type === 'eSignature' ? signatureName : null,
-//       checkNumber: checkNumber || null,
-//       userId,
-//       billFrom,
-//       billTo
-//     });
-
-//     await purchase.save({ session });
-
-//     if (purchaseOrderId) {
-//     }
-
-//     if (status === 'paid' || status === 'partially_paid') {
-//       const supplierPayment = new SupplierPayment({
-//         purchaseId: purchase._id,
-//         supplierId: billTo,
-//         referenceNumber: req.body.sp_referenceNumber || '',
-//         paymentDate: req.body.sp_paymentDate || '',
-//         paymentMode: req.body.sp_paymentMode || '',
-//         amount: req.body.sp_amount || '',
-//         paidAmount: req.body.sp_amount || '',
-//         dueAmount: req.body.sp_due_amount || '',
-//         notes: req.body.sp_notes || '',
-//         createdBy: userId
-//       });
-//       await supplierPayment.save({ session });
-//     }
-
-//     if (status === 'paid' || status === 'partially_paid') {
-//       for (const item of items) {
-//         let inventory = await Inventory.findOne({ productId: item.id, userId }).session(session);
-//         if (!inventory) {
-//           inventory = new Inventory({ productId: item.id, userId, quantity: 0 });
-//         }
-//         const previousQuantity = inventory.quantity;
-//         inventory.quantity += item.qty || 0;
-//         inventory.inventory_history.push({
-//           unitId: item.unit,
-//           quantity: previousQuantity,
-//           notes: `Stock in from purchase ${purchase.purchaseId}`,
-//           type: 'stock_in',
-//           adjustment: item.qty || 0,
-//           referenceId: purchase._id,
-//           referenceType: 'purchase',
-//           createdBy: userId
-//         });
-//         await inventory.save({ session });
-//       }
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       message: 'Purchase created successfully',
-//       data: { purchase }
-//     });
-
-//     if (billToUser?.email && process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-//       try {
-//         await sendMail({
-//           from: `"Your Company" <${process.env.SMTP_EMAIL}>`,
-//           to: billToUser.email,
-//           subject: "New Purchase Created",
-//           html: `
-//             <h3>Hello ${billToUser.name},</h3>
-//             <p>A new purchase has been created for you.</p>
-//             <p><strong>Reference No:</strong> ${purchase.referenceNo}</p>
-//             <p><strong>Total Amount:</strong> ${purchase.totalAmount}</p>
-//             <p>Purchase Date: ${new Date(purchase.purchaseDate).toLocaleDateString()}</p>
-//             <br>
-//             <p>Best Regards,<br>Your Company</p>
-//           `
-//         });
-//       } catch (emailErr) {
-//         console.error("Failed to send purchase email:", emailErr.message);
-//       }
-//     }
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error(err);
-//     res.status(500).json({ message: 'Error creating purchase', error: err.message });
-//   }
-// };
 
 const createPurchase = async (req, res) => {
   try {
@@ -318,7 +136,6 @@ const createPurchase = async (req, res) => {
       brokerCommissionValue
     } = req.body;
 
-    // console.log(req.body)
 
     const billFromUser = await User.findById(billFrom);
     const billToUser = await User.findById(billTo);
@@ -327,21 +144,8 @@ const createPurchase = async (req, res) => {
       return res.status(422).json({ message: "Invalid bill from or bill to user ID" });
     }
 
-    // const validSignatureTypes = ["none", "digitalSignature", "eSignature"];
-    // if (sign_type && !validSignatureTypes.includes(sign_type)) {
-    //   return res.status(400).json({ message: "Invalid signature type" });
-    // }
 
-    // if (sign_type === "eSignature") {
-    //   if (!req.file) return res.status(400).json({ message: "Signature image is required for eSignature" });
-    //   if (!signatureName) return res.status(400).json({ message: "Signature name is required for eSignature" });
-    // }
 
-    // const calculatedSubTotal = subTotal || items.reduce((sum, item) => sum + (item.amount || (item.quantity * (item.rate || 0))), 0);
-    // const calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-    // const calculatedTotalTax = totalTax || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-    // const calculatedGrandTotal = grandTotal || (calculatedSubTotal + calculatedTotalTax - calculatedTotalDiscount);
-    
     const effectiveTaxType = taxType || "GST";
     const effectiveGstType = effectiveTaxType === "Non-GST" ? null : (gstType || "Exclusive");
 
@@ -439,32 +243,40 @@ const createPurchase = async (req, res) => {
     }
 
     const finalAmount = totalAmount; // now totalAmount only , not baseAmount + brokerCommissionAmount;
-    
+
     let status = "pending";
     let paidAmount = 0;
-    // let balanceAmount = calculatedGrandTotal;
-    // let balanceAmount = totalAmount;
 
     const spAmount = Number(req.body.sp_amount) || 0;
     const spPaidAmount = Number(req.body.sp_paid_amount) || 0;
+    const spPaymentModeId =
+      typeof req.body.sp_paymentMode === "string" &&
+      mongoose.Types.ObjectId.isValid(req.body.sp_paymentMode)
+        ? req.body.sp_paymentMode
+        : null;
+    const spBankId =
+      typeof req.body.sp_bankId === "string" &&
+      mongoose.Types.ObjectId.isValid(req.body.sp_bankId)
+        ? req.body.sp_bankId
+        : null;
+    const paymentDateValue = req.body.sp_paymentDate
+      ? new Date(req.body.sp_paymentDate)
+      : new Date();
+    const selectedPaymentMode = spPaymentModeId
+      ? await PaymentMode.findById(spPaymentModeId).select("name slug")
+      : null;
+    const selectedPaymentModeName = String(selectedPaymentMode?.name || "").trim().toLowerCase();
+    const isChequeMode = selectedPaymentModeName === "cheque";
     if (spPaidAmount < 0) {
       return res.status(400).json({ message: "Paid amount cannot be negative." });
     }
     if (spPaidAmount > totalAmount) {
       return res.status(400).json({ message: "Paid amount cannot exceed total amount." });
     }
+    if (spPaidAmount > 0 && isChequeMode && !String(checkNumber || "").trim()) {
+      return res.status(400).json({ message: "Cheque number is required for cheque payment." });
+    }
 
-    // if (sp_amount && sp_paid_amount && status === "paid") {
-    //   if (sp_paid_amount === sp_amount) {
-    //     status = "paid";
-    //     paidAmount = sp_paid_amount;
-    //     balanceAmount = 0;
-    //   } else {
-    //     status = "partially_paid";
-    //     paidAmount = sp_paid_amount;
-    //     balanceAmount = sp_amount - sp_paid_amount;
-    //   }
-    // }
 
     let balanceAmount = finalAmount;
     paidAmount = spPaidAmount || 0;
@@ -477,17 +289,6 @@ const createPurchase = async (req, res) => {
       status = "partially_paid";
     }
 
-    // if (status === "paid") {
-    //   if (spPaidAmount >= totalAmount) {
-    //     status = "paid";
-    //     paidAmount = totalAmount;
-    //     balanceAmount = 0;
-    //   } else if (spPaidAmount > 0) {
-    //     status = "partially_paid";
-    //     paidAmount = spPaidAmount;
-    //     balanceAmount = totalAmount - spPaidAmount;
-    //   }
-    // }
 
     const supplierBillNumber =
       req.body.supplier_bill_number || req.body.sp_referenceNumber || "";
@@ -518,32 +319,9 @@ const createPurchase = async (req, res) => {
           : new Date(purchaseDate ? new Date(purchaseDate) : new Date()),
       dueDays: typeof dueDays === "number" ? dueDays : dueDays ? Number(dueDays) : null,
       referenceNo: referenceNo || sp_referenceNumber || "",
-      // items: items.map(item => ({
-      //   id: item.id,
-      //   name: item.name,
-      //   hsn_code: item.hsn_code,
-      //   // ✅ SAVE VARIANT
-      //   variantId: item.variantId,
-      //   variantName: item.variantName,
-      //   variantDesignNo: item.variantDesignNo,
-      //   variantColor: item.variantColor,
-      //   variantSize: item.variantSize,
-      //   // ✅ REQUIRED FOR E-WAY BILL
-      //   // variantHsn_code: item.variantHsn_code,
-      //   unit: item.unit,
-      //   qty: item.qty,
-      //   rate: item.rate,
-      //   discount: item.discount,
-      //   tax: item.tax,
-      //   tax_group_id: item.tax_group_id,
-      //   discount_type: item.discount_type,
-      //   discount_value: item.discount_value,
-      //   amount: item.amount
-      // })),
       items: normalizedItems,
       status,
-      // paymentMode: paymentMode && paymentMode !== "" ? paymentMode : null,
-      paymentMode: paymentMode || req.body.sp_paymentMode || null,
+      paymentMode: paymentMode || spPaymentModeId || null,
       // taxableAmount: subTotal || calculatedSubTotal,
       // totalDiscount: totalDiscount || calculatedTotalDiscount,
       // totalTax: totalTax || calculatedTotalTax,
@@ -575,19 +353,15 @@ const createPurchase = async (req, res) => {
       bank: bank || null,
       notes: notes || "",
       termsAndCondition: termsAndCondition || "",
-      // sign_type: sign_type || "none",
-      // signatureId: signatureId || null,
-      // signatureImage: sign_type === "eSignature" ? req.file.path : null,
-      // signatureName: sign_type === "eSignature" ? signatureName : null,
       checkNumber: checkNumber || null,
       userId,
       billFrom,
       billTo
     });
 
-    // console.log("Purchase object to save:", purchase);
 
     await purchase.save();
+    await syncPurchaseNotificationForPurchase(purchase._id);
 
     if (resolvedBroker) {
       await upsertBrokerDealForPurchase({
@@ -605,13 +379,13 @@ const createPurchase = async (req, res) => {
         purchaseId: purchase._id,
         supplierId: billTo,
 
-        sourceType: req.body.sp_sourceType || "ON_ACCOUNT", // ✅ DEFAULT
-
-        paymentMode: req.body.sp_paymentMode || null,
-        bankId: req.body.sp_bankId || null,
+        sourceType: req.body.sp_sourceType || (spBankId ? "BANK" : "ON_ACCOUNT"),
+        paymentMode: spPaymentModeId,
+        bankId: spBankId,
 
         referenceNumber: req.body.sp_referenceNumber || "",
-        paymentDate: req.body.sp_paymentDate || "",
+        chequeNumber: req.body.checkNumber || "",
+        paymentDate: paymentDateValue,
         // paymentMode: req.body.sp_paymentMode || "",
         // amount: req.body.sp_amount || "",
         amount: paidAmount,
@@ -650,34 +424,15 @@ const createPurchase = async (req, res) => {
       }
     }
 
+    await syncPurchaseNotificationForPurchase(purchase._id);
+
     res.status(201).json({
       message: "Purchase created successfully",
       data: { purchase,
-        //  ewayBill: ewayBillResult            // new 
+        //  ewayBill: ewayBillResult            // new
       }
     });
 
-    // if (billToUser?.email && process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-    //   try {
-    //     await sendMail({
-    //       from: `"Naresh Saree Collection" <${process.env.SMTP_EMAIL}>`,
-    //       to: billToUser.email,
-    //       subject: "New Purchase Created",
-    //       html: `
-    //         <h3>Hello ${billToUser.firstName},</h3>
-    //         <p>A new purchase has been created for you.</p>
-    //         <p><strong>Purchase No:</strong> ${purchase.purchaseId}</p>
-    //         <p><strong>Total Item Amount:</strong> ${purchase.totalAmount}</p>
-    //         <p>Purchase Date: ${new Date(purchase.purchaseDate).toLocaleDateString()}</p><br>
-    //         <p>Best Regards,<br>Naresh Saree Collection</p>
-    //       `
-    //     });
-    //     // If necessary to mail the Garage expense's amount.
-    //     // <p><strong>Final Amount with all Garage Expense:</strong> ${purchase.finalAmount}</p>
-    //   } catch (emailErr) {
-    //     console.error("Failed to send purchase email:", emailErr.message);
-    //   }
-    // }
 
   } catch (err) {
     console.error(err);
@@ -699,7 +454,7 @@ const exportPurchases = async (req, res) => {
     // The Purchase model links to User via 'billTo', and Supplier model links to User via 'user_id'
     const userIds = purchases.map(p => p.billTo?._id).filter(id => id);
     const suppliers = await Supplier.find({ user_id: { $in: userIds } });
-    
+
     const supplierMap = {};
     suppliers.forEach(sup => {
       supplierMap[sup.user_id.toString()] = sup;
@@ -713,7 +468,7 @@ const exportPurchases = async (req, res) => {
       { header: 'Purchase No', key: 'purchaseId', width: 20 },
       { header: 'Reference No', key: 'referenceNo', width: 20 },
       { header: 'Supplier Bill No', key: 'supplierBillNumber', width: 20 },
-      
+
       // Supplier Details
       { header: 'Supplier Name', key: 'supplierName', width: 30 },
       { header: 'Supplier Phone', key: 'supplierPhone', width: 15 },
@@ -780,7 +535,7 @@ const exportPurchases = async (req, res) => {
             purchaseId: isFirstItem ? purchase.purchaseId : '',
             referenceNo: isFirstItem ? (purchase.referenceNo || '-') : '',
             supplierBillNumber: isFirstItem ? (purchase.supplier_bill_number || '-') : '',
-            
+
             supplierName: isFirstItem ? supplierName : '',
             supplierPhone: isFirstItem ? supplierPhone : '',
             supplierAddress: isFirstItem ? supplierAddress : '',
@@ -798,10 +553,10 @@ const exportPurchases = async (req, res) => {
 
             status: isFirstItem ? purchase.status : '',
             paymentMode: isFirstItem ? (purchase.paymentMode?.name || 'N/A') : '',
-            
-            // Only show totals on the first row so summing the column (if filtered) isn't doubly wrong, 
+
+            // Only show totals on the first row so summing the column (if filtered) isn't doubly wrong,
             // and visually it groups the invoice.
-            totalAmount: isFirstItem ? purchase.totalAmount : '', 
+            totalAmount: isFirstItem ? purchase.totalAmount : '',
             paidAmount: isFirstItem ? purchase.paidAmount : '',
             balanceAmount: isFirstItem ? purchase.balanceAmount : '',
           });
@@ -813,7 +568,7 @@ const exportPurchases = async (req, res) => {
           purchaseId: purchase.purchaseId,
           referenceNo: purchase.referenceNo || '-',
           supplierBillNumber: purchase.supplier_bill_number || '-',
-          
+
           supplierName,
           supplierPhone,
           supplierAddress,
@@ -856,227 +611,6 @@ const exportPurchases = async (req, res) => {
   }
 };
 
-// const updatePurchase = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       _id,
-//       purchaseId,
-//       userId,
-//       billFrom,
-//       billTo,
-//       referenceNo,
-//       purchaseDate,
-//       items,
-//       notes,
-//       termsAndCondition,
-//       paymentMode,
-//       subTotal,
-//       totalTax,
-//       totalDiscount,
-//       grandTotal,
-//       sign_type,
-//       signatureId,
-//       signatureName,
-//       checkNumber,
-//       bank,
-//       sp_amount,
-//       sp_paid_amount,
-//       status: reqStatus
-//     } = req.body;
-
-//     if (!_id) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: 'Purchase ID is required' });
-//     }
-
-//     const purchase = await Purchase.findById(_id).session(session);
-//     if (!purchase) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Purchase not found' });
-//     }
-
-//     const billFromUser = await User.findById(billFrom).session(session);
-//     const billToUser = await User.findById(billTo).session(session);
-//     if (!billFromUser || !billToUser) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(422).json({ message: 'Invalid bill from or bill to user ID' });
-//     }
-
-
-//     // Signature validation
-//     const validSignatureTypes = ['none', 'digitalSignature', 'eSignature'];
-//     if (sign_type && !validSignatureTypes.includes(sign_type)) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: 'Invalid signature type' });
-//     }
-
-//     if (sign_type === 'eSignature') {
-//       if (!req.file && !purchase.signatureImage) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({ message: 'Signature image is required for eSignature' });
-//       }
-//       if (!signatureName && !purchase.signatureName) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(400).json({ message: 'Signature name is required for eSignature' });
-//       }
-//     }
-
-//     // Calculations
-//     const calculatedSubTotal = subTotal || items.reduce((sum, item) => sum + (item.amount || (item.qty * (item.rate || 0))), 0);
-//     const calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-//     const calculatedTotalTax = totalTax || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-//     const calculatedGrandTotal = grandTotal || (calculatedSubTotal + calculatedTotalTax - calculatedTotalDiscount);
-
-//     let status = reqStatus || purchase.status || 'pending';
-//     let paidAmount = 0;
-//     let balanceAmount = calculatedGrandTotal;
-
-//     if (sp_amount && sp_paid_amount) {
-//       if (sp_paid_amount === sp_amount) {
-//         status = 'paid';
-//         paidAmount = sp_paid_amount;
-//         balanceAmount = 0;
-//       } else {
-//         status = 'partially_paid';
-//         paidAmount = sp_paid_amount;
-//         balanceAmount = sp_amount - sp_paid_amount;
-//       }
-//     }
-
-//     // Revert previous inventory changes before updating
-//     if (purchase.status === 'paid' || purchase.status === 'partially_paid') {
-//       for (const item of purchase.items) {
-//         const inventory = await Inventory.findOne({ productId: item.id, userId }).session(session);
-//         if (inventory) {
-//           inventory.quantity -= item.qty || 0;
-//           inventory.inventory_history.push({
-//             unitId: item.unit,
-//             quantity: inventory.quantity + (item.qty || 0),
-//             notes: `Stock reverted from purchase update ${purchase.purchaseId}`,
-//             type: 'stock_out',
-//             adjustment: -(item.qty || 0),
-//             referenceId: purchase._id,
-//             referenceType: 'purchase',
-//             createdBy: userId
-//           });
-//           await inventory.save({ session });
-//         }
-//       }
-//     }
-
-//     // Update purchase
-//     purchase.vendorId = billTo;
-//     purchase.purchaseDate = purchaseDate ? new Date(purchaseDate) : purchase.purchaseDate;
-//     purchase.referenceNo = referenceNo || purchase.referenceNo;
-//     purchase.items = items.map(item => ({
-//       id: item.id,
-//       name: item.name,
-//       unit: item.unit,
-//       qty: item.qty,
-//       rate: item.rate,
-//       discount: item.discount,
-//       tax: item.tax,
-//       tax_group_id: item.tax_group_id,
-//       discount_type: item.discount_type,
-//       discount_value: item.discount_value,
-//       amount: item.amount
-//     }));
-//     purchase.status = status;
-//     purchase.paymentMode = paymentMode || purchase.paymentMode;
-//     purchase.taxableAmount = subTotal;
-//     purchase.totalDiscount = totalDiscount;
-//     purchase.totalTax = totalTax;
-//     purchase.totalAmount = grandTotal;
-//     purchase.paidAmount = paidAmount;
-//     purchase.balanceAmount = balanceAmount;
-//     purchase.notes = notes || purchase.notes;
-//     purchase.termsAndCondition = termsAndCondition || purchase.termsAndCondition;
-//     purchase.sign_type = sign_type || purchase.sign_type;
-//     purchase.signatureId = signatureId || purchase.signatureId;
-//     purchase.signatureImage = sign_type === 'eSignature' ? (req.file ? req.file.path : purchase.signatureImage) : null;
-//     purchase.signatureName = sign_type === 'eSignature' ? (signatureName || purchase.signatureName) : null;
-//     purchase.checkNumber = checkNumber || purchase.checkNumber;
-//     purchase.bank = bank || purchase.bank;
-//     purchase.userId = userId;
-//     purchase.billFrom = billFrom;
-//     purchase.billTo = billTo;
-
-//     await purchase.save({ session });
-
-//     // Update inventory for new items
-//     if (status === 'paid' || status === 'partially_paid') {
-//       for (const item of items) {
-//         let inventory = await Inventory.findOne({ productId: item.id, userId }).session(session);
-//         if (!inventory) {
-//           inventory = new Inventory({ productId: item.id, userId, quantity: 0 });
-//         }
-//         const previousQuantity = inventory.quantity;
-//         inventory.quantity += item.qty || 0;
-//         inventory.inventory_history.push({
-//           unitId: item.unit,
-//           quantity: previousQuantity,
-//           notes: `Stock in from updated purchase ${purchase.purchaseId}`,
-//           type: 'stock_in',
-//           adjustment: item.qty || 0,
-//           referenceId: purchase._id,
-//           referenceType: 'purchase',
-//           createdBy: userId
-//         });
-//         await inventory.save({ session });
-//       }
-//     }
-
-//     // Update supplier payment
-//     await SupplierPayment.deleteMany({ purchaseId: purchase._id }).session(session);
-//     if (status === 'paid' || status === 'partially_paid') {
-//       const supplierPayment = new SupplierPayment({
-//         purchaseId: purchase._id,
-//         supplierId: billTo,
-//         referenceNumber: req.body.sp_referenceNumber || '',
-//         paymentDate: req.body.sp_paymentDate || '',
-//         paymentMode: req.body.sp_paymentMode || '',
-//         amount: req.body.sp_amount || '',
-//         paidAmount: req.body.sp_amount || '',
-//         dueAmount: req.body.sp_due_amount || '',
-//         notes: req.body.sp_notes || '',
-//         createdBy: userId
-//       });
-//       await supplierPayment.save({ session });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Purchase updated successfully',
-//       data: { purchase }
-//     });
-
-
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error(err);
-//     res.status(500).json({ message: 'Error updating purchase', error: err.message });
-//   }
-// };
 
 const updatePurchase = async (req, res) => {
   try {
@@ -1142,20 +676,6 @@ const updatePurchase = async (req, res) => {
       return res.status(422).json({ message: "Invalid bill from or bill to user ID" });
     }
 
-    // Signature validation
-    // const validSignatureTypes = ["none", "digitalSignature", "eSignature"];
-    // if (sign_type && !validSignatureTypes.includes(sign_type)) {
-    //   return res.status(400).json({ message: "Invalid signature type" });
-    // }
-
-    // if (sign_type === "eSignature") {
-    //   if (!req.file && !purchase.signatureImage) {
-    //     return res.status(400).json({ message: "Signature image is required for eSignature" });
-    //   }
-    //   if (!signatureName && !purchase.signatureName) {
-    //     return res.status(400).json({ message: "Signature name is required for eSignature" });
-    //   }
-    // }
 
     const effectiveTaxType = taxType || purchase.taxType || "GST";
     const effectiveGstType =
@@ -1218,11 +738,6 @@ const updatePurchase = async (req, res) => {
       0
     );
 
-    // Calculations
-    // const calculatedSubTotal = subTotal || items.reduce((sum, item) => sum + (item.amount || (item.qty * (item.rate || 0))), 0);
-    // const calculatedTotalDiscount = totalDiscount || items.reduce((sum, item) => sum + (item.discount || 0), 0);
-    // const calculatedTotalTax = totalTax || items.reduce((sum, item) => sum + (item.tax || 0), 0);
-    // const calculatedGrandTotal = grandTotal || (calculatedSubTotal + calculatedTotalTax - calculatedTotalDiscount);
 
     /* ----------------------------------------------------
       Broker commission (record only, items-based)
@@ -1264,24 +779,12 @@ const updatePurchase = async (req, res) => {
           : resolvedCommissionValue;
     }
 
-    // const finalAmount = baseAmount + brokerCommissionAmount;
     const finalAmount = totalAmount;
-    
+
     let status = reqStatus || purchase.status || "pending";
     let paidAmount = purchase.paidAmount || 0;
     let balanceAmount = Math.max(finalAmount - paidAmount, 0);
 
-    // if (sp_amount && sp_paid_amount) {
-    //   if (sp_paid_amount === sp_amount) {
-    //     status = "paid";
-    //     paidAmount = sp_paid_amount;
-    //     balanceAmount = 0;
-    //   } else {
-    //     status = "partially_paid";
-    //     paidAmount = sp_paid_amount;
-    //     balanceAmount = sp_amount - sp_paid_amount;
-    //   }
-    // }
 
     const spAmount = Number(sp_amount) || 0;
     const spPaidAmount = Number(sp_paid_amount) || 0;
@@ -1330,15 +833,9 @@ const updatePurchase = async (req, res) => {
     }
     purchase.referenceNo = referenceNo || sp_referenceNumber || purchase.referenceNo;
     purchase.supplier_bill_number = supplier_bill_number || sp_referenceNumber || purchase.supplier_bill_number;
-    // purchase.items = items;
     purchase.items = normalizedItems;
     purchase.status = status;
-    // purchase.paymentMode = paymentMode || purchase.paymentMode;
     purchase.paymentMode = paymentMode || req.body.sp_paymentMode || purchase.paymentMode || null;
-    // purchase.taxableAmount = calculatedSubTotal;
-    // purchase.totalDiscount = calculatedTotalDiscount;
-    // purchase.totalTax = calculatedTotalTax;
-    // purchase.totalAmount = calculatedGrandTotal;
     purchase.totalAmount = totalAmount;      // grand total after discount
     purchase.totalDiscount = totalDiscount;
     purchase.totalTax = totalTax;
@@ -1350,10 +847,6 @@ const updatePurchase = async (req, res) => {
     purchase.balanceAmount = balanceAmount;
     purchase.notes = notes || purchase.notes;
     purchase.termsAndCondition = termsAndCondition || purchase.termsAndCondition;
-    // purchase.sign_type = sign_type || purchase.sign_type;
-    // purchase.signatureId = signatureId || purchase.signatureId;
-    // purchase.signatureImage = sign_type === "eSignature" ? (req.file ? req.file.path : purchase.signatureImage) : null;
-    // purchase.signatureName = sign_type === "eSignature" ? (signatureName || purchase.signatureName) : null;
     purchase.checkNumber = checkNumber || purchase.checkNumber;
     purchase.bank = bank || purchase.bank;
     purchase.userId = userId;
@@ -1487,6 +980,7 @@ const updatePurchase = async (req, res) => {
       });
     }
 
+    await syncPurchaseNotificationForPurchase(purchase._id);
     res.status(200).json({ message: "Purchase updated successfully", data: { purchase } });
 
   } catch (err) {
@@ -1578,15 +1072,6 @@ const getAllPurchases = async (req, res) => {
       .skip(skip)
       .limit(Number(limit));
 
-    // Conditionally populate paymentMode only when paymentMode filter is applied
-    // if (paymentMode) {
-    //   purchaseQuery = purchaseQuery.populate({
-    //     path: 'paymentMode',
-    //     model: 'PaymentMode',
-    //     select: 'name slug status',
-    //     match: { _id: mongoose.Types.ObjectId.isValid(paymentMode) ? mongoose.Types.ObjectId(paymentMode) : null }
-    //   });
-    // }
 
     // Execute query
     const purchases = await purchaseQuery;
@@ -1730,6 +1215,7 @@ const listPurchasesMinimal = async (req, res) => {
   try {
     const { search = '' } = req.query;
     const userId = req.user;
+    const normalizedSearch = String(search || '').trim().toLowerCase();
 
     // Get all purchase IDs that already have a debit note
     const usedPurchaseIds = await DebitNote.find({ userId, isDeleted: false }).distinct('purchaseId');
@@ -1742,21 +1228,12 @@ const listPurchasesMinimal = async (req, res) => {
       _id: { $nin: usedPurchaseIds } // Filter out used purchases
     };
 
-    // Add search filter if search term exists
-    if (search) {
-      query.$or = [
-        { purchaseId: { $regex: search, $options: 'i' } },
-        { referenceNo: { $regex: search, $options: 'i' } },
-        { 'vendorId.name': { $regex: search, $options: 'i' } }
-      ];
-    }
-
     // Get purchases with different limits based on search
     const purchases = await Purchase.find(query)
-      .select('_id purchaseId referenceNo purchaseDate status totalAmount vendorId')
-      .populate('vendorId', 'name') // Minimal vendor info
+      .select('_id purchaseId referenceNo supplier_bill_number purchaseDate status totalAmount billTo supplierName')
+      .populate('billTo', 'firstName lastName')
       .sort({ createdAt: -1 })
-      .limit(search ? 0 : 20); // No limit when searching, limit 20 otherwise
+      .limit(normalizedSearch ? 0 : 20); // No limit when searching, limit 20 otherwise
 
     // Get payment details for these purchases
     const paymentDetails = await SupplierPayment.find({
@@ -1774,21 +1251,43 @@ const listPurchasesMinimal = async (req, res) => {
       return map;
     }, {});
 
+    const filteredPurchases = normalizedSearch
+      ? purchases.filter((purchase) => {
+        const billToName = purchase.billTo
+          ? `${purchase.billTo.firstName || ''} ${purchase.billTo.lastName || ''}`.trim()
+          : '';
+        const resolvedSupplierName = purchase.supplierName || billToName;
+
+        return [
+          purchase.purchaseId,
+          purchase.referenceNo,
+          purchase.supplier_bill_number,
+          resolvedSupplierName
+        ].some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+      })
+      : purchases;
+
     // Format response
-    const formattedPurchases = purchases.map(purchase => {
+    const formattedPurchases = filteredPurchases.map(purchase => {
       const paymentInfo = paymentMap[purchase._id.toString()] || null;
+      const billToName = purchase.billTo
+        ? `${purchase.billTo.firstName || ''} ${purchase.billTo.lastName || ''}`.trim()
+        : '';
+      const resolvedSupplierName = purchase.supplierName || billToName || 'Unknown Supplier';
 
       return {
         id: purchase._id,
         purchaseId: purchase.purchaseId,
         referenceNo: purchase.referenceNo,
+        supplier_bill_number: purchase.supplier_bill_number || '',
         purchaseDate: purchase.purchaseDate,
         status: purchase.status,
         totalAmount: purchase.totalAmount,
-        vendor: purchase.vendorId ? {
-          id: purchase.vendorId._id,
-          name: purchase.vendorId.name
+        vendor: purchase.billTo ? {
+          id: purchase.billTo._id,
+          name: resolvedSupplierName
         } : null,
+        supplierName: resolvedSupplierName,
         // Add payment details if available
         payment: paymentInfo ? {
           amount: paymentInfo.amount,
@@ -1801,13 +1300,13 @@ const listPurchasesMinimal = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: search
+      message: normalizedSearch
         ? 'Search results for purchases retrieved successfully'
         : 'Last 20 purchases (paid/pending/partially paid) retrieved successfully',
       data: formattedPurchases,
       meta: {
-        count: purchases.length,
-        isSearchResult: !!search
+        count: formattedPurchases.length,
+        isSearchResult: !!normalizedSearch
       }
     });
 
@@ -1825,6 +1324,7 @@ const listPurchasesPending = async (req, res) => {
   try {
     const { search = '' } = req.query;
     const userId = req.user;
+    const normalizedSearch = String(search || '').trim().toLowerCase();
 
     // Build the base query
     const query = {
@@ -1832,20 +1332,15 @@ const listPurchasesPending = async (req, res) => {
       isDeleted: false
     };
 
-    // Add search conditions if search term exists
-    if (search.trim()) {
-      query.$or = [
-        { purchaseId: { $regex: search, $options: 'i' } },
-        { referenceNo: { $regex: search, $options: 'i' } },
-      ];
-    }
+    // Do not pre-filter by search in Mongo here.
+    // Supplier search depends on populated billTo names, so filtering is applied after populate.
 
     // Fetch purchases with optimized projection
     const purchases = await Purchase.find(query)
-      .select('_id purchaseId referenceNo purchaseDate status totalAmount billTo')
-      .populate('billTo', 'name')
+      .select('_id purchaseId referenceNo supplier_bill_number purchaseDate status totalAmount billTo supplierName')
+      .populate('billTo', 'firstName lastName')
       .sort({ createdAt: -1 })
-      .limit(search.trim() ? 0 : 20)
+      .limit(normalizedSearch ? 0 : 20)
       .lean();
 
     // Early return if no purchases found
@@ -1901,17 +1396,36 @@ const listPurchasesPending = async (req, res) => {
         return result;
       }
 
+      const billToName = purchase.billTo
+        ? `${purchase.billTo.firstName || ''} ${purchase.billTo.lastName || ''}`.trim()
+        : '';
+      const resolvedSupplierName = purchase.supplierName || billToName || 'Unknown Supplier';
+
+      if (
+        normalizedSearch &&
+        ![
+          purchase.purchaseId,
+          purchase.referenceNo,
+          purchase.supplier_bill_number,
+          resolvedSupplierName
+        ].some((value) => String(value || '').toLowerCase().includes(normalizedSearch))
+      ) {
+        return result;
+      }
+
       result.push({
         id: purchase._id,
         purchaseId: purchase.purchaseId,
         referenceNo: purchase.referenceNo,
+        supplier_bill_number: purchase.supplier_bill_number || '',
         purchaseDate: purchase.purchaseDate,
         status: purchase.status,
         totalAmount: purchase.totalAmount,
         vendor: purchase.billTo ? {
           id: purchase.billTo._id,
-          name: purchase.billTo.name
+          name: resolvedSupplierName
         } : null,
+        supplierName: resolvedSupplierName,
         payment: paymentInfo ? {
           amount: paymentInfo.amount,
           paidAmount: paymentInfo.paidAmount,
@@ -1968,11 +1482,6 @@ const getPurchaseById = async (req, res) => {
         model: 'PaymentMode',
         select: 'name slug status'
       })
-      // .populate({
-      //   path: 'signatureId',
-      //   model: 'Signature',
-      //   select: 'signatureName signatureImage createdAt'
-      // });
 
     if (!purchase) {
       return res.status(404).json({
@@ -2014,10 +1523,22 @@ const getPurchaseById = async (req, res) => {
 
     if (purchase.billTo?._id) {
       supplierDetails = await Supplier.findOne({
-        user_id: purchase.billTo._id,
+        $or: [
+          { user_id: purchase.billTo._id },
+          { _id: purchase.billTo._id }
+        ],
         isDeleted: false
       }).lean();
     }
+
+    const companySettings = await CompanySettings.findOne({}).sort({ createdAt: -1 }).select("state gstin").lean();
+    const companyStateName = await resolveStateName(companySettings?.state);
+    const supplierStateName = await resolveStateName(supplierDetails?.state);
+    const companyGstinStateCode = getGstinStateCode(companySettings?.gstin);
+    const supplierGstinStateCode = getGstinStateCode(supplierDetails?.gst_no);
+    const hasDifferentStates = companyStateName && supplierStateName && companyStateName !== supplierStateName;
+    const hasDifferentGstinStates = companyGstinStateCode && supplierGstinStateCode && companyGstinStateCode !== supplierGstinStateCode;
+    const taxSummaryMode = hasDifferentStates || hasDifferentGstinStates ? "IGST" : "CGST_SGST";
 
     // BillTo details
     const billToDetails = purchase.billTo ? {
@@ -2071,50 +1592,6 @@ const getPurchaseById = async (req, res) => {
       }
       : null;
 
-    // const expenseDetails = purchase.expenses
-    // ? {
-    //     garageCharges: purchase.expenses.garageCharges || 0,
-    //     loadingCharges: purchase.expenses.loadingCharges || 0,
-    //     unloadingCharges: purchase.expenses.unloadingCharges || 0,
-    //     transportCharges: purchase.expenses.transportCharges || 0,
-    //     otherCharges: purchase.expenses.otherCharges || 0,
-    //     expenseNotes: purchase.expenses.expenseNotes || "",
-    //     totalExpenses: purchase.expenses.totalExpenses || 0
-    //   }
-    // : {
-    //     garageCharges: 0,
-    //     loadingCharges: 0,
-    //     unloadingCharges: 0,
-    //     transportCharges: 0,
-    //     otherCharges: 0,
-    //     expenseNotes: "",
-    //     totalExpenses: 0
-    // };
-
-
-    // Signature details
-    // let signatureDetails = null;
-    // if (purchase.sign_type === 'eSignature') {
-    //   const signatureImage = purchase.signatureImage
-    //     ? `${baseUrl}${purchase.signatureImage.replace(/\\/g, '/')}`
-    //     : null;
-    //   signatureDetails = {
-    //     name: purchase.signatureName || null,
-    //     image: signatureImage,
-    //     type: 'eSignature'
-    //   };
-    // } else if (purchase.signatureId) {
-    //   const signatureImage = purchase.signatureId.signatureImage
-    //     ? `${baseUrl}${purchase.signatureId.signatureImage.replace(/\\/g, '/')}`
-    //     : null;
-    //   signatureDetails = {
-    //     id: purchase.signatureId._id,
-    //     name: purchase.signatureId.signatureName || null,
-    //     image: signatureImage,
-    //     createdAt: purchase.signatureId.createdAt,
-    //     type: 'digitalSignature'
-    //   };
-    // }
 
     // Items
     const formattedItems = purchase.items.map(item => ({
@@ -2133,15 +1610,6 @@ const getPurchaseById = async (req, res) => {
       discount: item.discount || 0,
       tax: item.tax || 0,
       tax_group_id: item.tax_group_id || null,
-      // discount: item.discount,
-      // tax: item.tax,
-      // tax_group: item.tax_group_id ? {
-      //   id: item.tax_group_id._id,
-      //   name: item.tax_group_id.name,
-      //   rate: item.tax_group_id.rate
-      // } : null,
-      // discount_type: item.discount_type,
-      // discount_value: item.discount_value,
       amount: item.amount
     }));
 
@@ -2170,6 +1638,11 @@ const getPurchaseById = async (req, res) => {
       balanceAmount: purchase.balanceAmount,
       taxType: purchase.taxType || "GST",
       gstType: purchase.gstType || "Exclusive",
+      taxSummaryMode,
+      taxSummaryStates: {
+        companyState: companyStateName,
+        supplierState: supplierStateName
+      },
 
       // ✅ NEW
       // expenses: expenseDetails,
@@ -2267,7 +1740,7 @@ const updatePurchaseStatus = async (req, res) => {
     else if (balanceAmount === 0) computedStatus = 'paid';
     else computedStatus = 'partially_paid';
 
-    purchase.status = status === 'cancelled' ? 'cancelled' : computedStatus;
+    purchase.status = ['cancelled', 'completed'].includes(status) ? status : computedStatus;
     purchase.paidAmount = paidAmount;
     purchase.balanceAmount = balanceAmount;
     await purchase.save();
@@ -2277,6 +1750,7 @@ const updatePurchaseStatus = async (req, res) => {
 
       if (supplierPayment) {
         supplierPayment.referenceNumber = sp_referenceNumber || supplierPayment.referenceNumber;
+        supplierPayment.chequeNumber = req.body.checkNumber || supplierPayment.chequeNumber;
         supplierPayment.paymentDate = sp_paymentDate || supplierPayment.paymentDate;
         supplierPayment.paymentMode = sp_paymentMode || supplierPayment.paymentMode;
         supplierPayment.amount = sp_amount || purchase.totalAmount;
@@ -2289,6 +1763,7 @@ const updatePurchaseStatus = async (req, res) => {
           purchaseId: purchase._id,
           supplierId: purchase.billTo,
           referenceNumber: sp_referenceNumber || '',
+          chequeNumber: req.body.checkNumber || '',
           paymentDate: sp_paymentDate || new Date(),
           paymentMode: sp_paymentMode || purchase.paymentMode,
           amount: sp_amount || purchase.totalAmount,
@@ -2405,6 +1880,7 @@ const deletePurchaseById = async (purchaseId) => {
     return false;
   }
   await SupplierPayment.deleteMany({ purchaseId: purchase._id });
+  await resolveNotificationForPurchase(purchase._id);
   return true;
 };
 
@@ -2523,6 +1999,7 @@ const createSupplierPayment = async (req, res) => {
         status
       }
     );
+    await syncPurchaseNotificationForPurchase(purchaseId);
 
     res.status(201).json({
       message: 'Supplier payment created successfully',
@@ -2575,7 +2052,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
     // 2. Read Excel file using exceljs
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(req.file.path);
-    
+
     const sheet = workbook.worksheets[0];
     if (!sheet) {
       fs.unlinkSync(req.file.path);
@@ -2588,7 +2065,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
     // Convert sheet to JSON
     const rows = [];
     let headers = [];
-    
+
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) {
         // Capture headers
@@ -2602,13 +2079,13 @@ const uploadPurchasesFromExcel = async (req, res) => {
         headers.forEach((header, index) => {
           if (header) {
             let cellValue = row.getCell(index + 1).value;
-            
+
             // Handle Rich Text or specific types
             if (typeof cellValue === 'object' && cellValue !== null) {
               if (cellValue.text) cellValue = cellValue.text;
               else if (cellValue.result) cellValue = cellValue.result;
             }
-            
+
             rowData[header] = cellValue;
           }
         });
@@ -2639,14 +2116,14 @@ const uploadPurchasesFromExcel = async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const rowNumber = i + 2;
-        
+
         // Normalize keys
         const normalizeKey = (key) => Object.keys(row).find(k => k.toLowerCase() === key.toLowerCase());
         const refKey = normalizeKey('Reference No') || normalizeKey('Ref No') || normalizeKey('Invoice No');
-        
+
         const referenceNo = refKey ? row[refKey] : '';
-        const groupKey = referenceNo && referenceNo.toString().trim() !== '' 
-          ? referenceNo.toString().trim() 
+        const groupKey = referenceNo && referenceNo.toString().trim() !== ''
+          ? referenceNo.toString().trim()
           : `ROW_${rowNumber}_${Math.random()}`; // Unique key for rows without reference
 
         if (!purchaseGroups[groupKey]) {
@@ -2701,19 +2178,18 @@ const uploadPurchasesFromExcel = async (req, res) => {
             });
         }
 
-        // if (!supplier) throw new Error(`Supplier '${supplierNameInput}' not found`);
 
         // 2. Parse Date
         let purchaseDate = getVal(['Purchase Date', 'Date']);
         if (!purchaseDate) throw new Error('Purchase Date is required');
-        
+
         if (typeof purchaseDate === 'string') {
             purchaseDate = new Date(purchaseDate);
         } else if (typeof purchaseDate === 'number') {
             // Excel serial date to JS Date
             purchaseDate = new Date(Math.UTC(1899, 11, 30) + (purchaseDate - 1) * 24 * 60 * 60 * 1000);
         }
-        
+
         if (!purchaseDate || isNaN(purchaseDate.getTime())) throw new Error(`Invalid Purchase Date`);
 
         // 3. Due Date / Due Days (Optional)
@@ -2742,8 +2218,8 @@ const uploadPurchasesFromExcel = async (req, res) => {
 
         // 4. Status
         const statusVal = getVal(['Status']) || 'pending';
-        const status = ['pending', 'ordered', 'received', 'paid', 'partially_paid'].includes(statusVal.toLowerCase()) 
-          ? statusVal.toLowerCase() 
+        const status = ['pending', 'ordered', 'received', 'paid', 'partially_paid'].includes(statusVal.toLowerCase())
+          ? statusVal.toLowerCase()
           : 'pending';
 
         // 5. Payment Mode Lookup (New Feature)
@@ -2838,7 +2314,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
 
           const quantity = parseFloat(getRowVal(['Quantity', 'Qty'])) || 0;
           const rate = parseFloat(getRowVal(['Rate', 'Price', 'Unit Price'])) || 0;
-          
+
           if (quantity <= 0) {
               results.errors.push({ row: itemRow.rowNumber, reason: 'Invalid Quantity', data: r });
               hasItemError = true;
@@ -2926,7 +2402,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
           vendorId: supplier ? supplier._id : null,
           supplierName: supplier ? null : supplierNameInput, // Store name if supplier ID not found
           purchaseDate: purchaseDate,
-          dueDate: dueDate, 
+          dueDate: dueDate,
           referenceNo: group.referenceNo,
           supplier_bill_number: supplierBillNo || group.referenceNo,
           status: status,
@@ -2937,7 +2413,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
           overall_discount: overallDiscount,
           taxType: effectiveTaxType,
           gstType: effectiveGstType,
-          grandTotal: grandTotal, 
+          grandTotal: grandTotal,
           paidAmount: status === 'paid' ? grandTotal : 0,
           balanceAmount: status === 'paid' ? 0 : grandTotal,
           finalAmount: grandTotal,
@@ -2969,7 +2445,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
                     productId: item.productId,
                     variantId: item.productVariantId || null
                   });
-                  
+
                   if (!inventory) {
                     inventory = new Inventory({
                           productId: item.productId,
@@ -2979,7 +2455,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
                           inventory_history: []
                     });
                   }
-                  
+
                   inventory.quantity += item.quantity;
                   inventory.inventory_history.push({
                       quantity: inventory.quantity,
@@ -2990,7 +2466,7 @@ const uploadPurchasesFromExcel = async (req, res) => {
                       notes: `Stock in from Excel import`,
                       createdBy: req.user
                   });
-                  
+
                   await inventory.save();
               }
            }
@@ -3099,7 +2575,7 @@ const downloadPurchaseExcelTemplate = async (req, res) => {
       status: '',
       paymentMode: ''
     });
-    
+
     sheet.addRow({
       supplierName: 'ABC Traders',
       purchaseDate: new Date(),

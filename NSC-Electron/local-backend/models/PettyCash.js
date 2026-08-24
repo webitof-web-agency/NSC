@@ -40,7 +40,5 @@ const pettyCashSchema = new mongoose.Schema({
     }
 });
 
-// Ensure only one petty cash record exists (optional index)
-// pettyCashSchema.index({ _id: 1 }, { unique: true }); // Removed to avoid "cannot overwrite _id index" error
 
 module.exports = mongoose.model('PettyCash', pettyCashSchema);

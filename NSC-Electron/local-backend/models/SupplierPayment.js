@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 
 const supplierPaymentSchema = new mongoose.Schema({
@@ -17,6 +17,10 @@ const supplierPaymentSchema = new mongoose.Schema({
     required: true
   },
   referenceNumber: {
+    type: String,
+    trim: true
+  },
+  chequeNumber: {
     type: String,
     trim: true
   },
@@ -85,4 +89,5 @@ supplierPaymentSchema.pre('save', async function (next) {
 });
 
 supplierPaymentSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('SupplierPayment', supplierPaymentSchema);

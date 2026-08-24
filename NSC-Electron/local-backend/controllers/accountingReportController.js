@@ -5,6 +5,9 @@ const Customer = require('@models/Customer');
 const Purchase = require('@models/Purchase');
 const SupplierPayment = require('@models/SupplierPayment');
 const User = require('@models/User');
+const MonthlyExpense = require('@models/MonthlyExpense');
+const Commission = require('@models/Commission');
+const ExcelJS = require('exceljs');
 
 const formatAmount = (amount) => Number(amount.toFixed(2));
 
@@ -20,10 +23,362 @@ const calculateChange = (previous, current) => {
   return { change, trend };
 };
 
+const roundMoney = (amount) => Number((amount || 0).toFixed(2));
+
+const PAYMENT_MODE_LABELS = {
+  CASH: 'Cash',
+  CARD: 'Card',
+  UPI: 'UPI',
+  CREDIT: 'Credit',
+  PHONEPE: 'PhonePe',
+  RAZORPAY: 'Razorpay',
+  BANK: 'Bank',
+  CHEQUE: 'Cheque',
+  MIXED: 'Mixed',
+  OTHER: 'Other',
+};
+
+const normalizePaymentModeKey = (value) => {
+  const key = String(value || '').trim().toUpperCase();
+  if (!key) return 'OTHER';
+  return PAYMENT_MODE_LABELS[key] ? key : 'OTHER';
+};
+
+const allocateInvoiceByPaymentMode = (invoice) => {
+  const netSales = roundMoney(Number(invoice?.TotalAmount || 0) - Number(invoice?.returned_amount || 0));
+  if (netSales <= 0) return [];
+
+  const paymentMethod = normalizePaymentModeKey(invoice?.payment_method);
+  if (paymentMethod !== 'MIXED') {
+    return [{ mode: paymentMethod, amount: netSales }];
+  }
+
+  const splitEntries = [
+    { mode: 'CASH', amount: Number(invoice?.cashAmount || 0) },
+    { mode: 'CARD', amount: Number(invoice?.cardAmount || 0) },
+    { mode: 'UPI', amount: Number(invoice?.upiAmount || 0) },
+  ].filter((entry) => entry.amount > 0);
+
+  const splitTotal = splitEntries.reduce((sum, entry) => sum + entry.amount, 0);
+  if (splitTotal <= 0) {
+    return [{ mode: 'MIXED', amount: netSales }];
+  }
+
+  let allocatedSoFar = 0;
+  return splitEntries.map((entry, index) => {
+    const isLast = index === splitEntries.length - 1;
+    const proportionalAmount = isLast
+      ? roundMoney(netSales - allocatedSoFar)
+      : roundMoney((netSales * entry.amount) / splitTotal);
+
+    allocatedSoFar += proportionalAmount;
+    return {
+      mode: entry.mode,
+      amount: proportionalAmount,
+    };
+  });
+};
+
+const getMonthRange = (year, month) => {
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0, 23, 59, 59, 999);
+  return { start, end };
+};
+
+const getYearRange = (year) => {
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31, 23, 59, 59, 999);
+  return { start, end };
+};
+
+const formatPeriodDate = (value) => {
+  const date = new Date(value);
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+const getProfitLossFilters = (query = {}) => {
+  const now = new Date();
+  const reportType = query.reportType === 'yearly' ? 'yearly' : 'monthly';
+  const year = Number(query.year) || now.getFullYear();
+  const month = Number(query.month) || now.getMonth() + 1;
+  const startDate = query.startDate ? new Date(query.startDate) : null;
+  const endDate = query.endDate ? new Date(query.endDate) : null;
+  const hasDateRange =
+    startDate instanceof Date &&
+    !Number.isNaN(startDate.getTime()) &&
+    endDate instanceof Date &&
+    !Number.isNaN(endDate.getTime());
+
+  return {
+    reportType: hasDateRange ? 'range' : reportType,
+    year,
+    month,
+    startDate: hasDateRange ? new Date(startDate.setHours(0, 0, 0, 0)) : null,
+    endDate: hasDateRange ? new Date(endDate.setHours(23, 59, 59, 999)) : null,
+  };
+};
+
+const getProfitLossRecords = async (userId, filters) => {
+  const { reportType, year, month, startDate, endDate } = filters;
+  const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const periods =
+    reportType === 'range' && startDate && endDate
+      ? [
+          {
+            label: `${formatPeriodDate(startDate)} - ${formatPeriodDate(endDate)}`,
+            key: `${startDate.toISOString().slice(0, 10)}_${endDate.toISOString().slice(0, 10)}`,
+            start: startDate,
+            end: endDate,
+          },
+        ]
+      : reportType === 'yearly'
+      ? monthLabels.map((label, index) => ({
+          label,
+          key: `${year}-${String(index + 1).padStart(2, '0')}`,
+          ...getMonthRange(year, index + 1),
+        }))
+      : [
+          {
+            label: `${monthLabels[month - 1]} ${year}`,
+            key: `${year}-${String(month).padStart(2, '0')}`,
+            ...getMonthRange(year, month),
+          },
+        ];
+
+  const records = await Promise.all(
+    periods.map(async (period) => {
+      const salesQuery = {
+        userId,
+        isDeleted: false,
+        status: { $nin: ['CANCELLED', 'DRAFT'] },
+        invoiceDate: { $gte: period.start, $lte: period.end },
+      };
+      const purchaseQuery = {
+        userId,
+        isDeleted: false,
+        status: { $ne: 'cancelled' },
+        purchaseDate: { $gte: period.start, $lte: period.end },
+      };
+      const expenseQuery = {
+        userId,
+        isDeleted: false,
+        expenseDate: { $gte: period.start, $lte: period.end },
+      };
+      const commissionQuery = {
+        createdBy: userId,
+        createdAt: { $gte: period.start, $lte: period.end },
+      };
+
+      const [salesInvoices, purchases, expenses, commissions] = await Promise.all([
+        Invoice.find(salesQuery)
+          .select('TotalAmount returned_amount items exchangeOriginalItems')
+          .lean(),
+        Purchase.find(purchaseQuery)
+          .select('totalAmount broker')
+          .lean(),
+        MonthlyExpense.find(expenseQuery)
+          .select('amount sourceType')
+          .lean(),
+        Commission.find(commissionQuery)
+          .select('totalCommissionAmount')
+          .lean(),
+      ]);
+
+      const grossSales = roundMoney(
+        salesInvoices.reduce((sum, invoice) => sum + Number(invoice.TotalAmount || 0), 0)
+      );
+      const salesReturn = roundMoney(
+        salesInvoices.reduce((sum, invoice) => sum + Number(invoice.returned_amount || 0), 0)
+      );
+      const netSales = roundMoney(grossSales - salesReturn);
+
+      const getItemsCost = (invoiceItems = []) =>
+        (invoiceItems || []).reduce(
+          (sum, item) => {
+            const fallbackCost =
+              Number(item?.costPriceSnapshot || 0) * Number(item?.qty || 0);
+            const resolvedCost =
+              item?.totalCostSnapshot ?? fallbackCost ?? 0;
+            return sum + Number(resolvedCost);
+          },
+          0
+        );
+
+      const grossCogs = roundMoney(
+        salesInvoices.reduce((sum, invoice) => sum + getItemsCost(invoice.items), 0)
+      );
+      const salesReturnCogs = roundMoney(
+        salesInvoices.reduce(
+          (sum, invoice) => sum + getItemsCost(invoice.exchangeOriginalItems),
+          0
+        )
+      );
+      const netCogs = roundMoney(grossCogs - salesReturnCogs);
+      const grossProfit = roundMoney(netSales - netCogs);
+
+      const purchaseExpenses = roundMoney(
+        expenses
+          .filter((expense) => expense.sourceType === 'PURCHASE')
+          .reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+      );
+      const operatingExpenses = roundMoney(
+        expenses
+          .filter((expense) => expense.sourceType !== 'PURCHASE')
+          .reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+      );
+      const brokerCommission = roundMoney(
+        purchases.reduce(
+          (sum, purchase) => sum + Number(purchase?.broker?.commissionAmount || 0),
+          0
+        )
+      );
+      const staffCommission = roundMoney(
+        commissions.reduce(
+          (sum, commission) => sum + Number(commission.totalCommissionAmount || 0),
+          0
+        )
+      );
+
+      const totalExpenses = roundMoney(
+        purchaseExpenses + operatingExpenses + brokerCommission + staffCommission
+      );
+      const netProfitLoss = roundMoney(grossProfit - totalExpenses);
+
+      return {
+        period: period.label,
+        periodKey: period.key,
+        grossSales,
+        salesReturn,
+        netSales,
+        grossCogs,
+        salesReturnCogs,
+        netCogs,
+        grossProfit,
+        purchaseExpenses,
+        operatingExpenses,
+        brokerCommission,
+        staffCommission,
+        totalExpenses,
+        netProfitLoss,
+        status: netProfitLoss >= 0 ? 'PROFIT' : 'LOSS',
+      };
+    })
+  );
+
+  const summary = records.reduce(
+    (acc, record) => ({
+      grossSales: roundMoney(acc.grossSales + record.grossSales),
+      salesReturn: roundMoney(acc.salesReturn + record.salesReturn),
+      netSales: roundMoney(acc.netSales + record.netSales),
+      grossCogs: roundMoney(acc.grossCogs + record.grossCogs),
+      salesReturnCogs: roundMoney(acc.salesReturnCogs + record.salesReturnCogs),
+      netCogs: roundMoney(acc.netCogs + record.netCogs),
+      grossProfit: roundMoney(acc.grossProfit + record.grossProfit),
+      purchaseExpenses: roundMoney(acc.purchaseExpenses + record.purchaseExpenses),
+      operatingExpenses: roundMoney(acc.operatingExpenses + record.operatingExpenses),
+      brokerCommission: roundMoney(acc.brokerCommission + record.brokerCommission),
+      staffCommission: roundMoney(acc.staffCommission + record.staffCommission),
+      totalExpenses: roundMoney(acc.totalExpenses + record.totalExpenses),
+      netProfitLoss: roundMoney(acc.netProfitLoss + record.netProfitLoss),
+    }),
+    {
+      grossSales: 0,
+      salesReturn: 0,
+      netSales: 0,
+      grossCogs: 0,
+      salesReturnCogs: 0,
+      netCogs: 0,
+      grossProfit: 0,
+      purchaseExpenses: 0,
+      operatingExpenses: 0,
+      brokerCommission: 0,
+      staffCommission: 0,
+      totalExpenses: 0,
+      netProfitLoss: 0,
+    }
+  );
+
+  summary.status = summary.netProfitLoss >= 0 ? 'PROFIT' : 'LOSS';
+
+  const paymentModeAccumulator = {};
+  records.forEach(() => {});
+
+  const overallSalesQuery =
+    reportType === 'range' && startDate && endDate
+      ? {
+          userId,
+          isDeleted: false,
+          status: { $nin: ['CANCELLED', 'DRAFT'] },
+          invoiceDate: { $gte: startDate, $lte: endDate },
+        }
+      : reportType === 'yearly'
+      ? {
+          userId,
+          isDeleted: false,
+          status: { $nin: ['CANCELLED', 'DRAFT'] },
+          invoiceDate: { $gte: getYearRange(year).start, $lte: getYearRange(year).end },
+        }
+      : {
+          userId,
+          isDeleted: false,
+          status: { $nin: ['CANCELLED', 'DRAFT'] },
+          invoiceDate: { $gte: getMonthRange(year, month).start, $lte: getMonthRange(year, month).end },
+        };
+
+  const allSalesInvoices = await Invoice.find(overallSalesQuery)
+    .select('TotalAmount returned_amount payment_method cashAmount cardAmount upiAmount')
+    .lean();
+
+  allSalesInvoices.forEach((invoice) => {
+    const allocations = allocateInvoiceByPaymentMode(invoice);
+    allocations.forEach(({ mode, amount }) => {
+      if (!paymentModeAccumulator[mode]) {
+        paymentModeAccumulator[mode] = {
+          mode,
+          label: PAYMENT_MODE_LABELS[mode] || mode,
+          netSales: 0,
+        };
+      }
+      paymentModeAccumulator[mode].netSales = roundMoney(
+        paymentModeAccumulator[mode].netSales + Number(amount || 0)
+      );
+    });
+  });
+
+  const paymentModeBreakdown = Object.values(paymentModeAccumulator)
+    .map((entry) => {
+      const salesShare =
+        summary.netSales > 0 ? Number(entry.netSales || 0) / Number(summary.netSales || 0) : 0;
+      const grossProfit = roundMoney(summary.grossProfit * salesShare);
+      const allocatedExpenses = roundMoney(summary.totalExpenses * salesShare);
+      const netProfitLoss = roundMoney(grossProfit - allocatedExpenses);
+
+      return {
+        mode: entry.mode,
+        label: entry.label,
+        netSales: roundMoney(entry.netSales),
+        salesSharePercentage: roundMoney(salesShare * 100),
+        grossProfit,
+        allocatedExpenses,
+        netProfitLoss,
+        status: netProfitLoss >= 0 ? 'PROFIT' : 'LOSS',
+      };
+    })
+    .sort((a, b) => b.netSales - a.netSales);
+
+  summary.paymentModeBreakdown = paymentModeBreakdown;
+
+  return { records, summary };
+};
+
 // ------------------------- Income Stats -------------------------
 const getIncomeStats = async (req, res) => {
   try {
-    let { page = 1, limit = 10, startDate, endDate, search } = req.query;
+    let { page = 1, limit = 10, startDate, endDate, search, paymentMode } = req.query;
 
     page = Number(page);
     limit = Number(limit);
@@ -31,90 +386,85 @@ const getIncomeStats = async (req, res) => {
 
     const now = new Date();
     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
     const startOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const endOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    const endOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-    // ===== Filters =====
-    const filter = {};
+    const baseFilter = {};
     if (startDate && endDate) {
-      filter.received_on = {
+      baseFilter.received_on = {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
       };
     }
-    if (search) {
-      filter.$or = [
-        { "invoiceId.invoiceNumber": { $regex: search, $options: "i" } },
-        { "invoiceId.referenceNo": { $regex: search, $options: "i" } },
-        { "invoiceId.billTo.name": { $regex: search, $options: "i" } }
-      ];
+    if (paymentMode && String(paymentMode).trim().toLowerCase() !== "all") {
+      baseFilter.payment_method = String(paymentMode).trim().toUpperCase();
     }
 
-    // ===== Queries =====
-    const [currentPayments, previousPayments, allPayments, totalRecords] =
+    const searchTerm = String(search || "").trim().toLowerCase();
+    const hasCustomRange = Boolean(startDate && endDate);
+    const currentRangeStart = hasCustomRange ? new Date(startDate) : startOfCurrentMonth;
+    const currentRangeEnd = hasCustomRange ? new Date(endDate) : endOfCurrentMonth;
+    const rangeDuration = Math.max(currentRangeEnd.getTime() - currentRangeStart.getTime(), 0);
+    const previousRangeEnd = new Date(currentRangeStart.getTime() - 1);
+    const previousRangeStart = hasCustomRange
+      ? new Date(previousRangeEnd.getTime() - rangeDuration)
+      : startOfPreviousMonth;
+    const previousRangeFinalEnd = hasCustomRange ? previousRangeEnd : endOfPreviousMonth;
+
+    const matchesSearch = (payment) => {
+      if (!searchTerm) return true;
+      const invoice = payment?.invoiceId;
+      const customer = invoice?.billTo;
+      const paymentMethod =
+        typeof payment?.payment_method === "string"
+          ? payment.payment_method
+          : payment?.payment_method?.name;
+      const haystack = [
+        invoice?.invoiceNumber,
+        invoice?.referenceNo,
+        customer?.name,
+        customer?.phone,
+        customer?.email,
+        paymentMethod,
+        payment?.amount,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(searchTerm);
+    };
+
+    const buildPaymentQuery = (extraFilter = {}) =>
+      InvoicePayment.find({ ...baseFilter, ...extraFilter })
+        .populate({
+          path: "invoiceId",
+          select: "billTo invoiceNumber items referenceNo",
+          populate: {
+            path: "billTo",
+            model: "Customer",
+            select: "name email phone image"
+          }
+        });
+
+    const [currentPaymentsRaw, previousPaymentsRaw, allPaymentsRaw] =
       await Promise.all([
-        // Current month payments
-        InvoicePayment.find({ received_on: { $gte: startOfCurrentMonth }, ...filter })
-          .populate({
-            path: "invoiceId",
-            select: "billTo invoiceNumber items referenceNo",
-            populate: {
-              path: "billTo",
-              model: "Customer",
-              select: "name email phone image"
-            }
-          }),
-          // .populate({
-          //   path: "payment_method",
-          //   model: "PaymentMode",
-          //   select: "name slug status"
-          // }),
-
-        // Previous month payments
-        InvoicePayment.find({
-          received_on: { $gte: startOfPreviousMonth, $lte: endOfPreviousMonth },
-          ...filter
-        })
-          .populate({
-            path: "invoiceId",
-            select: "billTo invoiceNumber items referenceNo",
-            populate: {
-              path: "billTo",
-              model: "Customer",
-              select: "name email phone image"
-            }
-          }),
-          // .populate({
-          //   path: "payment_method",
-          //   model: "PaymentMode",
-          //   select: "name slug status"
-          // }),
-
-        // Paginated list of all payments
-        InvoicePayment.find(filter)
-          .populate({
-            path: "invoiceId",
-            select: "billTo invoiceNumber items referenceNo",
-            populate: {
-              path: "billTo",
-              model: "Customer",
-              select: "name email phone image"
-            }
-          })
-          // .populate({
-          //   path: "payment_method",
-          //   model: "PaymentMode",
-          //   select: "name slug status"
-          // })
-          .sort({ received_on: -1 })
-          .skip(skip)
-          .limit(limit),
-
-        // Count total records
-        InvoicePayment.countDocuments(filter)
+        buildPaymentQuery({
+          received_on: { $gte: currentRangeStart, $lte: currentRangeEnd },
+        }),
+        buildPaymentQuery({
+          received_on: { $gte: previousRangeStart, $lte: previousRangeFinalEnd },
+        }),
+        buildPaymentQuery({}).sort({ received_on: -1 }),
       ]);
 
-    // ===== Totals =====
+    const currentPayments = currentPaymentsRaw.filter(matchesSearch);
+    const previousPayments = previousPaymentsRaw.filter(matchesSearch);
+    const filteredPayments = allPaymentsRaw.filter(matchesSearch);
+    const totalRecords = filteredPayments.length;
+    const allPayments = filteredPayments.slice(skip, skip + limit);
+
     const currentTotal = currentPayments.reduce((sum, p) => sum + p.amount, 0);
     const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
 
@@ -140,7 +490,6 @@ const getIncomeStats = async (req, res) => {
     const serviceChange = calculateChange(previousServiceRevenue, currentServiceRevenue);
     const otherChange = calculateChange(previousOtherRevenue, currentOtherRevenue);
 
-    // ===== Transactions list =====
     const transactions = allPayments.map((payment) => {
       const invoice = payment.invoiceId;
       const customer = invoice?.billTo;
@@ -158,14 +507,6 @@ const getIncomeStats = async (req, res) => {
         },
         paidDate: payment.received_on,
         amount: formatAmount(payment.amount),
-        // paymentMode: payment.payment_method
-        //   ? {
-        //       id: payment.payment_method._id,
-        //       name: payment.payment_method.name,
-        //       slug: payment.payment_method.slug,
-        //       status: payment.payment_method.status
-        //     }
-        //   : null,
 
         paymentMode: typeof payment.payment_method === "string"
         ? {
@@ -182,20 +523,24 @@ const getIncomeStats = async (req, res) => {
               status: payment.payment_method.status
             }
           : null,
+        cashAmount: Number(payment.cashAmount || 0),
+        cardAmount: Number(payment.cardAmount || 0),
+        upiAmount: Number(payment.upiAmount || 0),
+        creditAmount: Number(payment.creditAmount || 0),
 
         referenceNo: invoice?.referenceNo || "",
         createdAt: payment.createdAt
       };
     });
 
-    // ===== Response =====
     return res.status(200).json({
       success: true,
       message: "Product and Total Income data fetched successfully",
       filters: {
         startDate: startDate || null,
         endDate: endDate || null,
-        search: search || null
+        search: search || null,
+        paymentMode: paymentMode || null
       },
       data: {
         product_sales: {
@@ -240,155 +585,6 @@ const getIncomeStats = async (req, res) => {
   }
 };
 
-
-// const getPurchaseReport = async (req, res) => {
-//   try {
-//     let { startDate, endDate, search, paymentMode, page = 1, limit = 10 } = req.query;
-
-//     page = Number(page);
-//     limit = Number(limit);
-//     const skip = (page - 1) * limit;
-
-//     const now = new Date();
-//     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-//     const startOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-//     const endOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-
-//     // ---------- Filters ----------
-//     let filters = { isDeleted: false };
-
-//     if (startDate && endDate) {
-//       filters.paymentDate = {
-//         $gte: new Date(startDate),
-//         $lte: new Date(endDate),
-//       };
-//     }
-
-//     if (paymentMode) {
-//       filters.paymentMode = paymentMode; // filter by specific mode
-//     }
-
-//     if (search) {
-//       filters.$or = [
-//         { paymentId: { $regex: search, $options: "i" } },
-//         { referenceNumber: { $regex: search, $options: "i" } },
-//       ];
-//     }
-
-//     // ---------- Queries ----------
-//     const [currentPayments, previousPayments, allPayments, totalRecords] = await Promise.all([
-//       // Current month
-//       SupplierPayment.find({
-//         paymentDate: { $gte: startOfCurrentMonth },
-//         ...filters,
-//       })
-//         .populate("purchaseId")
-//         .populate("supplierId", "firstName lastName email profileImage profileImageUrl")
-//         .populate("paymentMode", "name slug status"),
-
-//       SupplierPayment.find({
-//         paymentDate: { $gte: startOfPreviousMonth, $lte: endOfPreviousMonth },
-//         ...filters,
-//       })
-//         .populate("purchaseId")
-//         .populate("supplierId", "firstName lastName email profileImage profileImageUrl")
-//         .populate("paymentMode", "name slug status"),
-
-//       SupplierPayment.find(filters)
-//         .populate("purchaseId")
-//         .populate("supplierId", "firstName lastName email profileImage profileImageUrl")
-//         .populate("paymentMode", "name slug status")
-//         .skip(skip)
-//         .limit(limit),
-
-//       // Total count
-//       SupplierPayment.countDocuments(filters),
-//     ]);
-
-//     // ---------- Calculations ----------
-//     const currentTotal = currentPayments.reduce((sum, p) => sum + p.amount, 0);
-//     const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
-
-//     const currentPurchaseAmount = currentPayments.reduce((sum, payment) => {
-//       const purchase = payment.purchaseId;
-//       if (!purchase) return sum;
-//       return sum + purchase.items.reduce((acc, item) => acc + item.amount, 0);
-//     }, 0);
-
-//     const previousPurchaseAmount = previousPayments.reduce((sum, payment) => {
-//       const purchase = payment.purchaseId;
-//       if (!purchase) return sum;
-//       return sum + purchase.items.reduce((acc, item) => acc + item.amount, 0);
-//     }, 0);
-
-//     const totalChange = calculateChange(previousTotal, currentTotal);
-//     const purchaseChange = calculateChange(previousPurchaseAmount, currentPurchaseAmount);
-
-//     // ---------- Transactions ----------
-//     const transactions = allPayments.map((payment) => ({
-//       Id: payment._id,
-//       supplier: payment.supplierId
-//         ? {
-//             name: `${payment.supplierId.firstName} ${payment.supplierId.lastName}`.trim(),
-//             email: payment.supplierId.email || null,
-//             image: payment.supplierId.profileImageUrl || null,
-//           }
-//         : { name: "Unknown", email: null, image: null },
-//       paymentId: payment.paymentId,
-//       paidDate: payment.paymentDate,
-//       amount: formatAmount(payment.amount),
-//       paymentMode: payment.paymentMode
-//         ? {
-//             id: payment.paymentMode._id,
-//             name: payment.paymentMode.name,
-//             slug: payment.paymentMode.slug,
-//             status: payment.paymentMode.status,
-//           }
-//         : null,
-//       referenceNo: payment.referenceNumber || "",
-//       createdAt: payment.createdAt,
-//     }));
-
-//     // ---------- Response ----------
-//     return res.status(200).json({
-//       success: true,
-//       message: "Purchase and Supplier Payment data fetched successfully",
-//       filters: {
-//         startDate: startDate || null,
-//         endDate: endDate || null,
-//         search: search || null,
-//         paymentMode: paymentMode || null,
-//       },
-//       data: {
-//         product_purchases: {
-//           previousMonthAmount: formatAmount(previousPurchaseAmount),
-//           currentMonthAmount: formatAmount(currentPurchaseAmount),
-//           percentage: Math.round(purchaseChange.change || 0),
-//           trend: purchaseChange.trend,
-//         },
-//         total_payments: {
-//           previousMonthAmount: formatAmount(previousTotal),
-//           currentMonthAmount: formatAmount(currentTotal),
-//           percentage: Math.round(totalChange.change || 0),
-//           trend: totalChange.trend,
-//         },
-//       },
-//       records: transactions,
-//       pagination: {
-//         total: totalRecords,
-//         page,
-//         limit,
-//         totalPages: Math.ceil(totalRecords / limit),
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Error fetching purchase report:", error);
-//     return res.status(500).json({
-//       message: "Failed to fetch purchase report",
-//       error: error.message,
-//     });
-//   }
-// };
 
 const getPurchaseReport = async (req, res) => {
   try {
@@ -623,7 +819,6 @@ const getPaymentSummaryReport = async (req, res) => {
     }
 
     if (paymentMode) {
-      // filter.payment_method = paymentMode; // filter by ObjectId
 
       filter.$or = [
         { payment_method: paymentMode },
@@ -650,12 +845,6 @@ const getPaymentSummaryReport = async (req, res) => {
             ...filter
           }
         },
-        // {
-        //   $group: {
-        //     _id: "$payment_method",
-        //     totalAmount: { $sum: "$amount" }
-        //   }
-        // },
         {
           $group: {
             _id: {
@@ -669,12 +858,6 @@ const getPaymentSummaryReport = async (req, res) => {
           }
         },
         {
-          // $lookup: {
-          //   from: "paymentmodes",
-          //   localField: "_id",
-          //   foreignField: "_id",
-          //   as: "paymentMode"
-          // }
 
           paymentMode: {
             name: typeof item._id === "string" ? item._id : item.paymentMode?.name
@@ -795,8 +978,109 @@ const getPaymentSummaryReport = async (req, res) => {
   }
 };
 
+const getProfitLossReport = async (req, res) => {
+  try {
+    const filters = getProfitLossFilters(req.query);
+    const { records, summary } = await getProfitLossRecords(req.user, filters);
+
+    res.status(200).json({
+      success: true,
+      message: 'Profit/Loss report fetched successfully',
+      filters,
+      summary,
+      records,
+    });
+  } catch (error) {
+    console.error('Error fetching profit/loss report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching profit/loss report',
+      error: error.message,
+    });
+  }
+};
+
+const exportProfitLossReportExcel = async (req, res) => {
+  try {
+    const filters = getProfitLossFilters(req.query);
+    const { records, summary } = await getProfitLossRecords(req.user, filters);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Profit & Loss');
+
+    worksheet.columns = [
+      { header: 'Period', key: 'period', width: 14 },
+      { header: 'Gross Sales', key: 'grossSales', width: 16 },
+      { header: 'Sales Return', key: 'salesReturn', width: 16 },
+      { header: 'Net Sales', key: 'netSales', width: 16 },
+      { header: 'Gross COGS', key: 'grossCogs', width: 16 },
+      { header: 'Return COGS', key: 'salesReturnCogs', width: 16 },
+      { header: 'Net COGS', key: 'netCogs', width: 16 },
+      { header: 'Gross Profit', key: 'grossProfit', width: 16 },
+      { header: 'Purchase Expenses', key: 'purchaseExpenses', width: 18 },
+      { header: 'Operating Expenses', key: 'operatingExpenses', width: 18 },
+      { header: 'Broker Commission', key: 'brokerCommission', width: 18 },
+      { header: 'Staff Commission', key: 'staffCommission', width: 16 },
+      { header: 'Total Expenses', key: 'totalExpenses', width: 16 },
+      { header: 'Net Profit/Loss', key: 'netProfitLoss', width: 18 },
+      { header: 'Status', key: 'status', width: 12 },
+    ];
+
+    records.forEach((record) => worksheet.addRow(record));
+    worksheet.addRow({});
+    worksheet.addRow({
+      period: 'Total',
+      grossSales: summary.grossSales,
+      salesReturn: summary.salesReturn,
+      netSales: summary.netSales,
+      grossCogs: summary.grossCogs,
+      salesReturnCogs: summary.salesReturnCogs,
+      netCogs: summary.netCogs,
+      grossProfit: summary.grossProfit,
+      purchaseExpenses: summary.purchaseExpenses,
+      operatingExpenses: summary.operatingExpenses,
+      brokerCommission: summary.brokerCommission,
+      staffCommission: summary.staffCommission,
+      totalExpenses: summary.totalExpenses,
+      netProfitLoss: summary.netProfitLoss,
+      status: summary.status,
+    });
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(records.length + 3).font = { bold: true };
+
+    const fileSuffix =
+      filters.reportType === 'range' && filters.startDate && filters.endDate
+        ? `${filters.startDate.toISOString().slice(0, 10)}_${filters.endDate.toISOString().slice(0, 10)}`
+        : filters.reportType === 'yearly'
+        ? `${filters.year}`
+        : `${filters.year}-${String(filters.month).padStart(2, '0')}`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=Profit_Loss_Report_${fileSuffix}.xlsx`
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error exporting profit/loss report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting profit/loss report',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getIncomeStats,
   getPurchaseReport,
-  getPaymentSummaryReport
+  getPaymentSummaryReport,
+  getProfitLossReport,
+  exportProfitLossReportExcel,
 };

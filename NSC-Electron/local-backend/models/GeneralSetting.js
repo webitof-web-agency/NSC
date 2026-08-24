@@ -39,8 +39,7 @@ const generalSettingsSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for faster query
-generalSettingsSchema.index({ key: 1 });
+// Indexes for faster query (key is already indexed by unique: true)
 generalSettingsSchema.index({ groupSlug: 1 });
 
 module.exports = mongoose.model('GeneralSetting', generalSettingsSchema);

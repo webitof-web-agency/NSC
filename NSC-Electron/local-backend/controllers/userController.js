@@ -44,11 +44,6 @@ const createStaffUser = async (req, res) => {
       });
     }
 
-    // Validate commissionPercent
-    // let commissionValue = Number(commissionPercent);
-    // if (isNaN(commissionValue) || commissionValue < 0) {
-    //   commissionValue = 0;
-    // }
 
     // Fetch system commission setting
     const setting = await CommissionSystemSetting.findOne({});
@@ -80,7 +75,6 @@ const createStaffUser = async (req, res) => {
       postalCode,
       user_type: 3,
       roleId: roleId,
-      // commissionPercent: commissionValue,  // <-- SAVE HERE
       commissionPercent: finalCommissionValue,  // <-- SAVE FINAL VALUE
       amountPerDay: amountPerDay ? parseFloat(amountPerDay) : 0,
       profileImage: req.file ? req.file.path : null,
@@ -387,7 +381,6 @@ const listCashiersRoleName = async (req, res) => {              // NEW
       });
     }
 
-    // 2. Get all users whose roleId = cashierRole._id
     const cashiers = await User.find({
       roleId: cashierRole._id,
       isDeleted: false,
@@ -567,7 +560,9 @@ const getStaffDailyCommissionHistory = async (req, res) => {
     let limit = parseInt(req.query.limit) || 20;
     let skip = (page - 1) * limit;
 
-    const dateFilter = req.query.date || ""; // e.g. "2025-12-04"
+    const dateFilter = req.query.date || ""; // backward compatibility
+    const startDate = req.query.startDate || "";
+    const endDate = req.query.endDate || "";
     const invoiceSearch = req.query.invoice || ""; // partial invoiceNumber
 
     const staff = await User.findById(staffId).select(
@@ -581,11 +576,15 @@ const getStaffDailyCommissionHistory = async (req, res) => {
 
     // Base filter
     const filter = { staffId: new mongoose.Types.ObjectId(staffId) };
-    if (dateFilter) {
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = startDate;
+      if (endDate) filter.date.$lte = endDate;
+    } else if (dateFilter) {
       filter.date = dateFilter;
     }
 
-    // Get ALL records for that staff + optional date
+    // Get ALL records for that staff + optional date range
     const allRecords = await Commission.find(filter)
       .sort({ date: -1 })
       .populate("items.productId", "name")

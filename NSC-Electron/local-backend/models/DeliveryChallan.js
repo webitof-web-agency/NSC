@@ -30,7 +30,7 @@ const deliveryChallanSchema = new mongoose.Schema(
     items: [
       {
         id: {
-          type: String,      
+          type: String,
           required: true
         },
         name: {
@@ -73,7 +73,7 @@ const deliveryChallanSchema = new mongoose.Schema(
         amount: {
           type: Number,
           required: true,
-        },        
+        },
       },
     ],
     status: {

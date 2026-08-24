@@ -22,7 +22,7 @@ exports.createBrand = async (req, res) => {
 exports.getAllBrands = async (req, res) => {
     try {
         const { page = 1, limit = 10, search = '' } = req.query;
-        
+
         // Build search query
         const searchQuery = {
             $or: [
@@ -53,9 +53,9 @@ exports.getAllBrands = async (req, res) => {
             }
         });
     } catch (err) {
-        res.status(500).json({ 
+        res.status(500).json({
             message: 'Error fetching brands',
-            error: err.message 
+            error: err.message
         });
     }
 };

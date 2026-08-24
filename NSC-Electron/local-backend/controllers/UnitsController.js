@@ -4,7 +4,7 @@ const Unit = require('../models/Unit');
 exports.getUnits = async (req, res) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query;
-    
+
     // Build search query
     const searchQuery = {
       $or: [
@@ -36,9 +36,9 @@ exports.getUnits = async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to fetch units',
-      error: err.message 
+      error: err.message
     });
   }
 };
@@ -61,7 +61,7 @@ exports.createUnit = async (req, res) => {
 exports.getUnitById = async (req, res) => {
   try {
     const unit = await Unit.findById(req.params.id);
-    
+
     if (!unit) {
       return res.status(404).json({ message: 'Unit not found' });
     }

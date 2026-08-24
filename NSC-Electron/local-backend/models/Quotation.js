@@ -1,4 +1,4 @@
-﻿const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 
 const quotationSchema = new mongoose.Schema({
@@ -164,7 +164,18 @@ const quotationSchema = new mongoose.Schema({
     type: String,
     enum: ['quotation', 'invoice', 'purchase'],
     default: 'quotation'
-  }
+  },
+  publicShareId: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
+  publicShareEnabled: {
+    type: Boolean,
+    default: true,
+  },
+  publicShareCreatedAt: Date,
+  publicShareRegeneratedAt: Date
 }, {
   timestamps: true
 });
@@ -173,8 +184,8 @@ const quotationSchema = new mongoose.Schema({
 quotationSchema.pre('save', async function (next) {
   if (!this.quotationId) {
     try {
-      const { getNextNumber } = require('../utils/numberAllocator');
-      this.quotationId = await getNextNumber('QUOTATION');
+      const count = await this.constructor.countDocuments();
+      this.quotationId = `QT-${String(count + 1).padStart(6, '0')}`;
       next();
     } catch (err) {
       next(err);
@@ -209,4 +220,5 @@ quotationSchema.pre('validate', function (next) {
 });
 
 quotationSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Quotation', quotationSchema);

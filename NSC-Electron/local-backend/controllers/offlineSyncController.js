@@ -32,12 +32,6 @@ const COLLECTION_MAP = {
   'staff-salary':    { Model: StaffSalary,      autoIdField: null },
 };
 
-// ─────────────────────────────────────────────
-// POST /api/admin/:collection/sync-offline
-// Body: { records: Array<document> }
-// Performs idempotent upsert using _localId as the dedup key
-// Returns: { synced: string[], failed: { localId, error }[] }
-// ─────────────────────────────────────────────
 async function syncFromOffline(req, res) {
   const { collection } = req.params;
   const { records } = req.body;

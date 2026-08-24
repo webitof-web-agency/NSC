@@ -12,6 +12,10 @@ const roleSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    hideFromAttendance: {
+        type: Boolean,
+        default: false
+    },
     createdBy: {
         type: String,
         trim: true,
@@ -22,7 +26,7 @@ const roleSchema = new mongoose.Schema({
         default: null
     }
 }, {
-    timestamps: true 
+    timestamps: true
 });
 
 module.exports = mongoose.model('Role', roleSchema);

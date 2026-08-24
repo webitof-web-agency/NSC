@@ -14,7 +14,7 @@ const {
   sanitizeHttpUrl,
 } = require('@utils/publicInvoicePortal');
 const fs = require('fs');
-const { resolveStoredFilePath } = require('../utils/storagePaths');
+const path = require('path');
 
 const PORTAL_IMAGE_MAX_SIZE = 10 * 1024 * 1024;
 const PORTAL_VIDEO_MAX_SIZE = 50 * 1024 * 1024;
@@ -79,7 +79,8 @@ const extractCustomerPortalBranding = (branding, req) => ({
 const deleteUploadedFile = (filePath) => {
   if (!filePath) return;
   try {
-    const fullPath = resolveStoredFilePath(filePath);
+    const normalizedPath = String(filePath).replace(/^\/+/, '');
+    const fullPath = path.join(__dirname, '..', normalizedPath);
     if (fs.existsSync(fullPath)) {
       fs.unlinkSync(fullPath);
     }

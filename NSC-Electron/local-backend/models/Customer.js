@@ -1,5 +1,6 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const customerSchema = new mongoose.Schema(
   {
@@ -83,17 +84,43 @@ const customerSchema = new mongoose.Schema(
       required: true
     },
 
+    portalEnabled: {
+      type: Boolean,
+      default: true
+    },
+
+    portalPassword: {
+      type: String,
+      default: ''
+    },
+
+    portalPasswordChanged: {
+      type: Boolean,
+      default: false
+    },
+
+    portalLastLoginAt: {
+      type: Date,
+      default: null
+    },
+
     isDeleted: {
       type: Boolean,
       default: false
     }
   },
-  { 
+  {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
   }
 );
 
+customerSchema.methods.matchPortalPassword = async function (enteredPassword) {
+  if (!this.portalPassword) return false;
+  return bcrypt.compare(String(enteredPassword || ''), this.portalPassword);
+};
+
 customerSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('Customer', customerSchema);

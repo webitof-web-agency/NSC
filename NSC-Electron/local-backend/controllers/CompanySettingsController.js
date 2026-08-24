@@ -16,7 +16,7 @@ const GeneralSetting = require('@models/GeneralSetting');
 // Create a GeneralSetting
 const createOrUpdateGeneralSetting = async (req, res) => {
   try {
-    const { settings } = req.body; 
+    const { settings } = req.body;
     const userId = req.user;
 
     if (!settings || !Array.isArray(settings) || settings.length === 0) {
@@ -49,7 +49,7 @@ const createOrUpdateGeneralSetting = async (req, res) => {
       let setting = await GeneralSetting.findOne({ key });
 
       if (setting) {
-        
+
         setting.value = value;
         setting.groupSlug = groupSlug;
         setting.updatedBy = user._id;
@@ -63,7 +63,7 @@ const createOrUpdateGeneralSetting = async (req, res) => {
           message: 'Setting updated successfully'
         });
       } else {
-       
+
         setting = new GeneralSetting({
           key,
           value,
@@ -294,195 +294,6 @@ const updateCompanySettings = async (req, res) => {
   }
 };
 
-// const getBasicDetails = async (req, res) => {
-//   try {
-//     const userId = req.user || req.query.userId;
-//     if (!userId) {
-//       return res.status(400).json({ message: 'User ID is required' });
-//     }
-
-//     const baseUrl = `${req.protocol}://${req.get('host')}`;
-
-//     const user = await User.findById(userId).lean();
-//     if (!user) {
-//       return res.status(404).json({
-//         success: false,
-//         message: 'User not found'
-//       });
-//     }
-
-//     let role = null;
-//     let permissions = [];
-//     if (user.roleId) {
-//       role = await Role.findById(user.roleId).lean();
-//       if (role && !role.deletedAt) {
-//         permissions = await Permission.find({ roleId: role._id, deletedAt: null })
-//           .populate('moduleId', 'moduleName moduleSlug status createdAt updatedAt')
-//           .lean();
-//       }
-//     }
-
-//     const [
-//       defaultCurrency,
-//       companySettings,
-//       userLocalization,
-//       defaultDateFormat,
-//       defaultTimeFormat,
-//       defaultTimezone,
-//       invoiceTemplate,
-//       invoicePrefixSetting,
-//       invoiceNumberTypeSetting
-//     ] = await Promise.all([
-//       Currency.findOne({ isDeleted: false, isDefault: true }).lean(),
-//       CompanySettings.findOne({}).sort({ createdAt: -1 }).lean(),
-//       Localization.findOne({ isActive: true })
-//         .populate('dateFormat timeFormat timezone')
-//         .sort({ createdAt: -1 })
-//         .lean(),
-//       DateFormat.findOne({ isDeleted: false, isActive: true }).sort({ createdAt: 1 }).lean(),
-//       TimeFormat.findOne({ isDeleted: false, isActive: true }).sort({ createdAt: 1 }).lean(),
-//       Timezone.findOne().sort({ createdAt: 1 }).lean(),
-//       InvoiceTemplate.findOne({ userId }).sort({ createdAt: -1 }).lean(),
-//       GeneralSetting.findOne({ key: 'invoicePrefix' }).lean(),
-//       GeneralSetting.findOne({ key: 'invoiceNumberType' }).lean()
-//     ]);
-
-//     const cleanObject = (obj) => {
-//       if (!obj) return obj;
-//       const { createdAt, updatedAt, isDeleted, __v, ...rest } = obj;
-//       return rest;
-//     };
-
-//     const defaultValues = {
-//       currency: {
-//         _id: null,
-//         name: "Default Currency",
-//         code: "USD",
-//         symbol: "$",
-//         status: true,
-//         isDefault: true,
-//         createdBy: null
-//       },
-//       company: {
-//         _id: null,
-//         companyLogo: "",
-//         companyName: "Default Company",
-//         favicon: "",
-//         siteLogo: "",
-//         email: "contact@default.com",
-//         phone: "",
-//         city: "",
-//         country: "",
-//         fax: "",
-//         pincode: "",
-//         state: "",
-//         address: "",
-//         companyBanner: ""
-//       },
-//       dateFormat: {
-//         _id: null,
-//         title: "DD-MM-YYYY",
-//         format: "DD-MM-YYYY",
-//         isActive: true
-//       },
-//       timeFormat: {
-//         _id: null,
-//         name: "H:i:s",
-//         format: "H:i:s",
-//         isActive: true
-//       },
-//       timezone: {
-//         _id: null,
-//         name: "UTC",
-//         utc_offset: "+00:00"
-//       },
-//       role: {
-//         id: null,
-//         roleName: "Default Role",
-//         status: true
-//       },
-//       permissions: [],
-//       invoiceTemplate: {
-//         _id: null,
-//         default_invoice_template: "default-template",
-//         userId: userId,
-//         createdAt: null,
-//         updatedAt: null
-//       }
-//     };
-
-//     // ✅ Apply default values if not set in General Settings
-//     const invoicePrefix =
-//       invoicePrefixSetting?.value && typeof invoicePrefixSetting.value === 'string'
-//         ? invoicePrefixSetting.value
-//         : "INV_";
-
-//     const invoiceNumberType =
-//       invoiceNumberTypeSetting?.value && typeof invoiceNumberTypeSetting.value === 'string'
-//         ? invoiceNumberTypeSetting.value
-//         : "auto";
-
-//     // ✅ Process company settings
-//     let processedCompanySettings = null;
-//     if (companySettings) {
-//       processedCompanySettings = cleanObject(companySettings);
-//       ['siteLogo', 'favicon', 'companyLogo', 'companyBanner'].forEach(key => {
-//         processedCompanySettings[key] = companySettings[key]
-//           ? `${baseUrl}${companySettings[key]}`
-//           : '';
-//       });
-//     }
-
-//     const responseData = {
-//       currency: cleanObject(defaultCurrency) || defaultValues.currency,
-//       company: processedCompanySettings || defaultValues.company,
-//       dateFormat: cleanObject(userLocalization?.dateFormat || defaultDateFormat) || defaultValues.dateFormat,
-//       timeFormat: cleanObject(userLocalization?.timeFormat || defaultTimeFormat) || defaultValues.timeFormat,
-//       timezone: cleanObject(userLocalization?.timezone || defaultTimezone) || defaultValues.timezone,
-//       startWeek: userLocalization?.startWeek || "Monday",
-//       role: role
-//         ? { id: role._id, roleName: role.roleName, status: role.status }
-//         : defaultValues.role,
-//       permissions: permissions.length
-//         ? permissions.map(permission => ({
-//           id: permission._id,
-//           roleId: permission.roleId?.toString() || null,
-//           moduleId: permission.moduleId?._id?.toString() || null,
-//           moduleName: permission.moduleId?.moduleName || null,
-//           moduleSlug: permission.moduleId?.moduleSlug || null,
-//           moduleStatus: permission.moduleId?.status ?? null,
-//           moduleCreatedAt: permission.moduleId?.createdAt || null,
-//           moduleUpdatedAt: permission.moduleId?.updatedAt || null,
-//           create: permission.create,
-//           edit: permission.edit,
-//           delete: permission.delete,
-//           view: permission.view,
-//           allowAll: permission.allowAll,
-//           deletedAt: permission.deletedAt,
-//           createdAt: permission.createdAt,
-//           updatedAt: permission.updatedAt
-//         }))
-//         : defaultValues.permissions,
-//       invoiceTemplate: cleanObject(invoiceTemplate) || defaultValues.invoiceTemplate,
-//       invoicePrefix,
-//       invoiceNumberType
-//     };
-
-//     return res.status(200).json({
-//       success: true,
-//       message: 'Basic details fetched successfully',
-//       data: responseData
-//     });
-
-//   } catch (error) {
-//     console.error('Error fetching basic details:', error);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Server error. Please try again later.',
-//       error: error.message
-//     });
-//   }
-// };
 
 const getBasicDetails = async (req, res) => {
   try {
@@ -501,16 +312,6 @@ const getBasicDetails = async (req, res) => {
       });
     }
 
-    // let role = null;
-    // let permissions = [];
-    // if (user.roleId) {
-    //   role = await Role.findById(user.roleId).lean();
-    //   if (role && !role.deletedAt) {
-    //     permissions = await Permission.find({ roleId: role._id, deletedAt: null })
-    //       .populate('moduleId', 'moduleName moduleSlug status createdAt updatedAt')
-    //       .lean();
-    //   }
-    // }
 
     let role = null;
     let permissions = [];
@@ -523,19 +324,18 @@ const getBasicDetails = async (req, res) => {
       }
     }
 
-    // If user is not admin (user_type !== 1), fetch additional permissions granted by admin
     if (user.user_type !== 1) {
-      const adminGrantedPermissions = await Permission.find({ 
-        userId: user._id, 
-        deletedAt: null 
+      const adminGrantedPermissions = await Permission.find({
+        userId: user._id,
+        deletedAt: null
       })
         .populate('moduleId', 'moduleName moduleSlug status createdAt updatedAt')
         .lean();
-      
+
       // Merge role-based permissions with admin-granted permissions
       const mergedPermissions = [...permissions];
       adminGrantedPermissions.forEach(adminPerm => {
-        const existingIndex = mergedPermissions.findIndex(p => 
+        const existingIndex = mergedPermissions.findIndex(p =>
           p.moduleId?._id?.toString() === adminPerm.moduleId?._id?.toString()
         );
         if (existingIndex >= 0) {
@@ -613,7 +413,8 @@ const getBasicDetails = async (req, res) => {
         pincode: "",
         state: "",
         address: "",
-        companyBanner: ""
+        companyBanner: "",
+        softwareDownloadUrl: ""
       },
       dateFormat: {
         _id: null,
@@ -647,7 +448,7 @@ const getBasicDetails = async (req, res) => {
       }
     };
 
-    // ✅ Apply default values if not set in General Settings
+    // ? Apply default values if not set in General Settings
     const invoicePrefix =
       invoicePrefixSetting?.value && typeof invoicePrefixSetting.value === 'string'
         ? invoicePrefixSetting.value
@@ -658,7 +459,7 @@ const getBasicDetails = async (req, res) => {
         ? invoiceNumberTypeSetting.value
         : "auto";
 
-    // ✅ Process company settings
+    // ? Process company settings
     let processedCompanySettings = null;
     if (companySettings) {
       processedCompanySettings = cleanObject(companySettings);
@@ -667,9 +468,7 @@ const getBasicDetails = async (req, res) => {
           ? `${baseUrl}${companySettings[key]}`
           : '';
       });
-      
-      // 🔍 DEBUG: Verify gstMode is present
-      // console.log('Company Settings gstMode:', processedCompanySettings.gstMode);
+
     }
 
     const responseData = {
@@ -795,6 +594,9 @@ const updateCompanySetup = async (req, res) => {
       }
 
       companySettings.companyName = companyName;
+      companySettings.upiId = req.body.upiId !== undefined ? req.body.upiId : companySettings.upiId;
+      companySettings.phonePeEnabled = req.body.phonePeEnabled !== undefined ? req.body.phonePeEnabled === 'true' || req.body.phonePeEnabled === true : companySettings.phonePeEnabled;
+      companySettings.softwareDownloadUrl = req.body.softwareDownloadUrl !== undefined ? req.body.softwareDownloadUrl : companySettings.softwareDownloadUrl;
       companySettings.address = address || companySettings.address;
       companySettings.country = country;
       companySettings.state = state;
@@ -816,6 +618,8 @@ const updateCompanySetup = async (req, res) => {
         state,
         city,
         pincode: pincode || '',
+        gstMode: req.body.gstMode || 'Exclusive',
+        softwareDownloadUrl: req.body.softwareDownloadUrl || "",
         siteLogo: companyLogoUrl,
         userId
       });

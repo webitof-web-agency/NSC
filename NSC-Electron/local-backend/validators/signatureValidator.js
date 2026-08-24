@@ -11,7 +11,7 @@ exports.createSignatureValidator = [
         .withMessage("Signature name must be at least 2 characters")
         .isLength({ max: 50 })
         .withMessage("Signature name cannot exceed 50 characters"),
-        
+
     body("markAsDefault")
         .optional()
         .isBoolean()
@@ -47,15 +47,15 @@ exports.createSignatureValidator = [
             if (req.file && req.file.path) {
                 fs.unlinkSync(req.file.path);
             }
-            
+
             const formattedErrors = {};
             errors.array().forEach((err) => {
                 if(!formattedErrors[err.path]){
                     formattedErrors[err.path] = err.msg;
                 }
             });
-            
-            return res.status(422).json({ 
+
+            return res.status(422).json({
                 message: 'Validation failed',
                 errors: formattedErrors
             });
@@ -74,12 +74,12 @@ exports.updateSignatureValidator = [
         .withMessage("Signature name must be at least 2 characters")
         .isLength({ max: 50 })
         .withMessage("Signature name cannot exceed 50 characters"),
-        
+
     body("markAsDefault")
         .optional()
         .isBoolean()
         .withMessage("markAsDefault must be a boolean value"),
-        
+
     body("status")
         .optional()
         .isBoolean()
@@ -111,15 +111,15 @@ exports.updateSignatureValidator = [
             if (req.file?.path) {
                 fs.unlinkSync(req.file.path);
             }
-            
+
             const formattedErrors = {};
             errors.array().forEach((err) => {
                 if(!formattedErrors[err.path]) {
                     formattedErrors[err.path] = err.msg;
                 }
             });
-            
-            return res.status(422).json({ 
+
+            return res.status(422).json({
                 message: 'Validation failed',
                 errors: formattedErrors
             });

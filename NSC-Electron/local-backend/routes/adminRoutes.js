@@ -17,9 +17,11 @@ const SignatureController = require('../controllers/SignatureController');
 const currencyController = require('../controllers/currencyController');
 const BankDetailController = require('@controllers/bankDetailController');
 const CompanySettings = require('@controllers/CompanySettingsController');
+const legalSettingsController = require('@controllers/legalSettingsController');
 const appVersionController = require('@controllers/appVersionController');
 const dashboardController = require('@controllers/Admin/dashboardController');
 const { uploadCompanyFields, handleUploadError } = require('../middleware/uploadCompanyImages');
+const { uploadCustomerPortalBranding, uploadCustomerPortalPromoMedia, handleCustomerPortalUploadError } = require('../middleware/uploadCustomerPortalBranding');
 const protect = require('../middleware/authMiddleware');
 const upload = require('../middleware/upload');
 const excelUpload = require('../middleware/excelUpload');
@@ -81,6 +83,11 @@ const { createCustomFieldDataTypeValidator, updateCustomFieldDataTypeValidator }
 const invoicePreferenceController = require('../controllers/invoicePreferencesController');
 const brokerController = require('../controllers/brokerController');
 const mrpSettingsController = require('../controllers/mrpSettingsController');
+const notificationController = require('../controllers/notificationController');
+const todoController = require('../controllers/todoController');
+const customerPortalController = require('../controllers/customerPortalController');
+const aiController = require('../controllers/aiController');
+const aiUpload = require('../middleware/aiUpload');
 
 
 router.get('/', protect, adminController.dashboard);
@@ -120,8 +127,10 @@ router.post('/categories/bulk-delete', protect, CategoryController.bulkDeleteCat
 // Size & Color routes
 router.get('/sizes', protect, sizeColorController.listSizes);
 router.post('/sizes', protect, sizeColorController.createSize);
+router.delete('/sizes/:id', protect, sizeColorController.deleteSize);
 router.get('/colors', protect, sizeColorController.listColors);
 router.post('/colors', protect, sizeColorController.createColor);
+router.delete('/colors/:id', protect, sizeColorController.deleteColor);
 
 // Tax Rate routes
 router.get('/tax-rates', protect, TaxRateController.getAllTaxRates);
@@ -141,12 +150,13 @@ router.delete('/tax-groups/:id', protect, TaxGroupController.deleteTaxGroup);
 router.get('/tax-settings/sample-template', protect, TaxGroupController.downloadUnifiedTaxSample);
 router.post('/tax-settings/upload-unified-excel', protect, excelUpload.single('file'), TaxGroupController.uploadUnifiedTaxExcel);
 
-//Product Routes 
+//Product Routes
 router.post('/products', protect, uploadProductFields, handleUploadError, createProductValidator, ProductController.createProduct);
 router.get('/products', protect, ProductController.getAllProducts);
 router.get('/products-invoice', protect, ProductController.getProductsForInvoice);
 router.get('/products/download-template', protect, ProductController.downloadProductExcelTemplate);
 router.get('/products/export', protect, ProductController.exportProductsExcel);
+router.post('/products/export-draft', protect, ProductController.exportDraftProductsExcel);
 router.get('/products/:id', protect, ProductController.getProductById);
 router.put('/products/:id', protect, uploadProductFields, updateProductValidator, ProductController.updateProduct);
 router.delete('/products/:id', protect, ProductController.deleteProduct);
@@ -160,6 +170,8 @@ router.get('/products-variant/:id', protect, ProductController.getProductVariant
 router.put('/products-variant/:id', protect, ProductController.updateProductVariant);
 router.delete('/products-variant/:id', protect, ProductController.deleteProductVariant);
 router.post('/products-variant/bulk-delete', protect, ProductController.bulkDeleteProductVariants);
+router.get('/products-variants/export', protect, ProductController.exportProductVariantsExcel);
+router.post('/products-variants/by-ids', protect, ProductController.getVariantsByIds);
 router.get('/products-variants', protect, ProductController.getAllProductVariants);
 router.post('/products/upload-excel', protect, excelUpload.single('file'), ProductController.uploadProductsExcel); // ✅ Bulk upload
 
@@ -171,18 +183,18 @@ router.put('/mrp-settings', protect, mrpSettingsController.upsertSettings);
 router.post('/suppliers', protect, upload.single('profileImage'), createSupplierValidator, SupplierController.createSupplier);
 router.get('/suppliers', protect, SupplierController.listSuppliers);
 router.get('/suppliers/export', protect, SupplierController.exportSuppliers);
+router.get('/suppliers/:id/ledger', protect, SupplierController.downloadSupplierLedger);
 router.post('/suppliers/upload-excel', protect, excelUpload.single('file'), SupplierController.uploadSuppliersFromExcel);
 router.get('/suppliers/download-template', protect, SupplierController.downloadSupplierExcelTemplate);
 router.put('/suppliers/:id', protect, upload.single('profileImage'), SupplierController.updateSupplier);
 router.delete('/suppliers/:id', protect, SupplierController.deleteSupplier);
 router.post('/suppliers/bulk-delete', protect, SupplierController.bulkDeleteSuppliers);
 router.get("/suppliers/:id", protect, SupplierController.getSupplierById);
-// router.get("/suppliers/details/:id", protect, SupplierController.getSupplierByUserId);
 
 //debitnote
 router.post('/debitnote', protect, upload.single('signatureImage'), debitNoteValidator, debitNoteController.createDebitNote);
 router.get('/debitnote', protect, debitNoteController.getAllDebitNotes);
-router.put('/debitnote', protect, upload.single('signatureImage'), debitNoteController.createDebitNote);
+router.put('/debitnote/:id', protect, upload.single('signatureImage'), debitNoteValidator, debitNoteController.updateDebitNote);
 router.get('/debitnote/:id', protect, debitNoteController.getDebitNoteById);
 router.delete('/debitnote/:id', protect, debitNoteController.deleteDebitNote);
 router.post('/debitnote/bulk-delete', protect, debitNoteController.bulkDeleteDebitNotes);
@@ -190,17 +202,16 @@ router.post('/debitnote/bulk-delete', protect, debitNoteController.bulkDeleteDeb
 //supplierpayment
 router.post('/supplierpayments', protect, upload.single('attachment'), supplierPaymentValidator, supplierPaymentController.createSupplierPayment);
 router.get('/supplierpayments', protect, supplierPaymentController.listSupplierPayments);
+router.get('/supplierpayments/:id', protect, supplierPaymentController.getSupplierPaymentById);
 router.put('/supplierpayments/:id', protect, upload.single('attachment'), supplierPaymentController.updateSupplierPayment);
 router.delete('/supplierpayments/:id', protect, supplierPaymentController.deleteSupplierPayment);
 router.post('/supplierpayments/bulk-delete', protect, supplierPaymentController.bulkDeleteSupplierPayments);
 
-//purchase
+router.post('/purchases', protect, upload.single('signatureImage'), purchaseValidator, purchaseController.createPurchase);
+router.get('/purchases/next-id', protect, purchaseController.getNextPurchaseId);
 router.post('/purchases/upload-excel', protect, excelUpload.single('file'), purchaseController.uploadPurchasesFromExcel);
 router.get('/purchases/download-template', protect, purchaseController.downloadPurchaseExcelTemplate);
 router.get('/purchases/export', protect, purchaseController.exportPurchases);
-
-router.post('/purchases', protect, upload.single('signatureImage'), purchaseValidator, purchaseController.createPurchase);
-router.get('/purchases/next-id', protect, purchaseController.getNextPurchaseId);
 router.put('/purchases/:id', protect, upload.single('signatureImage'), purchaseController.updatePurchase);
 router.get('/purchases', protect, purchaseController.getAllPurchases);
 router.get('/purchases/:id', protect, purchaseController.getPurchaseById);
@@ -208,7 +219,6 @@ router.delete('/purchases/:id', protect, purchaseController.deletePurchase);
 router.post('/purchases/bulk-delete', protect, purchaseController.bulkDeletePurchases);
 router.get('/purchases-minimal', protect, purchaseController.listPurchasesMinimal);
 router.get('/purchases-pending', protect, purchaseController.listPurchasesPending);
-
 
 //eway
 router.post('/generate/from-purchase/:purchaseId', protect, ewayController.generateEWayBillFromPurchase);
@@ -251,6 +261,18 @@ router.patch('/company/setup', protect, setup.single('siteLogo'), CompanySetting
 router.post('/create-general-settings', protect, CompanySettings.createOrUpdateGeneralSetting);
 router.get('/general-settings-list', protect, CompanySettings.listGeneralSettings);
 
+// Legal Settings
+router.get('/settings/legal', protect, legalSettingsController.getLegalSettings);
+router.put('/settings/legal', protect, legalSettingsController.updateLegalSettings);
+
+router.get('/customers/portal-branding', protect, customerPortalController.getAdminCustomerPortalBranding);
+router.put('/customers/portal-branding', protect, uploadCustomerPortalBranding, handleCustomerPortalUploadError, customerPortalController.updateAdminCustomerPortalBranding);
+router.post('/customers/portal-branding/promo-gallery', protect, uploadCustomerPortalPromoMedia, handleCustomerPortalUploadError, customerPortalController.addPromoGalleryItem);
+router.patch('/customers/portal-branding/promo-gallery/reorder', protect, customerPortalController.reorderPromoGalleryItems);
+router.patch('/customers/portal-branding/promo-gallery/:itemId/media', protect, uploadCustomerPortalPromoMedia, handleCustomerPortalUploadError, customerPortalController.replacePromoGalleryItemMedia);
+router.patch('/customers/portal-branding/promo-gallery/:itemId', protect, customerPortalController.updatePromoGalleryItem);
+router.delete('/customers/portal-branding/promo-gallery/:itemId', protect, customerPortalController.deletePromoGalleryItem);
+
 //customer
 router.get('/customers/download-template', protect, customerController.downloadCustomerTemplate);
 router.post('/customers/upload-excel', protect, excelUpload.single('file'), customerController.uploadCustomersFromExcel);
@@ -265,6 +287,7 @@ router.get('/customers/:id', protect, customerController.getCustomerById);
 router.put('/customers/:id', protect, upload.single('image'), customerController.updateCustomer);
 router.delete('/customers/:id', protect, customerController.deleteCustomer);
 router.post('/customers/bulk-delete', protect, customerController.bulkDeleteCustomers);
+router.post('/customers/:id/portal-access', protect, customerPortalController.generateAdminCustomerPortalAccess);
 //localization
 router.get('/localization', protect, localizationController.getDropdownOptions);
 router.post('/localizations', protect, localizationController.saveLocalization);
@@ -272,6 +295,13 @@ router.get('/localizations', protect, localizationController.getLocalization);
 router.get('/settings-dropdown', localizationController.getSettingsDropdownList);
 
 //Quotation
+const quotationPublicLinkController = require('@controllers/Admin/Quotation/quotationPublicLinkController');
+
+// --- Quotation Public Link Routes ---
+router.post('/quotations/:id/public-link', protect, quotationPublicLinkController.getOrCreatePublicLink);
+router.post('/quotations/:id/public-link/regenerate', protect, quotationPublicLinkController.regeneratePublicLink);
+router.delete('/quotations/:id/public-link', protect, quotationPublicLinkController.disablePublicLink);
+
 router.post('/quotations', protect, upload.single('signatureImage'), quotationValidator, quotationController.createQuotation);
 router.get('/quotations', protect, quotationController.listQuotations);
 router.get('/quotations/:id', quotationController.getQuotationById);
@@ -302,9 +332,17 @@ router.get('/invoices/:id', protect, invoiceController.getInvoice);
 router.get('/invoices/details/:id', invoiceController.getInvoice);
 router.put('/invoices/:id', protect, upload.single('signatureImage'), invoiceController.updateInvoice);
 router.delete('/invoices/:id', protect, invoiceController.deleteInvoice);
+
+const invoicePublicLinkController = require('@controllers/Admin/Invoice/invoicePublicLinkController');
+
 router.post('/invoices/bulk-delete', protect, invoiceController.bulkDeleteInvoices);
 router.post('/quotation-convert-to-invoice/:quotationId', protect, upload.single('signatureImage'), invoiceController.convertQuotationToInvoice);
 router.post('/invoice/payment', protect, invoiceController.recordInvoicePayment);
+
+// Public Link endpoints
+router.post('/invoices/:id/public-link', protect, invoicePublicLinkController.getOrCreatePublicLink);
+router.post('/invoices/:id/public-link/regenerate', protect, invoicePublicLinkController.regeneratePublicLink);
+router.delete('/invoices/:id/public-link', protect, invoicePublicLinkController.disablePublicLink);
 router.post('/invoices-minimal', protect, invoiceController.listInvoicesMinimal);
 router.get('/invoice-payment-details/:id', protect, invoiceController.getInvoicePaymentDetails);
 router.get('/invoices-recurring', protect, invoiceController.getChildInvoices);
@@ -312,7 +350,6 @@ router.post('/invoices-minimal-delivery', protect, invoiceController.listInvoice
 //invoice
 router.put('/invoice/cancel/:id', protect, invoiceController.cancelInvoice);
 router.post('/invoices/:invoiceId/exchange-payment', protect, invoiceController.handleExchangePayment); // ✅ Exchange payment endpoint
-
 
 
 //invoice-preference-module-setting
@@ -324,6 +361,11 @@ router.delete("/invoice-preferences-delete", protect, invoicePreferenceControlle
 const barcodeSettingsController = require('../controllers/barcodeSettingsController');
 router.get("/barcode-settings/get", protect, barcodeSettingsController.getSettings);
 router.post("/barcode-settings/upsert", protect, barcodeSettingsController.upsertSettings);
+
+//qr-settings
+const qrSettingsController = require('../controllers/qrSettingsController');
+router.get("/qr-settings/get", protect, qrSettingsController.getSettings);
+router.post("/qr-settings/upsert", protect, qrSettingsController.upsertSettings);
 
 //UPI Settings
 const upiSettingsController = require('@controllers/Admin/upiSettingsController');
@@ -424,13 +466,19 @@ router.get('/report/out-of-stock', protect, reportController.getOutStockReport);
 router.get('/report/income', protect, accountingReportController.getIncomeStats);
 router.get('/report/expense', protect, accountingReportController.getPurchaseReport);
 router.get('/report/payment-summary', protect, accountingReportController.getPaymentSummaryReport);
+router.get('/report/profit-loss', protect, accountingReportController.getProfitLossReport);
+router.get('/report/profit-loss/export-excel', protect, accountingReportController.exportProfitLossReportExcel);
 
-//transaction report 
+//transaction report
 router.get('/report/sales', protect, transactionReportController.getInvoiceSalesReport);
 router.get('/report/sales/export-excel', protect, transactionReportController.exportSalesReportExcel);  // ✅ Export sales report to Excel
+router.get('/report/sales/export-gst-excel', protect, transactionReportController.exportSalesGstReportExcel);
+router.get('/report/hsn-gst', protect, transactionReportController.getHsnGstReport);
+router.get('/report/hsn-gst/export-excel', protect, transactionReportController.exportHsnGstReportExcel);
 router.get('/report/sales-return', protect, transactionReportController.getCreditNoteSalesReport);
 router.get('/report/purchase', protect, transactionReportController.getPurchaseReport);
 router.get('/report/purchase/export', protect, transactionReportController.exportPurchaseReport);
+router.get('/report/purchase/export-gst', protect, transactionReportController.exportPurchaseGstReportExcel);
 router.get('/report/debit-note', protect, transactionReportController.getDebitNoteReport);
 router.get('/report/quotation', protect, transactionReportController.getQuotationSalesReport);
 
@@ -439,8 +487,29 @@ router.put('/security/reset-password/:userId', protect, securityController.reset
 router.delete('/security/delete-account/:userId', protect, securityController.deleteAccount);
 router.get('/security/login-activities/:userId', protect, securityController.getLoginActivitiesByUser);
 
-//dashboard 
+//dashboard
 router.get('/dashboard', protect, dashboardController.getDashboard);
+
+// notifications
+router.get('/notifications', protect, notificationController.listNotifications);
+router.get('/notifications/unread-count', protect, notificationController.getUnreadNotificationCount);
+router.patch('/notifications/:id/read', protect, notificationController.markNotificationRead);
+router.patch('/notifications/read-all', protect, notificationController.markAllNotificationsRead);
+router.post('/notifications/run-check', protect, notificationController.runNotificationCheck);
+
+// ai document extraction
+router.post('/ai/extract/purchase-bill', protect, aiUpload.single('file'), aiController.extractPurchaseBill);
+router.post('/ai/extract/supplier-details', protect, aiUpload.single('file'), aiController.extractSupplierDetails);
+router.post('/ai/extract/invoice', protect, aiUpload.single('file'), aiController.extractInvoice);
+router.post('/ai/extract/quotation', protect, aiUpload.single('file'), aiController.extractQuotation);
+
+// to-do tasks
+router.get('/todos', protect, todoController.listTodoTasks);
+router.get('/todos/summary', protect, todoController.getTodoTaskSummary);
+router.post('/todos', protect, todoController.createTodoTask);
+router.put('/todos/:id', protect, todoController.updateTodoTask);
+router.patch('/todos/:id/complete', protect, todoController.markTodoTaskCompleted);
+router.delete('/todos/:id', protect, todoController.deleteTodoTask);
 
 //expense
 router.post("/expenses", protect, upload.single("attachment"), createExpenseValidator, expenseController.createExpense);

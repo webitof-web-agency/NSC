@@ -103,11 +103,11 @@ const createEmailTemplate = async (req, res) => {
 // List all Email Templates
 const listEmailTemplates = async (req, res) => {
     try {
-        const { 
-            page = 1, 
-            limit = 10, 
-            search = '', 
-            status 
+        const {
+            page = 1,
+            limit = 10,
+            search = '',
+            status
         } = req.query;
 
         // Build query object

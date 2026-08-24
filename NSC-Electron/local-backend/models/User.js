@@ -1,4 +1,4 @@
-const offlineSyncPlugin = require("../middleware/offlineSync");
+const offlineSyncPlugin = require('../middleware/offlineSync');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
@@ -135,4 +135,5 @@ userSchema.methods.softDelete = async function () {
 };
 
 userSchema.plugin(offlineSyncPlugin);
+
 module.exports = mongoose.model('User', userSchema);

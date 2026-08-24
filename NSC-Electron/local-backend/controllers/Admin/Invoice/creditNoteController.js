@@ -6,161 +6,6 @@ const User = require('@models/User');
 const { validationResult } = require('express-validator');
 const { sendMail } = require("@utils/mailer");
 
-// const createCreditNote = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const {
-//       invoiceId,
-//       creditNoteDate,
-//       referenceNo,
-//       reason,
-//       description,
-//       items,
-//       payment_method,
-//       refund_method,
-//       notes,
-//       termsAndCondition,
-//       taxableAmount,
-//       totalAmount,
-//       vat,
-//       totalDiscount,
-//       roundOff,
-//       status,
-//       bank,
-//       sign_type,
-//       signatureName,
-//       signatureId,
-//       billFrom,
-//       billTo
-//     } = req.body;
-
-//     const userId = req.user;
-
-//     // Get invoice details
-//     const invoice = await Invoice.findById(invoiceId).session(session);
-//     if (!invoice) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Invoice not found' });
-//     }
-
-//     // Validate billFrom and billTo exist
-//     const billFromUser = await User.findById(billFrom).session(session);
-//     if (!billFromUser) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Bill From user not found' });
-//     }
-
-//     const billToCustomer = await Customer.findById(billTo).session(session);
-//     if (!billToCustomer) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Bill To customer not found' });
-//     }
-
-//     // Signature handling
-//     let signatureImage = null;
-//     let savedSignatureId = null;
-//     if (sign_type === 'eSignature' && req.file) {
-//       signatureImage = req.file.path;
-//     } else if (sign_type === 'digitalSignature' && signatureId) {
-//       savedSignatureId = signatureId;
-//     }
-
-//     // Create credit note
-//     const creditNote = new CreditNote({
-//       invoiceId,
-//       customerId: invoice.customerId,
-//       creditNoteDate: new Date(creditNoteDate),
-//       referenceNo: referenceNo || '',
-//       reason: reason || 'OTHER',
-//       description: description || '',
-//       items: items.map(item => ({
-//         id: item.id,
-//         name: item.name,
-//         unit: item.unit,
-//         qty: item.qty,
-//         rate: item.rate,
-//         discount: item.discount || 0,
-//         tax: item.tax || 0,
-//         tax_group_id: item.tax_group_id,
-//         amount: item.amount || (item.rate * item.qty),
-//         discount_type: item.discount_type,
-//         discount_value: item.discount_value
-//       })),
-//       payment_method,
-//       status: status || 'PENDING',
-//       refund_method: refund_method || 'CREDIT_TO_ACCOUNT',
-//       taxableAmount: req.body.subTotal,
-//       totalAmount: req.body.grandTotal,
-//       vat: req.body.totalTax || 0,
-//       totalDiscount: req.body.totalDiscount || 0,
-//       roundOff: roundOff || false,
-//       bank: bank || null,
-//       notes: notes || '',
-//       termsAndCondition: termsAndCondition || '',
-//       sign_type: sign_type || 'none',
-//       signatureName: sign_type === 'eSignature' ? signatureName : null,
-//       signatureImage,
-//       signatureId: sign_type === 'digitalSignature' ? savedSignatureId : null,
-//       billFrom,
-//       billTo,
-//       userId
-//     });
-
-//     await creditNote.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(201).json({
-//       message: 'Credit note created successfully',
-//       data: creditNote
-//     });
-
-//     if (billToCustomer?.email && process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-//       try {
-//         await sendMail({
-//           from: `"${billFromUser.name || 'Your Company'}" <${process.env.SMTP_EMAIL}>`,
-//           to: billToCustomer.email,
-//           subject: `Credit Note Issued (Ref: ${creditNote.referenceNo || creditNote._id})`,
-//           html: `
-//             <h3>Hello ${billToCustomer.name},</h3>
-//             <p>A new credit note has been issued against your invoice.</p>
-//             <p><strong>Credit Note Ref:</strong> ${creditNote.referenceNo}</p>
-//             <p><strong>Invoice Ref:</strong> ${invoice.referenceNo}</p>
-//             <p><strong>Total Amount:</strong> ${creditNote.totalAmount}</p>
-//             <p><strong>Reason:</strong> ${creditNote.reason}</p>
-//             <p><strong>Status:</strong> ${creditNote.status}</p>
-//             <p><strong>Date:</strong> ${new Date(creditNote.creditNoteDate).toLocaleDateString()}</p>
-//             <br>
-//             <p>Best Regards,<br>${billFromUser.name || 'Your Company'}</p>
-//           `
-//         });
-//       } catch (emailErr) {
-//         console.error("Failed to send credit note email:", emailErr.message);
-//       }
-//     }
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Create credit note error:', err);
-//     res.status(500).json({ message: 'Error creating credit note', error: err.message });
-//   }
-// };
-
-
 
 const createCreditNote = async (req, res) => {
   try {
@@ -196,10 +41,14 @@ const createCreditNote = async (req, res) => {
 
     const userId = req.user;
 
-    // Get invoice details
-    const invoice = await Invoice.findById(invoiceId);
-    if (!invoice) {
-      return res.status(404).json({ message: 'Invoice not found' });
+    // Get invoice details if provided
+    let customerId = billTo;
+    if (invoiceId) {
+      const invoice = await Invoice.findById(invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ message: 'Invoice not found' });
+      }
+      customerId = invoice.customerId;
     }
 
     // Validate billFrom and billTo exist
@@ -208,9 +57,12 @@ const createCreditNote = async (req, res) => {
       return res.status(404).json({ message: 'Bill From user not found' });
     }
 
-    const billToCustomer = await Customer.findById(billTo);
-    if (!billToCustomer) {
-      return res.status(404).json({ message: 'Bill To customer not found' });
+    let billToCustomer = null;
+    if (billTo) {
+      billToCustomer = await Customer.findById(billTo);
+      if (!billToCustomer) {
+        return res.status(404).json({ message: 'Bill To customer not found' });
+      }
     }
 
     // Signature handling
@@ -225,8 +77,8 @@ const createCreditNote = async (req, res) => {
 
     // Create Credit Note
     const creditNote = new CreditNote({
-      invoiceId,
-      customerId: invoice.customerId,
+      invoiceId: invoiceId || null,
+      customerId: customerId,
       creditNoteDate: new Date(creditNoteDate),
       referenceNo: referenceNo || '',
       reason: reason || 'OTHER',
@@ -291,8 +143,6 @@ const createCreditNote = async (req, res) => {
     res.status(500).json({ message: 'Error creating credit note', error: err.message });
   }
 };
-
-
 
 
 const getAllCreditNotes = async (req, res) => {
@@ -753,141 +603,6 @@ const getCreditNoteById = async (req, res) => {
   }
 };
 
-// const updateCreditNote = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { id: creditNoteId } = req.params;
-//     const errors = validationResult(req);
-//     if (!errors.isEmpty()) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ errors: errors.array() });
-//     }
-
-//     const userId = req.user;
-
-//     // Check if credit note exists
-//     const creditNote = await CreditNote.findById(creditNoteId).session(session);
-//     if (!creditNote) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Credit Note not found' });
-//     }
-
-//     const {
-//       creditNoteDate,
-//       referenceNo,
-//       reason,
-//       description,
-//       items,
-//       payment_method,
-//       refund_method,
-//       notes,
-//       termsAndCondition,
-//       taxableAmount,
-//       totalAmount,
-//       vat,
-//       totalDiscount,
-//       roundOff,
-//       bank,
-//       sign_type,
-//       signatureName,
-//       signatureId,
-//       billFrom,
-//       status,
-//       billTo
-//     } = req.body;
-
-//     // Validate billFrom and billTo existence if provided
-//     if (billFrom) {
-//       const billFromUser = await User.findById(billFrom).session(session);
-//       if (!billFromUser) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(404).json({ message: 'Bill From user not found' });
-//       }
-//     }
-
-//     if (billTo) {
-//       const billToCustomer = await Customer.findById(billTo).session(session);
-//       if (!billToCustomer) {
-//         await session.abortTransaction();
-//         session.endSession();
-//         return res.status(404).json({ message: 'Bill To customer not found' });
-//       }
-//     }
-
-//     // Handle signature logic
-//     if (sign_type === 'eSignature' && req.file) {
-//       creditNote.signatureImage = req.file.path;
-//       creditNote.signatureName = signatureName;
-//       creditNote.signatureId = null;
-//     } else if (sign_type === 'digitalSignature' && signatureId) {
-//       creditNote.signatureId = signatureId;
-//       creditNote.signatureImage = null;
-//       creditNote.signatureName = null;
-//     }
-
-//     // Update fields
-//     creditNote.creditNoteDate = creditNoteDate ? new Date(creditNoteDate) : creditNote.creditNoteDate;
-//     creditNote.referenceNo = referenceNo || creditNote.referenceNo;
-//     creditNote.reason = reason || creditNote.reason;
-//     creditNote.description = description || creditNote.description;
-//     creditNote.items = items
-//       ? items.map(item => ({
-//         id: item.id,
-//         name: item.name,
-//         unit: item.unit,
-//         qty: item.qty,
-//         rate: item.rate,
-//         discount: item.discount || 0,
-//         tax: item.tax || 0,
-//         tax_group_id: item.tax_group_id,
-//         amount: item.amount || (item.rate * item.qty),
-//         discount_type: item.discount_type,
-//         discount_value: item.discount_value
-//       }))
-//       : creditNote.items;
-//     creditNote.payment_method = payment_method || creditNote.payment_method;
-//     creditNote.refund_method = refund_method || creditNote.refund_method;
-//     creditNote.taxableAmount = req.body.subTotal || creditNote.taxableAmount;
-//     creditNote.totalAmount = req.body.grandTotal || creditNote.totalAmount;
-//     creditNote.vat = req.body.totalTax || creditNote.vat;
-//     creditNote.totalDiscount = req.body.totalDiscount || creditNote.totalDiscount;
-//     creditNote.roundOff = roundOff !== undefined ? roundOff : creditNote.roundOff;
-//     creditNote.bank = bank || creditNote.bank;
-//     creditNote.notes = notes || creditNote.notes;
-//     creditNote.termsAndCondition = termsAndCondition || creditNote.termsAndCondition;
-//     creditNote.sign_type = sign_type || creditNote.sign_type;
-//     creditNote.billFrom = billFrom || creditNote.billFrom;
-//     creditNote.billTo = billTo || creditNote.billTo;
-//     creditNote.status = status || creditNote.status;
-//     creditNote.userId = userId; // Keep track of who updated it
-
-//     await creditNote.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Credit note updated successfully',
-//       data: creditNote
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Update credit note error:', err);
-//     res.status(500).json({
-//       message: 'Error updating credit note',
-//       error: err.message
-//     });
-//   }
-// };
-
-
 
 const updateCreditNote = async (req, res) => {
   try {
@@ -1005,41 +720,6 @@ const updateCreditNote = async (req, res) => {
 };
 
 
-
-
-// const deleteCreditNote = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const { id: creditNoteId } = req.params;
-
-//     const creditNote = await CreditNote.findById(creditNoteId).session(session);
-//     if (!creditNote) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(404).json({ message: 'Credit Note not found' });
-//     }
-
-//     await CreditNote.deleteOne({ _id: creditNoteId }).session(session);
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     res.status(200).json({
-//       message: 'Credit note deleted successfully',
-//       id: creditNoteId
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error('Delete credit note error:', err);
-//     res.status(500).json({ message: 'Error deleting credit note', error: err.message });
-//   }
-// };
-
-
 const deleteCreditNote = async (req, res) => {
   try {
     const { id: creditNoteId } = req.params;
@@ -1090,7 +770,6 @@ const bulkDeleteCreditNotes = async (req, res) => {
     });
   }
 };
-
 
 
 module.exports = {

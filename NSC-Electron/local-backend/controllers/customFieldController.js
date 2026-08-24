@@ -20,7 +20,7 @@ exports.createCustomField = async (req, res) => {
     });
 
     const savedCustomField = await customField.save();
-    
+
     res.status(201).json({
       message: 'Custom field created successfully',
       data: savedCustomField

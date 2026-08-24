@@ -7,32 +7,32 @@ const monthlyExpenseSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
-    
+
     // Expense category (predefined from ExpenseCategory model)
     expenseCategory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'ExpenseCategory',
       required: true,
     },
-    
+
     // Basic expense details
     amount: {
       type: Number,
       required: true,
       min: 0,
     },
-    
+
     expenseDate: {
       type: Date,
       required: true,
       default: Date.now,
     },
-    
+
     description: {
       type: String,
       default: '',
     },
-    
+
     // Payment details
     paymentMode: {
       type: String,
@@ -51,7 +51,7 @@ const monthlyExpenseSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
-    
+
     // Custom fields for flexible data storage
     customFields: [{
       key: {
@@ -63,24 +63,24 @@ const monthlyExpenseSchema = new mongoose.Schema(
         required: true,
       }
     }],
-    
+
     paymentDate: {
       type: Date,
       default: null,
     },
-    
+
     paymentDueDate: {
       type: Date,
       default: null,
     },
-    
+
     // Audit fields
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
-    
+
     isDeleted: {
       type: Boolean,
       default: false,
