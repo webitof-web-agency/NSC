@@ -278,13 +278,20 @@ exports.getDashboard = async (req, res) => {
     });
 
     // ---------- GRAPH 3: Sales Comparison (Today vs Yesterday) ----------
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-
-    const endOfYesterday = new Date(startOfToday.getTime() - 1);
+    const Localization = require("@models/Localization");
+    const localization = await Localization.findOne({ isActive: true }).populate('timezone').sort({ createdAt: -1 }).lean();
+    const utcOffset = localization?.timezone?.utc_offset || "+05:30"; // default to IST if not set
+    
+    const dayjs = require("dayjs");
+    const utc = require("dayjs/plugin/utc");
+    if (!dayjs.utc) {
+      dayjs.extend(utc);
+    }
+    
+    const now = dayjs().utcOffset(utcOffset);
+    const startOfToday = now.startOf("day").toDate();
+    const startOfYesterday = now.subtract(1, "day").startOf("day").toDate();
+    const endOfYesterday = now.startOf("day").subtract(1, "millisecond").toDate();
 
     const todayAgg = await Invoice.aggregate([
       { $match: { isDeleted: false, createdAt: { $gte: startOfToday } } },

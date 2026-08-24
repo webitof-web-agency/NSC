@@ -4,7 +4,8 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "echo 'No build step required for plain JS. Verifying server syntax...' && node -c server.js && echo '✅ Syntax check passed successfully!'"
   },
   "_moduleAliases": {
     "@": ".",

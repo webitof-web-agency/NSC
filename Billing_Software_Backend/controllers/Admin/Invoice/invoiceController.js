@@ -3030,9 +3030,13 @@ const recordInvoicePayment = async (req, res) => {
     }
 
     if (toMoney(totalPaid + amount) > invoiceTotal) {
-      return res.status(400).json({
-        message: "Payment exceeds remaining balance",
-      });
+      if (updateExistingPayment && amount <= 0) {
+        // Allow updating payment method when invoice total decreases or stays the same
+      } else {
+        return res.status(400).json({
+          message: "Payment exceeds remaining balance",
+        });
+      }
     }
 
     const latestPayment = await InvoicePayment.findOne({ invoiceId }).sort({ createdAt: -1 });
@@ -3049,9 +3053,13 @@ const recordInvoicePayment = async (req, res) => {
     if (updateExistingPayment || shouldMergeCreditPayment) {
 
       if (paymentToUpdate) {
-        const newAmount = toMoney(totalPaid + amount);
+        let newAmount = toMoney(totalPaid + amount);
+        if (updateExistingPayment && amount <= 0) {
+          newAmount = Math.min(newAmount, invoiceTotal);
+        }
         const updateFields = {
           amount: newAmount,
+          payment_method: payment_method || paymentToUpdate.payment_method,
           received_on: received_on ? new Date(received_on) : new Date(),
           notes: notes || `Payment updated due to Invoice Edit (New Total: ₹${newAmount})`,
         };
