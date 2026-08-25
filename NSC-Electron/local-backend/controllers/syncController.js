@@ -57,6 +57,7 @@ exports.pullSyncEvents = async (req, res) => {
 exports.getBootstrapSnapshot = async (req, res) => {
   try {
     const userId = req.user; // from protect middleware
+    const targetCollection = req.query.collection;
     
     // 1. Capture the latest cursor from SyncJournal
     const latestEvent = await SyncJournal.findOne().sort({ _id: -1 }).select('_id').lean();
@@ -141,16 +142,34 @@ exports.getBootstrapSnapshot = async (req, res) => {
 
     const baseQuery = { isDeleted: { $ne: true } };
 
-    const queryPromises = modelDefinitions.map(({ key, model }) => {
-      if (!model) return Promise.resolve({ key, data: [] });
-      return model.find(baseQuery).lean().then(data => ({ key, data })).catch(() => ({ key, data: [] }));
-    });
+    if (targetCollection) {
+      const def = modelDefinitions.find(d => d.key === targetCollection);
+      const data = def && def.model ? await def.model.find(baseQuery).lean() : [];
+      return res.status(200).json({
+        success: true,
+        data: {
+          cursor,
+          collection: targetCollection,
+          data,
+          snapshot: { [targetCollection]: data }
+        }
+      });
+    }
 
-    const results = await Promise.all(queryPromises);
-
+    // Execute in controlled batches of 5 to avoid database thread saturation
     const snapshot = {};
-    for (const { key, data } of results) {
-      snapshot[key] = data;
+    const batchSize = 5;
+    for (let i = 0; i < modelDefinitions.length; i += batchSize) {
+      const batch = modelDefinitions.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(({ key, model }) => {
+          if (!model) return Promise.resolve({ key, data: [] });
+          return model.find(baseQuery).lean().then(data => ({ key, data })).catch(() => ({ key, data: [] }));
+        })
+      );
+      for (const { key, data } of batchResults) {
+        snapshot[key] = data;
+      }
     }
 
     res.status(200).json({

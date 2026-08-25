@@ -52,6 +52,7 @@ let syncManager = null;
 // ─────────────────────────────────────────────
 function startLocalBackend() {
   return new Promise((resolve, reject) => {
+    let isResolved = false;
     // ── Path Resolution ──────────────────────────────────────────────
     // In development:  local-backend/ is alongside electron/ in the source tree
     // In production:   local-backend/ is in process.resourcesPath (extraResources)
@@ -125,7 +126,10 @@ function startLocalBackend() {
       // Detect when the server is ready
       if (line.includes('BACKEND_READY') || line.includes('running at http')) {
         console.log('✅ Local backend is ready on port', LOCAL_BACKEND_PORT);
-        resolve();
+        if (!isResolved) {
+          isResolved = true;
+          resolve();
+        }
       }
     });
 
@@ -142,7 +146,10 @@ function startLocalBackend() {
       if (syncManager) {
         syncManager._log('error', `Local backend process error: ${err.message}`);
       }
-      reject(err);
+      if (!isResolved) {
+        isResolved = true;
+        reject(err);
+      }
     });
 
     localBackendProcess.on('exit', (code) => {
@@ -159,10 +166,32 @@ function startLocalBackend() {
       }, 2000);
     });
 
-    // Fallback: resolve after 5 seconds even if no ready message
-    setTimeout(() => {
-      resolve();
-    }, 5000);
+    // Active health polling fallback up to 30 seconds
+    const checkStartTime = Date.now();
+    const pollInterval = setInterval(() => {
+      if (isResolved) {
+        clearInterval(pollInterval);
+        return;
+      }
+      const http = require('http');
+      const req = http.get(`http://127.0.0.1:${LOCAL_BACKEND_PORT}/api/local/sync-stats`, (res) => {
+        if (!isResolved) {
+          isResolved = true;
+          clearInterval(pollInterval);
+          console.log('✅ Local backend verified via HTTP on port', LOCAL_BACKEND_PORT);
+          resolve();
+        }
+      });
+      req.on('error', () => {
+        if (Date.now() - checkStartTime > 45000 && !isResolved) {
+          isResolved = true;
+          clearInterval(pollInterval);
+          console.warn('⚠️ Local backend startup wait timed out after 45s, proceeding...');
+          resolve();
+        }
+      });
+      req.setTimeout(1500, () => req.destroy());
+    }, 1000);
   });
 }
 

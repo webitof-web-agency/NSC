@@ -2,6 +2,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const LocalConfig = require('../models/LocalConfig');
 
 // Complete mapping of all collection keys to Mongoose Models
 const COLLECTION_MAP = {
@@ -75,6 +76,31 @@ const COLLECTION_MAP = {
 
 exports.COLLECTION_MAP = COLLECTION_MAP;
 
+function normalizeDoc(record) {
+  if (!record || typeof record !== 'object') return null;
+  const doc = { ...record };
+
+  let docId = doc._id;
+  if (typeof docId === 'string' && /^[0-9a-fA-F]{24}$/.test(docId)) {
+    docId = new mongoose.Types.ObjectId(docId);
+  } else if (!docId) {
+    docId = new mongoose.Types.ObjectId();
+  }
+
+  if (!doc.syncId) {
+    doc.syncId = String(record._id || docId);
+  }
+
+  if (doc.email === '' || doc.email === null) {
+    delete doc.email;
+  }
+
+  delete doc._id;
+  delete doc.__v;
+
+  return { docId, updateData: doc };
+}
+
 exports.applyBootstrap = async (req, res) => {
   const { snapshot } = req.body;
   if (!snapshot || typeof snapshot !== 'object') {
@@ -83,6 +109,7 @@ exports.applyBootstrap = async (req, res) => {
 
   const results = {};
   const errors = [];
+  let anyDataSaved = false;
 
   try {
     for (const [collectionName, records] of Object.entries(snapshot)) {
@@ -114,32 +141,17 @@ exports.applyBootstrap = async (req, res) => {
           } catch {}
         }
 
-        // Prepare bulk upserts preserving _id and syncId
         const bulkOps = [];
         for (const record of records) {
-          if (!record || typeof record !== 'object') continue;
-          
-          const updateData = { ...record };
-          const docId = updateData._id != null ? updateData._id : new mongoose.Types.ObjectId();
-
-          if (!updateData.syncId) {
-            updateData.syncId = String(record._id || docId);
-          }
-
-          if (updateData.email === '' || updateData.email === null) {
-            delete updateData.email;
-          }
-
-          // In MongoDB, _id is immutable and must NOT be in $set during upsert!
-          delete updateData._id;
-          delete updateData.__v;
+          const normalized = normalizeDoc(record);
+          if (!normalized) continue;
 
           bulkOps.push({
             updateOne: {
-              filter: { _id: docId },
+              filter: { _id: normalized.docId },
               update: {
-                $set: updateData,
-                $setOnInsert: { _id: docId }
+                $set: normalized.updateData,
+                $setOnInsert: { _id: normalized.docId }
               },
               upsert: true
             }
@@ -150,6 +162,7 @@ exports.applyBootstrap = async (req, res) => {
           const writeRes = await Model.bulkWrite(bulkOps, { ordered: false });
           const count = (writeRes.upsertedCount || 0) + (writeRes.modifiedCount || 0) + (writeRes.matchedCount || 0);
           results[collectionName] = count;
+          if (count > 0) anyDataSaved = true;
           console.log(`[Sync Bootstrap] ${collectionName}: ${records.length} records processed (upserted: ${writeRes.upsertedCount}, modified: ${writeRes.modifiedCount})`);
         }
 
@@ -179,6 +192,15 @@ exports.applyBootstrap = async (req, res) => {
         console.error(`⚠️ [Sync Bootstrap] Error processing collection ${collectionName}:`, colErr.message);
         errors.push({ collection: collectionName, error: colErr.message });
       }
+    }
+
+    // Set bootstrapCompleted flag in LocalConfig if records were saved
+    if (anyDataSaved) {
+      await LocalConfig.findOneAndUpdate(
+        { key: 'bootstrapCompleted' },
+        { value: true },
+        { upsert: true }
+      );
     }
 
     res.status(200).json({

@@ -347,22 +347,22 @@ class SyncManager {
 
     let cursor = this._getCursor();
 
-    // Check if local database is empty
-    let isLocalEmpty = false;
+    // Check if local database needs initial bootstrap
+    let needsBootstrap = false;
     try {
-      const statsRes = await axios.get(`${this.localBackendUrl}/api/local/sync-stats`, { timeout: 3000 });
-      if (statsRes.data && typeof statsRes.data.totalRecords === 'number' && statsRes.data.totalRecords === 0) {
-        isLocalEmpty = true;
+      const statsRes = await axios.get(`${this.localBackendUrl}/api/local/sync-stats`, { timeout: 5000 });
+      if (statsRes.data) {
+        const { bootstrapCompleted, businessRecords, totalRecords } = statsRes.data;
+        if (!bootstrapCompleted || businessRecords === 0 || totalRecords <= 1) {
+          needsBootstrap = true;
+        }
       }
     } catch (statsErr) {
-      // Ignore error
+      if (!cursor) needsBootstrap = true;
     }
 
-    if (!cursor || isLocalEmpty) {
-      this._log('info', isLocalEmpty 
-        ? 'Local database is empty. Initiating full Initial Bootstrap Snapshot...'
-        : 'No existing sync cursor found. Initiating full Initial Bootstrap Snapshot...'
-      );
+    if (!cursor || needsBootstrap) {
+      this._log('info', 'Local database snapshot missing or incomplete. Initiating full Initial Bootstrap Snapshot...');
       await this._bootstrapSync(authToken);
       return;
     }
@@ -418,25 +418,29 @@ class SyncManager {
   async _bootstrapSync(authToken) {
     this._emit({
       state: 'syncing',
-      message: 'Downloading Initial Cloud Snapshot...',
+      message: 'Downloading Cloud Snapshot...',
     });
-
-    let remoteRes = null;
-    let retries = 0;
-    const maxRetries = 3;
 
     this._log('info', `Connecting to cloud at ${this.remoteBackendUrl}/api/sync/bootstrap...`);
 
-    while (retries < maxRetries && !remoteRes) {
+    let remoteRes = null;
+    let fullSnapshotSuccess = false;
+
+    // Try full snapshot first (with 45s timeout per attempt)
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         remoteRes = await axios.get(
           `${this.remoteBackendUrl}/api/sync/bootstrap`,
           { 
             headers: { Authorization: `Bearer ${authToken}` },
-            timeout: 120000
+            timeout: 45000
           }
         );
-        this._log('success', 'Cloud bootstrap snapshot downloaded successfully.');
+        if (remoteRes.data?.data?.snapshot || remoteRes.data?.snapshot) {
+          fullSnapshotSuccess = true;
+          this._log('success', 'Full cloud snapshot downloaded successfully.');
+          break;
+        }
       } catch (err) {
         if (err.response && (err.response.status === 401 || err.response.status === 403)) {
           this.cachedAuthToken = null;
@@ -445,69 +449,111 @@ class SyncManager {
           } catch (e) {}
           throw new Error('Session expired or invalid token. Please log in again.');
         }
-
-        retries++;
         const status = err.response?.status;
         const msg = err.response?.data?.message || err.response?.data?.error || err.message;
-        this._log('warn', `Cloud bootstrap attempt ${retries}/${maxRetries} failed (${status || 'ERR'}): ${msg}`);
-
-        if (retries >= maxRetries) {
-          throw err;
+        this._log('warn', `Full snapshot attempt ${attempt}/2 failed (${status || 'ERR'}): ${msg}`);
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 2000));
         }
-
-        const waitMs = retries * 3000;
-        this._emit({
-          state: 'syncing',
-          message: `Retrying download (${retries}/${maxRetries})...`,
-        });
-        await new Promise(r => setTimeout(r, waitMs));
       }
     }
 
-    const responseData = remoteRes.data?.data || remoteRes.data;
-    const snapshot = responseData?.snapshot;
-    const cursor = responseData?.cursor;
+    if (fullSnapshotSuccess && remoteRes) {
+      const responseData = remoteRes.data?.data || remoteRes.data;
+      const snapshot = responseData?.snapshot;
+      const cursor = responseData?.cursor;
 
-    if (!snapshot) {
-      this._log('warn', 'Cloud returned empty snapshot.');
-      return;
-    }
+      if (snapshot) {
+        const collectionCount = Object.keys(snapshot).length;
+        this._log('info', `Applying snapshot (${collectionCount} collections) to local database...`);
+        this._emit({ state: 'syncing', message: 'Applying Snapshot Locally...' });
 
-    const collectionCount = Object.keys(snapshot).length;
-    this._log('info', `Applying snapshot (${collectionCount} collections) to local database...`);
-    this._emit({
-      state: 'syncing',
-      message: 'Applying Snapshot Locally...',
-    });
+        try {
+          const localRes = await axios.post(
+            `${this.localBackendUrl}/api/local/sync-bootstrap`,
+            { snapshot },
+            { timeout: 120000 }
+          );
 
-    try {
-      const localRes = await axios.post(
-        `${this.localBackendUrl}/api/local/sync-bootstrap`,
-        { snapshot },
-        { timeout: 120000 }
-      );
-
-      if (localRes.data?.success) {
-        this._setCursor(cursor);
-        if (localRes.data?.results) {
-          const summary = Object.entries(localRes.data.results)
-            .filter(([_, count]) => count > 0)
-            .map(([col, count]) => `${col}: ${count}`)
-            .join(', ');
-          this._log('info', `Bootstrap summary: ${summary || 'all empty collections'}`);
+          if (localRes.data?.success) {
+            if (cursor) this._setCursor(cursor);
+            if (localRes.data?.results) {
+              const summary = Object.entries(localRes.data.results)
+                .filter(([_, count]) => count > 0)
+                .map(([col, count]) => `${col}: ${count}`)
+                .join(', ');
+              this._log('info', `Bootstrap summary: ${summary || 'all empty collections'}`);
+            }
+            this._log('success', `Bootstrap complete! Saved all collections to nsc_local.`);
+            return;
+          }
+        } catch (localErr) {
+          const msg = localErr.response?.data?.message || localErr.response?.data?.error || localErr.message;
+          this._log('error', `Local bootstrap write failed: ${msg}`);
+          throw localErr;
         }
-        if (localRes.data?.errors && localRes.data.errors.length > 0) {
-          this._log('warn', `Bootstrap collection errors: ${JSON.stringify(localRes.data.errors)}`);
-        }
-        this._log('success', `Bootstrap complete! Saved all collections to nsc_local. Cursor set to ${cursor}`);
-      } else {
-        throw new Error(localRes.data?.message || 'Local backend rejected bootstrap');
       }
-    } catch (localErr) {
-      const msg = localErr.response?.data?.message || localErr.response?.data?.error || localErr.message;
-      this._log('error', `Local bootstrap write failed: ${msg}`);
-      throw localErr;
     }
+
+    // Fallback: Collection-by-Collection sync (prevents 503 / socket hang up on heavy databases)
+    this._log('info', 'Switching to resilient Collection-by-Collection sync mode...');
+    const collectionsToSync = [
+      'users', 'customers', 'suppliers', 'products', 'product-variants',
+      'categories', 'brands', 'units', 'tax-rates', 'tax-groups',
+      'company-details', 'bank-details', 'bank-transactions', 'signatures',
+      'payment-modes', 'invoices', 'invoice-payments', 'invoice-templates',
+      'delivery-challans', 'quotations', 'purchases', 'credit-notes',
+      'debit-notes', 'supplier-payments', 'expenses', 'expense-categories',
+      'monthly-expenses', 'petty-cashes', 'petty-cash-transactions',
+      'inventories', 'attendance', 'staff-salary', 'customer-portal-branding',
+      'legal-settings', 'qr-settings', 'general-settings', 'localizations',
+      'barcode-settings', 'mrp-settings', 'number-sequences', 'brokers',
+      'commissions', 'colors', 'sizes', 'cities', 'states', 'countries',
+      'currencies', 'roles', 'permissions', 'email-settings', 'reminders',
+      'notifications', 'todo-tasks'
+    ];
+
+    let lastKnownCursor = null;
+    let totalSyncedCollections = 0;
+
+    for (let idx = 0; idx < collectionsToSync.length; idx++) {
+      const colName = collectionsToSync[idx];
+      this._emit({
+        state: 'syncing',
+        message: `Syncing ${colName} (${idx + 1}/${collectionsToSync.length})...`,
+      });
+
+      try {
+        const colRes = await axios.get(
+          `${this.remoteBackendUrl}/api/sync/bootstrap?collection=${colName}`,
+          {
+            headers: { Authorization: `Bearer ${authToken}` },
+            timeout: 30000
+          }
+        );
+
+        const dataPayload = colRes.data?.data || colRes.data;
+        const colData = dataPayload?.data || dataPayload?.snapshot?.[colName] || [];
+        if (dataPayload?.cursor) lastKnownCursor = dataPayload.cursor;
+
+        if (Array.isArray(colData) && colData.length > 0) {
+          await axios.post(
+            `${this.localBackendUrl}/api/local/sync-bootstrap`,
+            { snapshot: { [colName]: colData } },
+            { timeout: 30000 }
+          );
+          this._log('info', `✓ Synced ${colName}: ${colData.length} records`);
+          totalSyncedCollections++;
+        }
+      } catch (colErr) {
+        this._log('warn', `Could not sync collection ${colName}: ${colErr.message}`);
+      }
+    }
+
+    if (lastKnownCursor) {
+      this._setCursor(lastKnownCursor);
+    }
+    this._log('success', `Collection-by-collection sync finished! Updated ${totalSyncedCollections} collections in nsc_local.`);
   }
 
   // ─────────────────────────────────────────────

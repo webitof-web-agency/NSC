@@ -151,17 +151,31 @@ router.get('/sync-stats', async (req, res) => {
     ];
 
     let totalRecords = 0;
+    let businessRecords = 0;
     const stats = {};
     for (const col of collections) {
       const Model = getModel(col);
       if (Model) {
         const count = await Model.countDocuments({ isDeleted: { $ne: true } });
         totalRecords += count;
+        if (col === 'customers' || col === 'products' || col === 'invoices' || col === 'quotations') {
+          businessRecords += count;
+        }
         stats[col] = count;
       }
     }
 
-    res.json({ success: true, stats, totalRecords, totalPending: 0 });
+    const bootstrapConfig = await LocalConfig.findOne({ key: 'bootstrapCompleted' });
+    const bootstrapCompleted = bootstrapConfig ? Boolean(bootstrapConfig.value) : false;
+
+    res.json({
+      success: true,
+      stats,
+      totalRecords,
+      businessRecords,
+      bootstrapCompleted,
+      totalPending: 0
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
