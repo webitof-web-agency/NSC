@@ -489,6 +489,16 @@ class SyncManager {
 
       if (localRes.data?.success) {
         this._setCursor(cursor);
+        if (localRes.data?.results) {
+          const summary = Object.entries(localRes.data.results)
+            .filter(([_, count]) => count > 0)
+            .map(([col, count]) => `${col}: ${count}`)
+            .join(', ');
+          this._log('info', `Bootstrap summary: ${summary || 'all empty collections'}`);
+        }
+        if (localRes.data?.errors && localRes.data.errors.length > 0) {
+          this._log('warn', `Bootstrap collection errors: ${JSON.stringify(localRes.data.errors)}`);
+        }
         this._log('success', `Bootstrap complete! Saved all collections to nsc_local. Cursor set to ${cursor}`);
       } else {
         throw new Error(localRes.data?.message || 'Local backend rejected bootstrap');

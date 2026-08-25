@@ -1,3 +1,4 @@
+// local-backend/controllers/localSyncBootstrapController.js
 'use strict';
 
 const mongoose = require('mongoose');
@@ -72,15 +73,23 @@ const COLLECTION_MAP = {
   'todo-tasks': 'TodoTask'
 };
 
+exports.COLLECTION_MAP = COLLECTION_MAP;
+
 exports.applyBootstrap = async (req, res) => {
   const { snapshot } = req.body;
   if (!snapshot || typeof snapshot !== 'object') {
     return res.status(400).json({ success: false, message: 'Snapshot payload required' });
   }
 
+  const results = {};
+  const errors = [];
+
   try {
     for (const [collectionName, records] of Object.entries(snapshot)) {
-      if (!Array.isArray(records) || records.length === 0) continue;
+      if (!Array.isArray(records) || records.length === 0) {
+        results[collectionName] = 0;
+        continue;
+      }
 
       const modelName = COLLECTION_MAP[collectionName];
       if (!modelName) {
@@ -93,11 +102,12 @@ exports.applyBootstrap = async (req, res) => {
         Model = mongoose.models[modelName] || require(`../models/${modelName}`);
       } catch (e) {
         console.warn(`[Sync Bootstrap] Could not load model ${modelName}:`, e.message);
+        errors.push({ collection: collectionName, error: `Could not load model: ${e.message}` });
         continue;
       }
 
       try {
-        // Drop obsolete email index on suppliers if present
+        // Drop obsolete duplicate index on suppliers if present
         if (collectionName === 'suppliers') {
           try {
             await Model.collection.dropIndex('email_1');
@@ -110,18 +120,13 @@ exports.applyBootstrap = async (req, res) => {
           if (!record || typeof record !== 'object') continue;
           
           const updateData = { ...record };
-          let docId;
-          if (updateData._id && mongoose.Types.ObjectId.isValid(updateData._id)) {
-            docId = new mongoose.Types.ObjectId(String(updateData._id));
-          } else {
-            docId = new mongoose.Types.ObjectId();
-          }
+          const docId = updateData._id != null ? updateData._id : new mongoose.Types.ObjectId();
 
           if (!updateData.syncId) {
             updateData.syncId = String(record._id || docId);
           }
 
-          if (updateData.email === '') {
+          if (updateData.email === '' || updateData.email === null) {
             delete updateData.email;
           }
 
@@ -142,8 +147,10 @@ exports.applyBootstrap = async (req, res) => {
         }
 
         if (bulkOps.length > 0) {
-          const result = await Model.bulkWrite(bulkOps, { ordered: false });
-          console.log(`[Sync Bootstrap] ${collectionName}: ${records.length} records processed (upserted: ${result.upsertedCount}, modified: ${result.modifiedCount})`);
+          const writeRes = await Model.bulkWrite(bulkOps, { ordered: false });
+          const count = (writeRes.upsertedCount || 0) + (writeRes.modifiedCount || 0) + (writeRes.matchedCount || 0);
+          results[collectionName] = count;
+          console.log(`[Sync Bootstrap] ${collectionName}: ${records.length} records processed (upserted: ${writeRes.upsertedCount}, modified: ${writeRes.modifiedCount})`);
         }
 
         // File scanning (non-blocking)
@@ -170,10 +177,16 @@ exports.applyBootstrap = async (req, res) => {
 
       } catch (colErr) {
         console.error(`⚠️ [Sync Bootstrap] Error processing collection ${collectionName}:`, colErr.message);
+        errors.push({ collection: collectionName, error: colErr.message });
       }
     }
 
-    res.status(200).json({ success: true, message: 'Bootstrap snapshot applied successfully' });
+    res.status(200).json({
+      success: true,
+      message: 'Bootstrap snapshot applied successfully',
+      results,
+      errors: errors.length > 0 ? errors : undefined
+    });
 
   } catch (error) {
     console.error('[Sync Bootstrap Error]:', error);

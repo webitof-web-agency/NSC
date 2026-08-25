@@ -2,7 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const { ensureUploadDir } = require('../utils/storagePaths');
 
-const uploadDir = ensureUploadDir('general');
+const uploadDir = ensureUploadDir();
 
 // Configure storage
 const storage = multer.diskStorage({
