@@ -144,7 +144,7 @@ exports.getBootstrapSnapshot = async (req, res) => {
 
     if (targetCollection) {
       const def = modelDefinitions.find(d => d.key === targetCollection);
-      const data = def && def.model ? await def.model.find(baseQuery).lean() : [];
+      const data = def && def.model ? await def.model.find(baseQuery).sort({ createdAt: 1, _id: 1 }).lean() : [];
       return res.status(200).json({
         success: true,
         data: {
@@ -164,7 +164,7 @@ exports.getBootstrapSnapshot = async (req, res) => {
       const batchResults = await Promise.all(
         batch.map(({ key, model }) => {
           if (!model) return Promise.resolve({ key, data: [] });
-          return model.find(baseQuery).lean().then(data => ({ key, data })).catch(() => ({ key, data: [] }));
+          return model.find(baseQuery).sort({ createdAt: 1, _id: 1 }).lean().then(data => ({ key, data })).catch(() => ({ key, data: [] }));
         })
       );
       for (const { key, data } of batchResults) {

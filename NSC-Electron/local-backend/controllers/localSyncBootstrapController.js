@@ -76,30 +76,107 @@ const COLLECTION_MAP = {
 
 exports.COLLECTION_MAP = COLLECTION_MAP;
 
-function normalizeDoc(record) {
-  if (!record || typeof record !== 'object') return null;
-  const doc = { ...record };
+const DATE_FIELD_NAMES = new Set([
+  'createdAt', 'updatedAt', 'invoiceDate', 'dueDate', 'date',
+  'paymentDate', 'payment_date', 'transactionDate', 'received_on',
+  'chequeDate', 'dob', 'joiningDate', 'deletedAt', 'lastLogin',
+  'checkInTime', 'checkOutTime', 'expiryDate', 'birthDate', 'anniversaryDate'
+]);
 
-  let docId = doc._id;
-  if (typeof docId === 'string' && /^[0-9a-fA-F]{24}$/.test(docId)) {
-    docId = new mongoose.Types.ObjectId(docId);
+function deepNormalize(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(deepNormalize);
+  if (obj instanceof Date || obj instanceof mongoose.Types.ObjectId) return obj;
+
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || value === undefined) {
+      result[key] = value;
+      continue;
+    }
+
+    if (DATE_FIELD_NAMES.has(key) || key.endsWith('Date') || key.endsWith('At') || key.endsWith('Time')) {
+      if (typeof value === 'string' || typeof value === 'number') {
+        const d = new Date(value);
+        result[key] = !isNaN(d.getTime()) ? d : value;
+      } else {
+        result[key] = value;
+      }
+    } else if (typeof value === 'string' && /^[0-9a-fA-F]{24}$/.test(value)) {
+      if (key === '_id' || key.endsWith('Id') || key.endsWith('_id') || key === 'user' || key === 'customer' || key === 'supplier' || key === 'product' || key === 'billTo' || key === 'billFrom' || key === 'bank') {
+        result[key] = new mongoose.Types.ObjectId(value);
+      } else {
+        result[key] = value;
+      }
+    } else if (typeof value === 'object') {
+      result[key] = deepNormalize(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function normalizeDoc(record, Model) {
+  if (!record || typeof record !== 'object') return null;
+
+  let docObj;
+  try {
+    if (Model) {
+      const instance = new Model(record);
+      docObj = instance.toObject ? instance.toObject({ depopulate: true }) : { ...record };
+    } else {
+      docObj = { ...record };
+    }
+  } catch (e) {
+    docObj = { ...record };
+  }
+
+  const normalized = deepNormalize(docObj);
+
+  let docId = normalized._id;
+  if (!docId && record._id) {
+    if (typeof record._id === 'string' && /^[0-9a-fA-F]{24}$/.test(record._id)) {
+      docId = new mongoose.Types.ObjectId(record._id);
+    } else {
+      docId = record._id;
+    }
   } else if (!docId) {
     docId = new mongoose.Types.ObjectId();
   }
 
-  if (!doc.syncId) {
-    doc.syncId = String(record._id || docId);
+  if (!normalized.syncId) {
+    normalized.syncId = String(record._id || docId);
   }
 
-  if (doc.email === '' || doc.email === null) {
-    delete doc.email;
+  if (record.createdAt) {
+    normalized.createdAt = new Date(record.createdAt);
+  } else if (!normalized.createdAt) {
+    if (docId instanceof mongoose.Types.ObjectId) {
+      normalized.createdAt = docId.getTimestamp();
+    } else {
+      normalized.createdAt = new Date();
+    }
   }
 
-  delete doc._id;
-  delete doc.__v;
+  if (record.updatedAt) {
+    normalized.updatedAt = new Date(record.updatedAt);
+  } else if (!normalized.updatedAt) {
+    normalized.updatedAt = normalized.createdAt;
+  }
 
-  return { docId, updateData: doc };
+  if (normalized.email === '' || normalized.email === null) {
+    delete normalized.email;
+  }
+
+  delete normalized._id;
+  delete normalized.__v;
+
+  return { docId, updateData: normalized };
 }
+
+exports.normalizeDoc = normalizeDoc;
+exports.deepNormalize = deepNormalize;
 
 exports.applyBootstrap = async (req, res) => {
   const { snapshot } = req.body;
@@ -141,17 +218,22 @@ exports.applyBootstrap = async (req, res) => {
           } catch {}
         }
 
+        // Clean up any old string _id documents from earlier builds
+        try {
+          await Model.collection.deleteMany({ _id: { $type: 'string' } });
+        } catch (e) {}
+
         const bulkOps = [];
         for (const record of records) {
-          const normalized = normalizeDoc(record);
+          const normalized = normalizeDoc(record, Model);
           if (!normalized) continue;
 
           bulkOps.push({
-            updateOne: {
+            replaceOne: {
               filter: { _id: normalized.docId },
-              update: {
-                $set: normalized.updateData,
-                $setOnInsert: { _id: normalized.docId }
+              replacement: {
+                _id: normalized.docId,
+                ...normalized.updateData
               },
               upsert: true
             }
