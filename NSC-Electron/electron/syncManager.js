@@ -367,6 +367,7 @@ class SyncManager {
       return;
     }
 
+    let pulledEventsCount = 0;
     try {
       this._log('info', `Pull: Fetching cloud events after cursor ${cursor}...`);
       const remoteRes = await axios.get(
@@ -381,24 +382,22 @@ class SyncManager {
       const events = responseData?.events || [];
       const nextCursor = responseData?.nextCursor || cursor;
 
-      if (!events || events.length === 0) {
-        this._log('info', 'Pull: Up to date (no new cloud events).');
-        return;
+      if (Array.isArray(events) && events.length > 0) {
+        this._log('info', `Pull: Applying ${events.length} cloud events to local database...`);
+        
+        const localRes = await axios.post(
+          `${this.localBackendUrl}/api/local/sync-apply`,
+          { events },
+          { timeout: 30000 }
+        );
+
+        if (localRes.data?.success) {
+          this._setCursor(nextCursor);
+          this._syncedCount += events.length;
+          pulledEventsCount = events.length;
+          this._log('success', `Pull: Applied ${events.length} cloud events successfully. Cursor updated to ${nextCursor}`);
+        }
       }
-
-      this._log('info', `Pull: Applying ${events.length} cloud events to local database...`);
-      
-      const localRes = await axios.post(
-        `${this.localBackendUrl}/api/local/sync-apply`,
-        { events },
-        { timeout: 30000 }
-      );
-
-      if (localRes.data?.success) {
-        this._setCursor(nextCursor);
-        this._log('success', `Pull: Applied successfully. Cursor updated to ${nextCursor}`);
-      }
-
     } catch (err) {
       if (err.response && (err.response.status === 401 || err.response.status === 403)) {
         this.cachedAuthToken = null;
@@ -407,7 +406,13 @@ class SyncManager {
         } catch (e) {}
         throw new Error('Session expired or invalid token. Please log in again.');
       }
-      this._log('error', `Pull sync failed: ${err.message}`);
+      this._log('warn', `Incremental pull notice: ${err.message}`);
+    }
+
+    // Always re-sync snapshot to guarantee all newly created records on web/cloud are brought locally
+    if (pulledEventsCount === 0) {
+      this._log('info', 'Refreshing cloud snapshot to synchronize latest records...');
+      await this._bootstrapSync(authToken);
     }
   }
 

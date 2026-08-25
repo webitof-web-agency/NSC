@@ -1,31 +1,71 @@
 // middleware/offlineSync.js
-// Mongoose plugin — adds _localId, _createdOffline, _syncedFromOfflineAt fields
-// to Atlas models so offline-synced records can be deduplicated by _localId
+// Mongoose plugin that tracks sync identity and changes:
+// - On Local Desktop: writes mutations to Outbox collection to push to Cloud
+// - On Cloud Backend: writes mutations to SyncJournal collection for Desktop apps to pull
 
 'use strict';
 
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
+function toSyncCollectionName(mongooseName) {
+  const map = {
+    productvariants: 'product-variants',
+    taxgroups: 'tax-groups',
+    taxrates: 'tax-rates',
+    companysettings: 'company-details',
+    bankdetails: 'bank-details',
+    banktransactions: 'bank-transactions',
+    paymentmodes: 'payment-modes',
+    invoicetemplates: 'invoice-templates',
+    invoicepayments: 'invoice-payments',
+    deliverychallans: 'delivery-challans',
+    creditnotes: 'credit-notes',
+    debitnotes: 'debit-notes',
+    supplierpayments: 'supplier-payments',
+    staffsalaries: 'staff-salary',
+    expensecategories: 'expense-categories',
+    expensechangelogs: 'expense-change-logs',
+    monthlyexpenses: 'monthly-expenses',
+    pettycashes: 'petty-cashes',
+    pettycashtransactions: 'petty-cash-transactions',
+    customerportalbrandings: 'customer-portal-branding',
+    legalsettings: 'legal-settings',
+    qrsettings: 'qr-settings',
+    generalsettings: 'general-settings',
+    barcodesettings: 'barcode-settings',
+    mrpsettings: 'mrp-settings',
+    numbersequences: 'number-sequences',
+    brokerdetails: 'broker-details',
+    commissionsystemsettings: 'commission-system-settings',
+    customfields: 'custom-fields',
+    customfielddatatypes: 'custom-field-data-types',
+    emailsettings: 'email-settings',
+    emailtemplates: 'email-templates',
+    ewaybills: 'eway-bills',
+    todotasks: 'todo-tasks'
+  };
+  return map[mongooseName.toLowerCase()] || mongooseName.toLowerCase();
+}
+
 /**
- * Add this plugin to any Atlas model that receives synced records from the desktop app.
+ * Add this plugin to any model that receives/generates synced records.
  * Usage: schema.plugin(offlineSyncPlugin)
  */
 function offlineSyncPlugin(schema) {
   schema.add({
     _localId: {
       type: String,
-      default: null,
+      default: () => uuidv4(),
       index: true,
-      sparse: true,  // Only index docs that have this field set
+      sparse: true,
     },
-
-    // ── Phase 3: True Local-First Identity ──
     syncId: {
       type: String,
       default: () => uuidv4(),
       index: true,
       unique: true,
-      sparse: true, // sparse because existing documents won't have it until migration runs
+      sparse: true,
     },
     version: {
       type: Number,
@@ -39,28 +79,133 @@ function offlineSyncPlugin(schema) {
       type: Boolean,
       default: false,
     },
-    // ────────────────────────────────────────
-
-    // Flag: was this record created offline and synced here?
+    _syncStatus: {
+      synced: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+      syncedAt: {
+        type: Date,
+        default: null,
+      },
+      syncError: {
+        type: String,
+        default: null,
+      },
+      attemptCount: {
+        type: Number,
+        default: 0,
+      },
+    },
     _createdOffline: {
       type: Boolean,
       default: false,
     },
-
-    // When was it synced from the offline device?
     _syncedFromOfflineAt: {
       type: Date,
       default: null,
     },
   });
 
-  // Auto-generate syncId for records created directly on Atlas (via Web UI)
+  // Auto-generate syncId and increment version before save
   schema.pre('save', function(next) {
     if (!this.syncId) {
       this.syncId = uuidv4();
     }
+    if (!this.isNew && !this.$ignoreOutbox && !this.$ignoreJournal) {
+      this.version = (this.version || 0) + 1;
+    }
     next();
   });
+
+  // Pre-update version bump
+  schema.pre('findOneAndUpdate', function(next) {
+    if (!this.getOptions().$ignoreOutbox && !this.getOptions().$ignoreJournal) {
+      this.set({ $inc: { version: 1 } });
+    }
+    next();
+  });
+
+  // Post-save hook: Cloud -> SyncJournal, Local -> Outbox
+  schema.post('save', async function(doc) {
+    if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
+      if (doc.$ignoreOutbox) return;
+      try {
+        const Outbox = mongoose.models.Outbox || require('@models/Outbox');
+        const colName = toSyncCollectionName(doc.constructor.collection.name);
+        await Outbox.create({
+          eventId: uuidv4(),
+          syncId: doc.syncId || String(doc._id),
+          operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: doc.toObject ? doc.toObject() : doc,
+          version: doc.version || 1,
+          status: 'PENDING',
+        });
+      } catch (err) {
+        console.warn('[Outbox] Error writing local outbox event:', err.message);
+      }
+    } else {
+      // Cloud Backend: write to SyncJournal for desktop apps to pull
+      if (doc.$ignoreJournal) return;
+      try {
+        const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
+        const colName = toSyncCollectionName(doc.constructor.collection.name);
+        await SyncJournal.create({
+          syncId: doc.syncId || String(doc._id),
+          operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: doc.toObject ? doc.toObject() : doc,
+          deviceId: null, // originated from Cloud/Web
+          version: doc.version || 1,
+        });
+      } catch (err) {
+        console.warn('[SyncJournal] Error writing cloud journal event:', err.message);
+      }
+    }
+  });
+
+  // Post-findOneAndUpdate hook: Cloud -> SyncJournal, Local -> Outbox
+  schema.post('findOneAndUpdate', async function(res) {
+    if (!res) return;
+    if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
+      if (this.getOptions().$ignoreOutbox || res.$ignoreOutbox) return;
+      try {
+        const Outbox = mongoose.models.Outbox || require('@models/Outbox');
+        const colName = toSyncCollectionName(this.model.collection.name);
+        await Outbox.create({
+          eventId: uuidv4(),
+          syncId: res.syncId || String(res._id),
+          operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: res.toObject ? res.toObject() : res,
+          version: res.version || 1,
+          status: 'PENDING',
+        });
+      } catch (err) {
+        console.warn('[Outbox] Error writing local outbox event on update:', err.message);
+      }
+    } else {
+      if (this.getOptions().$ignoreJournal || res.$ignoreJournal) return;
+      try {
+        const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
+        const colName = toSyncCollectionName(this.model.collection.name);
+        await SyncJournal.create({
+          syncId: res.syncId || String(res._id),
+          operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: res.toObject ? res.toObject() : res,
+          deviceId: null,
+          version: res.version || 1,
+        });
+      } catch (err) {
+        console.warn('[SyncJournal] Error writing cloud journal event on update:', err.message);
+      }
+    }
+  });
 }
+
+offlineSyncPlugin.toSyncCollectionName = toSyncCollectionName;
 
 module.exports = offlineSyncPlugin;

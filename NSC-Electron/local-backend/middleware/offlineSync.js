@@ -1,32 +1,71 @@
-// local-backend/middleware/offlineSync.js
-// Mongoose plugin that adds _localId + _syncStatus fields to all offline-capable models
-// _localId: UUID generated at creation — used as dedup key when syncing to Atlas
-// _syncStatus: tracks whether this document has been pushed to Atlas
+// middleware/offlineSync.js
+// Mongoose plugin that tracks sync identity and changes:
+// - On Local Desktop: writes mutations to Outbox collection to push to Cloud
+// - On Cloud Backend: writes mutations to SyncJournal collection for Desktop apps to pull
 
 'use strict';
 
+const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
+function toSyncCollectionName(mongooseName) {
+  const map = {
+    productvariants: 'product-variants',
+    taxgroups: 'tax-groups',
+    taxrates: 'tax-rates',
+    companysettings: 'company-details',
+    bankdetails: 'bank-details',
+    banktransactions: 'bank-transactions',
+    paymentmodes: 'payment-modes',
+    invoicetemplates: 'invoice-templates',
+    invoicepayments: 'invoice-payments',
+    deliverychallans: 'delivery-challans',
+    creditnotes: 'credit-notes',
+    debitnotes: 'debit-notes',
+    supplierpayments: 'supplier-payments',
+    staffsalaries: 'staff-salary',
+    expensecategories: 'expense-categories',
+    expensechangelogs: 'expense-change-logs',
+    monthlyexpenses: 'monthly-expenses',
+    pettycashes: 'petty-cashes',
+    pettycashtransactions: 'petty-cash-transactions',
+    customerportalbrandings: 'customer-portal-branding',
+    legalsettings: 'legal-settings',
+    qrsettings: 'qr-settings',
+    generalsettings: 'general-settings',
+    barcodesettings: 'barcode-settings',
+    mrpsettings: 'mrp-settings',
+    numbersequences: 'number-sequences',
+    brokerdetails: 'broker-details',
+    commissionsystemsettings: 'commission-system-settings',
+    customfields: 'custom-fields',
+    customfielddatatypes: 'custom-field-data-types',
+    emailsettings: 'email-settings',
+    emailtemplates: 'email-templates',
+    ewaybills: 'eway-bills',
+    todotasks: 'todo-tasks'
+  };
+  return map[mongooseName.toLowerCase()] || mongooseName.toLowerCase();
+}
+
 /**
- * Mongoose plugin — add to any model that needs offline sync support
+ * Add this plugin to any model that receives/generates synced records.
  * Usage: schema.plugin(offlineSyncPlugin)
  */
 function offlineSyncPlugin(schema) {
   schema.add({
-    // Unique local identifier — used as idempotency key for Atlas sync
     _localId: {
       type: String,
       default: () => uuidv4(),
       index: true,
+      sparse: true,
     },
-
-    // ── Phase 3: True Local-First Identity ──
     syncId: {
       type: String,
       default: () => uuidv4(),
       index: true,
       unique: true,
-      sparse: true, // Sparse to avoid unique constraint errors before migration
+      sparse: true,
     },
     version: {
       type: Number,
@@ -36,9 +75,10 @@ function offlineSyncPlugin(schema) {
       type: Date,
       default: null,
     },
-    // ────────────────────────────────────────
-
-    // Sync tracking
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
     _syncStatus: {
       synced: {
         type: Boolean,
@@ -58,130 +98,114 @@ function offlineSyncPlugin(schema) {
         default: 0,
       },
     },
-
-    // Flag to identify offline-created records
     _createdOffline: {
       type: Boolean,
-      default: true,
+      default: false,
+    },
+    _syncedFromOfflineAt: {
+      type: Date,
+      default: null,
     },
   });
 
-  // Auto-generate IDs if not set
+  // Auto-generate syncId and increment version before save
   schema.pre('save', function(next) {
-    if (!this._localId) {
-      this._localId = uuidv4();
-    }
     if (!this.syncId) {
       this.syncId = uuidv4();
+    }
+    if (!this.isNew && !this.$ignoreOutbox && !this.$ignoreJournal) {
+      this.version = (this.version || 0) + 1;
     }
     next();
   });
 
-  // Automatically queue an Outbox event when a document is saved locally
-  // (unless $ignoreOutbox is set, which happens during cloud pull apply)
-  schema.post('save', async function(doc, next) {
-    if (doc.$ignoreOutbox) return next();
+  // Pre-update version bump
+  schema.pre('findOneAndUpdate', function(next) {
+    if (!this.getOptions().$ignoreOutbox && !this.getOptions().$ignoreJournal) {
+      this.set({ $inc: { version: 1 } });
+    }
+    next();
+  });
 
-    try {
-      const mongoose = require('mongoose');
-      const Outbox = mongoose.models.Outbox || require('../models/Outbox');
-      
-      const operation = doc.isNew ? 'CREATE' : 'UPDATE'; // Note: isNew is false in post-save, but Mongoose retains some state? Wait, actually in post('save'), doc.isNew is always false. But Mongoose provides doc.$isNew if we check it in pre-save.
-      // A safer way is to check if it has a version === 1. Or we can just use UPDATE for everything on the cloud side, which we already made idempotent (upsert).
-      
-      const outboxEvent = new Outbox({
-        eventId: uuidv4(),
-        syncId: doc.syncId,
-        operation: doc.deletedAt ? 'DELETE' : 'UPDATE', // We treat all saves as UPSERTS (UPDATE) in our idempotent cloud push, unless deleted.
-        collectionName: doc.constructor.collection.name,
-        payload: doc.toObject(),
-        version: doc.version || 1,
-      });
-
-      // If there's an active session, use it
-      const session = doc.$session();
-      if (session) {
-        await outboxEvent.save({ session });
-      } else {
-        await outboxEvent.save();
+  // Post-save hook: Cloud -> SyncJournal, Local -> Outbox
+  schema.post('save', async function(doc) {
+    if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
+      if (doc.$ignoreOutbox) return;
+      try {
+        const Outbox = mongoose.models.Outbox || require('@models/Outbox');
+        const colName = toSyncCollectionName(doc.constructor.collection.name);
+        await Outbox.create({
+          eventId: uuidv4(),
+          syncId: doc.syncId || String(doc._id),
+          operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: doc.toObject ? doc.toObject() : doc,
+          version: doc.version || 1,
+          status: 'PENDING',
+        });
+      } catch (err) {
+        console.warn('[Outbox] Error writing local outbox event:', err.message);
       }
-
-      // Phase 17: Automatically scan for uploaded files and queue them in FileOutbox
-      const FileOutbox = mongoose.models.FileOutbox || require('../models/FileOutbox');
-      const filePaths = extractFilePaths(doc.toObject());
-      for (const filePath of filePaths) {
-        const fileOutboxData = { filePath, status: 'PENDING', attempts: 0, error: null };
-        if (session) {
-          await FileOutbox.findOneAndUpdate({ filePath }, { $set: fileOutboxData }, { upsert: true, session });
-        } else {
-          await FileOutbox.findOneAndUpdate({ filePath }, { $set: fileOutboxData }, { upsert: true });
-        }
+    } else {
+      // Cloud Backend: write to SyncJournal for desktop apps to pull
+      if (doc.$ignoreJournal) return;
+      try {
+        const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
+        const colName = toSyncCollectionName(doc.constructor.collection.name);
+        await SyncJournal.create({
+          syncId: doc.syncId || String(doc._id),
+          operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: doc.toObject ? doc.toObject() : doc,
+          deviceId: null,
+          version: doc.version || 1,
+        });
+      } catch (err) {
+        console.warn('[SyncJournal] Error writing cloud journal event:', err.message);
       }
-
-      next();
-    } catch (err) {
-      console.error('Failed to auto-generate Outbox event:', err);
-      next(err);
     }
   });
 
-  // Automatically queue an Outbox event when a document is updated via findOneAndUpdate
-  schema.post('findOneAndUpdate', async function(doc, next) {
-    if (this.options.$ignoreOutbox || (doc && doc.$ignoreOutbox)) return next();
-    
-    try {
-      if (!doc) return next();
-
-      let latestDoc = doc;
-      if (!this.options.new) {
-        latestDoc = await this.model.findOne(this.getQuery()).session(this.options.session).lean();
-      } else {
-        if (typeof latestDoc.toObject === 'function') {
-          latestDoc = latestDoc.toObject();
-        }
+  // Post-findOneAndUpdate hook: Cloud -> SyncJournal, Local -> Outbox
+  schema.post('findOneAndUpdate', async function(res) {
+    if (!res) return;
+    if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
+      if (this.getOptions().$ignoreOutbox || res.$ignoreOutbox) return;
+      try {
+        const Outbox = mongoose.models.Outbox || require('@models/Outbox');
+        const colName = toSyncCollectionName(this.model.collection.name);
+        await Outbox.create({
+          eventId: uuidv4(),
+          syncId: res.syncId || String(res._id),
+          operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: res.toObject ? res.toObject() : res,
+          version: res.version || 1,
+          status: 'PENDING',
+        });
+      } catch (err) {
+        console.warn('[Outbox] Error writing local outbox event on update:', err.message);
       }
-      
-      if (!latestDoc) return next();
-
-      const mongoose = require('mongoose');
-      const Outbox = mongoose.models.Outbox || require('../models/Outbox');
-      
-      const outboxEvent = new Outbox({
-        eventId: uuidv4(),
-        syncId: latestDoc.syncId,
-        operation: latestDoc.deletedAt ? 'DELETE' : 'UPDATE',
-        collectionName: this.model.collection.name,
-        payload: latestDoc,
-        version: latestDoc.version || 1,
-      });
-
-      if (this.options.session) {
-        await outboxEvent.save({ session: this.options.session });
-      } else {
-        await outboxEvent.save();
+    } else {
+      if (this.getOptions().$ignoreJournal || res.$ignoreJournal) return;
+      try {
+        const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
+        const colName = toSyncCollectionName(this.model.collection.name);
+        await SyncJournal.create({
+          syncId: res.syncId || String(res._id),
+          operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
+          collectionName: colName,
+          payload: res.toObject ? res.toObject() : res,
+          deviceId: null,
+          version: res.version || 1,
+        });
+      } catch (err) {
+        console.warn('[SyncJournal] Error writing cloud journal event on update:', err.message);
       }
-
-      // Phase 17: Automatically scan for uploaded files and queue them in FileOutbox
-      const FileOutbox = mongoose.models.FileOutbox || require('../models/FileOutbox');
-      const filePaths = extractFilePaths(latestDoc);
-      for (const filePath of filePaths) {
-        // Upsert to FileOutbox (so if we update a document multiple times before sync, it just stays PENDING)
-        const fileOutboxData = { filePath, status: 'PENDING', attempts: 0, error: null };
-        if (this.options.session) {
-          await FileOutbox.findOneAndUpdate({ filePath }, { $set: fileOutboxData }, { upsert: true, session: this.options.session });
-        } else {
-          await FileOutbox.findOneAndUpdate({ filePath }, { $set: fileOutboxData }, { upsert: true });
-        }
-      }
-
-      next();
-    } catch (err) {
-      console.error('Failed to auto-generate Outbox event from findOneAndUpdate:', err);
-      next(err);
     }
   });
 }
 
-const { extractFilePaths } = require('../utils/fileScanner');
+offlineSyncPlugin.toSyncCollectionName = toSyncCollectionName;
 
 module.exports = offlineSyncPlugin;

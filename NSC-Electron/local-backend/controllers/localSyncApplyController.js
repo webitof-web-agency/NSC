@@ -60,48 +60,63 @@ function getModel(name) {
 
 exports.applyEvent = async (req, res) => {
   try {
-    const { event } = req.body;
-    if (!event) {
-      return res.status(400).json({ success: false, message: 'Event is required' });
+    const rawEvents = req.body.events || (req.body.event ? [req.body.event] : null);
+    if (!rawEvents || !Array.isArray(rawEvents) || rawEvents.length === 0) {
+      return res.status(400).json({ success: false, message: 'Event or events array is required' });
     }
 
-    const { collectionName, operation, syncId, version, payload } = event;
-    const Model = getModel(collectionName);
+    let appliedCount = 0;
+    for (const event of rawEvents) {
+      const { collectionName, operation, syncId, version, payload } = event;
+      if (!collectionName || !syncId) continue;
 
-    if (!Model) {
-      console.warn(`[Sync Apply] Unknown collection name: ${collectionName}`);
-      return res.status(200).json({ success: true, skipped: true, reason: 'unknown_collection' });
-    }
-
-    if (operation === 'DELETE') {
-      await Model.findOneAndUpdate(
-        { syncId },
-        { $set: { isDeleted: true, deletedAt: new Date(), version } },
-        { $ignoreOutbox: true }
-      );
-    } else {
-      const updateData = { ...(payload || {}), syncId, version };
-      const docId = updateData._id ? new mongoose.Types.ObjectId(updateData._id) : undefined;
-      delete updateData._id;
-      delete updateData.__v;
-
-      const updateOp = {
-        $set: updateData
-      };
-      if (docId) {
-        updateOp.$setOnInsert = { _id: docId };
+      const Model = getModel(collectionName);
+      if (!Model) {
+        console.warn(`[Sync Apply] Unknown collection name: ${collectionName}`);
+        continue;
       }
 
-      await Model.findOneAndUpdate(
-        { syncId },
-        updateOp,
-        { upsert: true, new: true, runValidators: false, $ignoreOutbox: true }
-      );
+      if (operation === 'DELETE') {
+        await Model.findOneAndUpdate(
+          { syncId },
+          { $set: { isDeleted: true, deletedAt: new Date(), version } },
+          { $ignoreOutbox: true }
+        );
+      } else {
+        const updateData = { ...(payload || {}), syncId, version };
+        let docId;
+        if (updateData._id && typeof updateData._id === 'string' && /^[0-9a-fA-F]{24}$/.test(updateData._id)) {
+          docId = new mongoose.Types.ObjectId(updateData._id);
+        } else if (updateData._id) {
+          docId = updateData._id;
+        }
+
+        if (updateData.email === '' || updateData.email === null) {
+          delete updateData.email;
+        }
+
+        delete updateData._id;
+        delete updateData.__v;
+
+        const updateOp = {
+          $set: updateData
+        };
+        if (docId) {
+          updateOp.$setOnInsert = { _id: docId };
+        }
+
+        await Model.findOneAndUpdate(
+          { syncId },
+          updateOp,
+          { upsert: true, new: true, runValidators: false, $ignoreOutbox: true }
+        );
+      }
+      appliedCount++;
     }
 
-    res.status(200).json({ success: true, message: 'Event applied successfully' });
+    res.status(200).json({ success: true, message: `Applied ${appliedCount} sync events successfully`, appliedCount });
   } catch (err) {
-    console.error('Error applying sync event locally:', err);
-    res.status(500).json({ success: false, message: 'Failed to apply sync event', error: err.message });
+    console.error('Error applying sync events locally:', err);
+    res.status(500).json({ success: false, message: 'Failed to apply sync events', error: err.message });
   }
 };
