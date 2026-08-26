@@ -14,6 +14,8 @@ store.dispatch(initializeCustomerAuth());
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
+
 // Detect if we are inside Electron
 const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
 const RouterConfig = isElectron ? HashRouter : BrowserRouter;
@@ -24,7 +26,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <RouterConfig>
         <LocalizationProvider dateAdapter={AdapterDateFns}>
           <HelmetProvider>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </HelmetProvider>
         </LocalizationProvider>
       </RouterConfig>

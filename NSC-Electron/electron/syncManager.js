@@ -104,8 +104,16 @@ class SyncManager {
 
   async startSync(passedToken = null) {
     if (this._syncLock) {
-      this._log('warn', 'Sync already in progress, skipping request.');
-      return { success: false, message: 'Sync already in progress' };
+      // If a sync is already running, wait up to 3s for it to finish rather than immediately rejecting
+      let waitTime = 0;
+      while (this._syncLock && waitTime < 3000) {
+        await new Promise(r => setTimeout(r, 300));
+        waitTime += 300;
+      }
+      if (this._syncLock) {
+        this._log('info', 'Sync is already actively progressing.');
+        return { success: true, message: 'Sync in progress' };
+      }
     }
 
     this._syncLock = true;
@@ -500,8 +508,8 @@ class SyncManager {
       }
     }
 
-    // Fallback: Collection-by-Collection sync (prevents 503 / socket hang up on heavy databases)
-    this._log('info', 'Switching to resilient Collection-by-Collection sync mode...');
+    // Fallback: Concurrent Collection-by-Collection sync (fast & resilient)
+    this._log('info', 'Executing fast concurrent Collection-by-Collection sync...');
     const collectionsToSync = [
       'users', 'customers', 'suppliers', 'products', 'product-variants',
       'categories', 'brands', 'units', 'tax-rates', 'tax-groups',
@@ -520,39 +528,45 @@ class SyncManager {
 
     let lastKnownCursor = null;
     let totalSyncedCollections = 0;
+    const concurrency = 6;
 
-    for (let idx = 0; idx < collectionsToSync.length; idx++) {
-      const colName = collectionsToSync[idx];
-      this._emit({
-        state: 'syncing',
-        message: `Syncing ${colName} (${idx + 1}/${collectionsToSync.length})...`,
-      });
+    for (let i = 0; i < collectionsToSync.length; i += concurrency) {
+      const chunk = collectionsToSync.slice(i, i + concurrency);
+      await Promise.all(
+        chunk.map(async (colName, relIdx) => {
+          const overallIdx = i + relIdx + 1;
+          this._emit({
+            state: 'syncing',
+            message: `Syncing ${colName} (${overallIdx}/${collectionsToSync.length})...`,
+          });
 
-      try {
-        const colRes = await axios.get(
-          `${this.remoteBackendUrl}/api/sync/bootstrap?collection=${colName}`,
-          {
-            headers: { Authorization: `Bearer ${authToken}` },
-            timeout: 30000
+          try {
+            const colRes = await axios.get(
+              `${this.remoteBackendUrl}/api/sync/bootstrap?collection=${colName}`,
+              {
+                headers: { Authorization: `Bearer ${authToken}` },
+                timeout: 30000
+              }
+            );
+
+            const dataPayload = colRes.data?.data || colRes.data;
+            const colData = dataPayload?.data || dataPayload?.snapshot?.[colName] || [];
+            if (dataPayload?.cursor && !lastKnownCursor) lastKnownCursor = dataPayload.cursor;
+
+            if (Array.isArray(colData) && colData.length > 0) {
+              await axios.post(
+                `${this.localBackendUrl}/api/local/sync-bootstrap`,
+                { snapshot: { [colName]: colData } },
+                { timeout: 30000 }
+              );
+              this._log('info', `✓ Synced ${colName}: ${colData.length} records`);
+              totalSyncedCollections++;
+            }
+          } catch (colErr) {
+            this._log('warn', `Could not sync collection ${colName}: ${colErr.message}`);
           }
-        );
-
-        const dataPayload = colRes.data?.data || colRes.data;
-        const colData = dataPayload?.data || dataPayload?.snapshot?.[colName] || [];
-        if (dataPayload?.cursor) lastKnownCursor = dataPayload.cursor;
-
-        if (Array.isArray(colData) && colData.length > 0) {
-          await axios.post(
-            `${this.localBackendUrl}/api/local/sync-bootstrap`,
-            { snapshot: { [colName]: colData } },
-            { timeout: 30000 }
-          );
-          this._log('info', `✓ Synced ${colName}: ${colData.length} records`);
-          totalSyncedCollections++;
-        }
-      } catch (colErr) {
-        this._log('warn', `Could not sync collection ${colName}: ${colErr.message}`);
-      }
+        })
+      );
     }
 
     if (lastKnownCursor) {
@@ -579,48 +593,51 @@ class SyncManager {
     if (!this.remoteBackendUrl || !authToken) return;
 
     try {
-      const localRes = await axios.get(`${this.localBackendUrl}/api/local/file-outbox/pending`);
+      const localRes = await axios.get(`${this.localBackendUrl}/api/local/file-outbox/pending`, { timeout: 5000 });
       const files = localRes.data?.files || [];
       
       if (files.length === 0) return;
       this._log('info', `File Sync: Found ${files.length} pending files to upload.`);
 
       const publicDir = this._getPublicDir();
-      
-      for (const fileRecord of files) {
-        try {
-          const absPath = path.join(publicDir, fileRecord.filePath);
-          if (!fs.existsSync(absPath)) {
-             await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'FAILED' });
-             continue;
+      const chunks = this._chunk(files, 4);
+
+      for (const chunk of chunks) {
+        await Promise.all(chunk.map(async (fileRecord) => {
+          try {
+            const absPath = path.join(publicDir, fileRecord.filePath);
+            if (!fs.existsSync(absPath)) {
+              await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'FAILED' });
+              return;
+            }
+
+            const { Blob } = require('node:buffer');
+            const fileData = fs.readFileSync(absPath);
+            const blob = new Blob([fileData]);
+            
+            const fd = new FormData();
+            fd.append('file', blob, path.basename(absPath));
+            fd.append('filePath', fileRecord.filePath);
+
+            const response = await fetch(`${this.remoteBackendUrl}/api/sync/file-push`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${authToken}`
+              },
+              body: fd,
+            });
+
+            if (response.ok) {
+              await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'SYNCED' });
+            } else {
+              const errText = await response.text();
+              throw new Error(`Cloud rejected file: ${errText}`);
+            }
+          } catch (err) {
+            this._log('warn', `Failed to push file ${fileRecord.filePath}: ${err.message}`);
+            await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'FAILED', error: err.message });
           }
-
-          const { Blob } = require('node:buffer');
-          const fileData = fs.readFileSync(absPath);
-          const blob = new Blob([fileData]);
-          
-          const fd = new FormData();
-          fd.append('file', blob, path.basename(absPath));
-          fd.append('filePath', fileRecord.filePath);
-
-          const response = await fetch(`${this.remoteBackendUrl}/api/sync/file-push`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${authToken}`
-            },
-            body: fd,
-          });
-
-          if (response.ok) {
-             await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'SYNCED' });
-          } else {
-             const errText = await response.text();
-             throw new Error(`Cloud rejected file: ${errText}`);
-          }
-        } catch (err) {
-          this._log('warn', `Failed to push file ${fileRecord.filePath}: ${err.message}`);
-          await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'FAILED', error: err.message });
-        }
+        }));
       }
     } catch (err) {
       this._log('warn', `File push loop error: ${err.message}`);
@@ -635,47 +652,49 @@ class SyncManager {
     if (!this.remoteBackendUrl || !authToken) return;
 
     try {
-      const localRes = await axios.get(`${this.localBackendUrl}/api/local/file-pull/pending`);
+      const localRes = await axios.get(`${this.localBackendUrl}/api/local/file-pull/pending`, { timeout: 5000 });
       const files = localRes.data?.files || [];
       
       if (files.length === 0) return;
       this._log('info', `File Sync: Found ${files.length} pending files to download.`);
 
       const publicDir = this._getPublicDir();
-      
-      for (const fileRecord of files) {
-        try {
-          const response = await fetch(`${this.remoteBackendUrl}/api/sync/file-pull?path=${encodeURIComponent(fileRecord.filePath)}`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-          });
+      const chunks = this._chunk(files, 4);
 
-          if (!response.ok) {
-            if (response.status === 404) {
-              await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'FAILED', error: '404 Not Found' });
-              continue;
+      for (const chunk of chunks) {
+        await Promise.all(chunk.map(async (fileRecord) => {
+          try {
+            const response = await fetch(`${this.remoteBackendUrl}/api/sync/file-pull?path=${encodeURIComponent(fileRecord.filePath)}`, {
+              headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+
+            if (!response.ok) {
+              if (response.status === 404) {
+                await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'FAILED', error: '404 Not Found' });
+                return;
+              }
+              throw new Error(`Cloud returned ${response.status}`);
             }
-            throw new Error(`Cloud returned ${response.status}`);
+
+            const absPath = path.join(publicDir, fileRecord.filePath);
+            fs.mkdirSync(path.dirname(absPath), { recursive: true });
+
+            const dest = fs.createWriteStream(absPath);
+            const { Readable } = require('node:stream');
+            const bodyStream = Readable.fromWeb(response.body);
+            
+            await new Promise((resolve, reject) => {
+              bodyStream.pipe(dest);
+              bodyStream.on('error', reject);
+              dest.on('finish', resolve);
+            });
+
+            await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'SYNCED' });
+          } catch (err) {
+            this._log('warn', `Failed to pull file ${fileRecord.filePath}: ${err.message}`);
+            await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'FAILED', error: err.message });
           }
-
-          const absPath = path.join(publicDir, fileRecord.filePath);
-          fs.mkdirSync(path.dirname(absPath), { recursive: true });
-
-          const dest = fs.createWriteStream(absPath);
-          const { Readable } = require('node:stream');
-          const bodyStream = Readable.fromWeb(response.body);
-          
-          await new Promise((resolve, reject) => {
-            bodyStream.pipe(dest);
-            bodyStream.on('error', reject);
-            dest.on('finish', resolve);
-          });
-
-          await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'SYNCED' });
-
-        } catch (err) {
-          this._log('warn', `Failed to pull file ${fileRecord.filePath}: ${err.message}`);
-          await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'FAILED', error: err.message });
-        }
+        }));
       }
     } catch (err) {
       this._log('warn', `File pull loop error: ${err.message}`);
