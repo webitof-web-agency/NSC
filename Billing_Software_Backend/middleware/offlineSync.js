@@ -8,6 +8,17 @@
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
+const IGNORED_OUTBOX_COLLECTIONS = new Set([
+  'notifications',
+  'reminders',
+  'filepullrequests',
+  'fileoutboxes',
+  'localconfigs',
+  'outboxes',
+  'syncjournals',
+  'sessions'
+]);
+
 function toSyncCollectionName(mongooseName) {
   const map = {
     productvariants: 'product-variants',
@@ -129,11 +140,17 @@ function offlineSyncPlugin(schema) {
 
   // Post-save hook: Cloud -> SyncJournal, Local -> Outbox
   schema.post('save', async function(doc) {
+    const rawColName = (doc.constructor?.collection?.name || '').toLowerCase();
+    const colName = toSyncCollectionName(rawColName);
+
+    if (IGNORED_OUTBOX_COLLECTIONS.has(rawColName) || IGNORED_OUTBOX_COLLECTIONS.has(colName)) {
+      return;
+    }
+
     if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
       if (doc.$ignoreOutbox) return;
       try {
         const Outbox = mongoose.models.Outbox || require('@models/Outbox');
-        const colName = toSyncCollectionName(doc.constructor.collection.name);
         await Outbox.create({
           eventId: uuidv4(),
           syncId: doc.syncId || String(doc._id),
@@ -151,13 +168,12 @@ function offlineSyncPlugin(schema) {
       if (doc.$ignoreJournal) return;
       try {
         const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
-        const colName = toSyncCollectionName(doc.constructor.collection.name);
         await SyncJournal.create({
           syncId: doc.syncId || String(doc._id),
           operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
           collectionName: colName,
           payload: doc.toObject ? doc.toObject() : doc,
-          deviceId: null, // originated from Cloud/Web
+          deviceId: null,
           version: doc.version || 1,
         });
       } catch (err) {
@@ -169,11 +185,17 @@ function offlineSyncPlugin(schema) {
   // Post-findOneAndUpdate hook: Cloud -> SyncJournal, Local -> Outbox
   schema.post('findOneAndUpdate', async function(res) {
     if (!res) return;
+    const rawColName = (this.model?.collection?.name || '').toLowerCase();
+    const colName = toSyncCollectionName(rawColName);
+
+    if (IGNORED_OUTBOX_COLLECTIONS.has(rawColName) || IGNORED_OUTBOX_COLLECTIONS.has(colName)) {
+      return;
+    }
+
     if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
       if (this.getOptions().$ignoreOutbox || res.$ignoreOutbox) return;
       try {
         const Outbox = mongoose.models.Outbox || require('@models/Outbox');
-        const colName = toSyncCollectionName(this.model.collection.name);
         await Outbox.create({
           eventId: uuidv4(),
           syncId: res.syncId || String(res._id),
@@ -190,7 +212,6 @@ function offlineSyncPlugin(schema) {
       if (this.getOptions().$ignoreJournal || res.$ignoreJournal) return;
       try {
         const SyncJournal = mongoose.models.SyncJournal || require('@models/SyncJournal');
-        const colName = toSyncCollectionName(this.model.collection.name);
         await SyncJournal.create({
           syncId: res.syncId || String(res._id),
           operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
