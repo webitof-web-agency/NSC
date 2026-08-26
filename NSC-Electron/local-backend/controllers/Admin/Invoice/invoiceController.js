@@ -1039,7 +1039,7 @@ const updateInvoice = async (req, res) => {
       referenceNo,
       items: mergedItems,
       status,
-      ...(existingInvoice.status === "DRAFT" ? { payment_method } : {}),
+      payment_method: payment_method !== undefined ? payment_method : existingInvoice.payment_method,
       taxableAmount: calculatedTaxableAmount,
       TotalAmount: calculatedTotalAmount,
       vat: calculatedVat,
@@ -1073,11 +1073,9 @@ const updateInvoice = async (req, res) => {
       userId,
       taxType: taxType || existingInvoice.taxType || "GST",     // ✅ Save tax type
       gstType: (taxType || existingInvoice.taxType) === "Non-GST" ? null : (gstType || existingInvoice.gstType || "Exclusive"), // ✅ Save GST mode only for GST, null for Non-GST
-      ...(existingInvoice.status === "DRAFT" ? {
-        cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
-        cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
-        upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
-      } : {}),
+      cashAmount: payment_method === "MIXED" ? (cashAmount || null) : null,  // ✅ Cash portion for MIXED
+      cardAmount: payment_method === "MIXED" ? (req.body.cardAmount || null) : null,
+      upiAmount: payment_method === "MIXED" ? (upiAmount || null) : null,    // ✅ UPI portion for MIXED
     };
 
     const parsedExchangeOriginalItems = (() => {

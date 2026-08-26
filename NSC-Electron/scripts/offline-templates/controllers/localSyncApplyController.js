@@ -167,7 +167,7 @@ exports.applyEvent = async (req, res) => {
     let appliedCount = 0;
     for (const event of rawEvents) {
       const { collectionName, operation, syncId, version, payload } = event;
-      if (!collectionName || !syncId) continue;
+      if (!collectionName || (!syncId && !payload?._id)) continue;
 
       const Model = getModel(collectionName);
       if (!Model) {
@@ -175,12 +175,21 @@ exports.applyEvent = async (req, res) => {
         continue;
       }
 
-      if (operation === 'DELETE') {
-        await Model.findOneAndUpdate(
-          { syncId },
-          { $set: { isDeleted: true, deletedAt: new Date(), version } },
-          { $ignoreOutbox: true }
-        );
+      // Hard delete from local DB on DELETE operation or isDeleted: true
+      if (operation === 'DELETE' || (payload && (payload.isDeleted === true || payload.deletedAt))) {
+        const deleteConditions = [];
+        if (syncId) deleteConditions.push({ syncId });
+        if (payload?._id) {
+          deleteConditions.push({ _id: payload._id });
+          if (typeof payload._id === 'string' && /^[0-9a-fA-F]{24}$/.test(payload._id)) {
+            deleteConditions.push({ _id: new mongoose.Types.ObjectId(payload._id) });
+          }
+        }
+
+        if (deleteConditions.length > 0) {
+          await Model.deleteMany({ $or: deleteConditions });
+          console.log(`[Sync Apply] ${collectionName}: Deleted record (${syncId || payload?._id}) locally`);
+        }
       } else {
         const normalized = normalizeDoc(payload || {}, Model);
         if (!normalized) continue;

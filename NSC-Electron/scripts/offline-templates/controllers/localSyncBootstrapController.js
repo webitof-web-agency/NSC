@@ -190,11 +190,6 @@ exports.applyBootstrap = async (req, res) => {
 
   try {
     for (const [collectionName, records] of Object.entries(snapshot)) {
-      if (!Array.isArray(records) || records.length === 0) {
-        results[collectionName] = 0;
-        continue;
-      }
-
       const modelName = COLLECTION_MAP[collectionName];
       if (!modelName) {
         console.warn(`[Sync Bootstrap] Skipping unmapped collection: ${collectionName}`);
@@ -223,21 +218,31 @@ exports.applyBootstrap = async (req, res) => {
           await Model.collection.deleteMany({ _id: { $type: 'string' } });
         } catch (e) {}
 
+        const activeDocIds = [];
+        const activeSyncIds = [];
         const bulkOps = [];
-        for (const record of records) {
-          const normalized = normalizeDoc(record, Model);
-          if (!normalized) continue;
 
-          bulkOps.push({
-            replaceOne: {
-              filter: { _id: normalized.docId },
-              replacement: {
-                _id: normalized.docId,
-                ...normalized.updateData
-              },
-              upsert: true
+        if (Array.isArray(records)) {
+          for (const record of records) {
+            const normalized = normalizeDoc(record, Model);
+            if (!normalized) continue;
+
+            activeDocIds.push(normalized.docId);
+            if (normalized.updateData.syncId) {
+              activeSyncIds.push(normalized.updateData.syncId);
             }
-          });
+
+            bulkOps.push({
+              replaceOne: {
+                filter: { _id: normalized.docId },
+                replacement: {
+                  _id: normalized.docId,
+                  ...normalized.updateData
+                },
+                upsert: true
+              }
+            });
+          }
         }
 
         if (bulkOps.length > 0) {
@@ -246,6 +251,27 @@ exports.applyBootstrap = async (req, res) => {
           results[collectionName] = count;
           if (count > 0) anyDataSaved = true;
           console.log(`[Sync Bootstrap] ${collectionName}: ${records.length} records processed (upserted: ${writeRes.upsertedCount}, modified: ${writeRes.modifiedCount})`);
+        } else {
+          results[collectionName] = 0;
+        }
+
+        // ── DELETE / REMOVE SYNC: Purge locally deleted records ──
+        // If a record was removed/deleted online, delete it from local DB
+        // (excluding un-synced offline creations still pending in Outbox)
+        try {
+          const deleteFilter = {
+            _id: { $nin: activeDocIds },
+            _createdOffline: { $ne: true }
+          };
+          if (activeSyncIds.length > 0) {
+            deleteFilter.syncId = { $nin: activeSyncIds };
+          }
+          const deleteRes = await Model.deleteMany(deleteFilter);
+          if (deleteRes.deletedCount > 0) {
+            console.log(`[Sync Bootstrap] ${collectionName}: Removed ${deleteRes.deletedCount} records deleted from online DB`);
+          }
+        } catch (delErr) {
+          console.warn(`[Sync Bootstrap Deletion] ${collectionName} warning:`, delErr.message);
         }
 
         // File scanning (non-blocking)
@@ -253,8 +279,10 @@ exports.applyBootstrap = async (req, res) => {
           const { extractFilePaths } = require('../utils/fileScanner');
           const FilePullRequest = mongoose.models.FilePullRequest || require('../models/FilePullRequest');
           const filePaths = new Set();
-          for (const record of records) {
-            extractFilePaths(record, filePaths);
+          if (Array.isArray(records)) {
+            for (const record of records) {
+              extractFilePaths(record, filePaths);
+            }
           }
           if (filePaths.size > 0) {
             const fileOps = Array.from(filePaths).map(filePath => ({
