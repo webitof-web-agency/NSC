@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
 
 const invoicePaymentSchema = new mongoose.Schema({
   invoiceId: {
@@ -64,5 +65,7 @@ const invoicePaymentSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+invoicePaymentSchema.plugin(offlineSyncPlugin);
 
 module.exports = mongoose.model('InvoicePayment', invoicePaymentSchema);

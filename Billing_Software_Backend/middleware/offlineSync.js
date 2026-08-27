@@ -8,18 +8,23 @@
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 
-const IGNORED_OUTBOX_COLLECTIONS = new Set([
-  'notifications',
-  'reminders',
-  'filepullrequests',
-  'fileoutboxes',
-  'localconfigs',
-  'outboxes',
-  'syncjournals',
-  'sessions'
+const IGNORED_COLLECTIONS = new Set([
+  'outbox', 'outboxes',
+  'syncjournal', 'syncjournals',
+  'fileoutbox', 'fileoutboxes',
+  'filepullrequest', 'filepullrequests',
+  'localconfig', 'localconfigs',
+  'notification', 'notifications',
+  'reminder', 'reminders',
+  'session', 'sessions',
+  'loginactivity', 'loginactivities'
 ]);
 
 function toSyncCollectionName(mongooseName) {
+  if (!mongooseName || typeof mongooseName !== 'string') return '';
+  const lower = mongooseName.toLowerCase();
+  if (IGNORED_COLLECTIONS.has(lower)) return '';
+
   const map = {
     productvariants: 'product-variants',
     taxgroups: 'tax-groups',
@@ -56,7 +61,7 @@ function toSyncCollectionName(mongooseName) {
     ewaybills: 'eway-bills',
     todotasks: 'todo-tasks'
   };
-  return map[mongooseName.toLowerCase()] || mongooseName.toLowerCase();
+  return map[lower] || lower;
 }
 
 /**
@@ -64,6 +69,12 @@ function toSyncCollectionName(mongooseName) {
  * Usage: schema.plugin(offlineSyncPlugin)
  */
 function offlineSyncPlugin(schema) {
+  // Never attach plugin to internal sync/auth models
+  const collectionName = schema.options?.collection || '';
+  if (collectionName && IGNORED_COLLECTIONS.has(collectionName.toLowerCase())) {
+    return;
+  }
+
   schema.add({
     _localId: {
       type: String,
@@ -140,26 +151,38 @@ function offlineSyncPlugin(schema) {
 
   // Post-save hook: Cloud -> SyncJournal, Local -> Outbox
   schema.post('save', async function(doc) {
-    const rawColName = (doc.constructor?.collection?.name || '').toLowerCase();
-    const colName = toSyncCollectionName(rawColName);
+    const rawColName = (doc.constructor?.collection?.name || doc.collection?.name || '').toLowerCase();
+    if (!rawColName || IGNORED_COLLECTIONS.has(rawColName)) return;
 
-    if (IGNORED_OUTBOX_COLLECTIONS.has(rawColName) || IGNORED_OUTBOX_COLLECTIONS.has(colName)) {
-      return;
-    }
+    const colName = toSyncCollectionName(rawColName);
+    if (!colName || IGNORED_COLLECTIONS.has(colName)) return;
 
     if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
       if (doc.$ignoreOutbox) return;
       try {
         const Outbox = mongoose.models.Outbox || require('@models/Outbox');
-        await Outbox.create({
-          eventId: uuidv4(),
-          syncId: doc.syncId || String(doc._id),
-          operation: doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE',
-          collectionName: colName,
-          payload: doc.toObject ? doc.toObject() : doc,
-          version: doc.version || 1,
-          status: 'PENDING',
-        });
+        const syncId = doc.syncId || String(doc._id);
+        const op = doc.isDeleted || doc.deletedAt ? 'DELETE' : 'UPDATE';
+
+        await Outbox.findOneAndUpdate(
+          { syncId, status: 'PENDING' },
+          {
+            $set: {
+              eventId: uuidv4(),
+              syncId,
+              operation: op,
+              collectionName: colName,
+              payload: doc.toObject ? doc.toObject() : doc,
+              version: doc.version || 1,
+              status: 'PENDING',
+              updatedAt: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
       } catch (err) {
         console.warn('[Outbox] Error writing local outbox event:', err.message);
       }
@@ -185,26 +208,38 @@ function offlineSyncPlugin(schema) {
   // Post-findOneAndUpdate hook: Cloud -> SyncJournal, Local -> Outbox
   schema.post('findOneAndUpdate', async function(res) {
     if (!res) return;
-    const rawColName = (this.model?.collection?.name || '').toLowerCase();
-    const colName = toSyncCollectionName(rawColName);
+    const rawColName = (this.model?.collection?.name || this.collection?.name || '').toLowerCase();
+    if (!rawColName || IGNORED_COLLECTIONS.has(rawColName)) return;
 
-    if (IGNORED_OUTBOX_COLLECTIONS.has(rawColName) || IGNORED_OUTBOX_COLLECTIONS.has(colName)) {
-      return;
-    }
+    const colName = toSyncCollectionName(rawColName);
+    if (!colName || IGNORED_COLLECTIONS.has(colName)) return;
 
     if (process.env.OFFLINE_MODE === 'true' || process.env.ELECTRON_APP === 'true') {
       if (this.getOptions().$ignoreOutbox || res.$ignoreOutbox) return;
       try {
         const Outbox = mongoose.models.Outbox || require('@models/Outbox');
-        await Outbox.create({
-          eventId: uuidv4(),
-          syncId: res.syncId || String(res._id),
-          operation: res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE',
-          collectionName: colName,
-          payload: res.toObject ? res.toObject() : res,
-          version: res.version || 1,
-          status: 'PENDING',
-        });
+        const syncId = res.syncId || String(res._id);
+        const op = res.isDeleted || res.deletedAt ? 'DELETE' : 'UPDATE';
+
+        await Outbox.findOneAndUpdate(
+          { syncId, status: 'PENDING' },
+          {
+            $set: {
+              eventId: uuidv4(),
+              syncId,
+              operation: op,
+              collectionName: colName,
+              payload: res.toObject ? res.toObject() : res,
+              version: res.version || 1,
+              status: 'PENDING',
+              updatedAt: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
+          },
+          { upsert: true }
+        );
       } catch (err) {
         console.warn('[Outbox] Error writing local outbox event on update:', err.message);
       }

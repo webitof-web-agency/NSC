@@ -1,4 +1,8 @@
 const mongoose = require('mongoose');
+const offlineSyncPlugin = require('../middleware/offlineSync');
+
+// Register offlineSyncPlugin globally for ALL models across the application
+mongoose.plugin(offlineSyncPlugin);
 
 const connectDB = async () => {
   const mongoUri = process.env.MONGO_URI;

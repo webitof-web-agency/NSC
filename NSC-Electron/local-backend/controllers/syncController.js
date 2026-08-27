@@ -207,39 +207,75 @@ exports.pushSyncEvents = async (req, res) => {
     const processedEvents = [];
     const conflicts = [];
 
-    // Helper map to dynamically find models
+    // Comprehensive mapping of all collection keys to Mongoose Models
     const getModel = (name) => {
       const map = {
         'users': 'User',
         'customers': 'Customer',
         'suppliers': 'Supplier',
-        'invoices': 'Invoice',
-        'quotations': 'Quotation',
-        'credit-notes': 'CreditNote',
-        'debit-notes': 'DebitNote',
-        'delivery-challans': 'DeliveryChallan',
-        'purchases': 'Purchase',
-        'supplier-payments': 'SupplierPayment',
-        'attendance': 'Attendance',
-        'staff-salary': 'StaffSalary',
         'products': 'Product',
         'product-variants': 'ProductVariant',
         'categories': 'Category',
         'brands': 'Brand',
         'units': 'Unit',
-        'tax-groups': 'TaxGroup',
         'tax-rates': 'TaxRate',
+        'tax-groups': 'TaxGroup',
+        'company-details': 'CompanySettings',
+        'bank-details': 'BankDetail',
+        'bank-transactions': 'BankTransaction',
+        'signatures': 'Signature',
+        'payment-modes': 'PaymentMode',
+        'invoices': 'Invoice',
+        'invoice-payments': 'InvoicePayment',
+        'invoice-templates': 'InvoiceTemplate',
+        'delivery-challans': 'DeliveryChallan',
+        'quotations': 'Quotation',
+        'purchases': 'Purchase',
+        'credit-notes': 'CreditNote',
+        'debit-notes': 'DebitNote',
+        'supplier-payments': 'SupplierPayment',
         'expenses': 'Expense',
         'expense-categories': 'ExpenseCategory',
+        'expense-change-logs': 'ExpenseChangeLog',
         'monthly-expenses': 'MonthlyExpense',
         'petty-cashes': 'PettyCash',
         'petty-cash-transactions': 'PettyCashTransaction',
         'inventories': 'Inventory',
+        'attendance': 'Attendance',
+        'staff-salary': 'StaffSalary',
+        'customer-portal-branding': 'CustomerPortalBranding',
+        'customer-portal-brandings': 'CustomerPortalBranding',
+        'legal-settings': 'LegalSettings',
+        'qr-settings': 'QrSettings',
+        'general-settings': 'GeneralSetting',
+        'localizations': 'Localization',
+        'barcode-settings': 'BarcodeSettings',
+        'mrp-settings': 'MrpSettings',
+        'number-sequences': 'NumberSequence',
         'brokers': 'Broker',
+        'broker-details': 'BrokerDetail',
         'commissions': 'Commission',
+        'commission-system-settings': 'CommissionSystemSetting',
+        'colors': 'Color',
+        'sizes': 'Size',
+        'cities': 'City',
+        'states': 'State',
+        'countries': 'Country',
+        'currencies': 'Currency',
+        'date-formats': 'DateFormat',
+        'time-formats': 'TimeFormat',
+        'timezones': 'Timezone',
+        'custom-fields': 'CustomField',
+        'custom-field-data-types': 'CustomFieldDataType',
+        'roles': 'Role',
+        'permissions': 'Permission',
+        'modules': 'Module',
+        'email-settings': 'EmailSettings',
+        'email-templates': 'EmailTemplate',
+        'eway-bills': 'EWayBill',
         'reminders': 'Reminder',
         'notifications': 'Notification',
-        'todo-tasks': 'TodoTask',
+        'todo-tasks': 'TodoTask'
       };
       return map[name] ? (mongoose.models[map[name]] || require(`@models/${map[name]}`)) : null;
     };
@@ -253,8 +289,23 @@ exports.pushSyncEvents = async (req, res) => {
         continue;
       }
 
+      // Ensure schema has syncId and version paths so upsert never fails strict mode
+      if (!Model.schema.paths['syncId']) {
+        Model.schema.add({
+          syncId: { type: String, index: true, sparse: true },
+          version: { type: Number, default: 1 },
+          _createdOffline: { type: Boolean, default: false },
+          _localId: { type: String, default: null }
+        });
+      }
+
+      let docId = payload?._id;
+      if (typeof docId === 'string' && /^[0-9a-fA-F]{24}$/.test(docId)) {
+        docId = new mongoose.Types.ObjectId(docId);
+      }
+
       // Check current document on cloud
-      const currentDoc = await Model.findOne({ syncId }).session(session);
+      const currentDoc = await Model.findOne(docId ? { _id: docId } : { syncId }).session(session);
 
       // Conflict Detection (LWW using versions)
       if (currentDoc && currentDoc.version > version) {
@@ -276,16 +327,25 @@ exports.pushSyncEvents = async (req, res) => {
         delete updateData._id;
         delete updateData.__v;
 
+        if (updateData.email === '' || updateData.email === null) {
+          delete updateData.email;
+        }
+
+        const filterQuery = docId ? { _id: docId } : { syncId };
+
         await Model.findOneAndUpdate(
-          { syncId },
-          { $set: updateData },
-          { upsert: true, new: true, session, runValidators: false, $ignoreJournal: true }
+          filterQuery,
+          { 
+            $set: updateData,
+            ...(docId ? { $setOnInsert: { _id: docId } } : {})
+          },
+          { upsert: true, new: true, session, runValidators: false, strict: false, $ignoreJournal: true }
         );
       } else if (operation === 'DELETE') {
         await Model.findOneAndUpdate(
-          { syncId },
+          docId ? { _id: docId } : { syncId },
           { $set: { isDeleted: true, deletedAt: new Date(), version } },
-          { session, $ignoreJournal: true }
+          { session, strict: false, $ignoreJournal: true }
         );
       }
 
