@@ -250,7 +250,7 @@ const PublicQuotation = () => {
         className="portal-print-document pointer-events-none fixed left-[-10000px] top-0 w-[210mm] bg-white print:static print:w-auto"
       >
         <QuotationTemplate
-          quotationData={quotationTemplateData}
+          quotationDeta={quotationTemplateData}
           companyDetails={{
             name: quotation.business.name,
             address: quotation.business.address,
@@ -265,3 +265,4 @@ const PublicQuotation = () => {
 };
 
 export default PublicQuotation;
+
