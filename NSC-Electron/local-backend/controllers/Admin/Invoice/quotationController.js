@@ -335,8 +335,8 @@ const updateQuotation = async (req, res) => {
 
     // Update fields
     if (updateData.quotationDate) quotation.quotationDate = new Date(updateData.quotationDate);
-    if (updateData.salesPerson) quotation.salesPerson = updateData.salesPerson;
-    if (updateData.expiryDate) quotation.expiryDate = updateData.expiryDate;
+    if (updateData.salesPerson !== undefined) quotation.salesPerson = updateData.salesPerson || null;
+    if (updateData.expiryDate !== undefined) quotation.expiryDate = updateData.expiryDate || null;
     if (updateData.referenceNo !== undefined) quotation.referenceNo = updateData.referenceNo;
     if (updateData.status) quotation.status = updateData.status;
     if (updateData.paymentTerms !== undefined) quotation.paymentTerms = updateData.paymentTerms;
@@ -345,6 +345,14 @@ const updateQuotation = async (req, res) => {
     if (updateData.sign_type !== undefined) quotation.sign_type = updateData.sign_type;
     if (updateData.signatureId !== undefined) quotation.signatureId = updateData.signatureId;
     if (updateData.convert_type !== undefined) quotation.convert_type = updateData.convert_type;
+    if (updateData.billFrom !== undefined) quotation.billFrom = updateData.billFrom;
+    if (updateData.billTo !== undefined) {
+      quotation.billTo = updateData.billTo;
+      quotation.customerId = updateData.billTo;
+    }
+    if (updateData.customerId !== undefined && updateData.billTo === undefined) {
+      quotation.customerId = updateData.customerId;
+    }
     if (updateData.bank !== undefined) quotation.bank = updateData.bank || null;
 
     // Handle signature image upload

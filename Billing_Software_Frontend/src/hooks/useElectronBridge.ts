@@ -52,8 +52,10 @@ export interface ElectronBridgeResult {
   networkStatus: NetworkStatus;
   /** Current sync status */
   syncStatus: SyncStatus;
-  /** Manually trigger a sync with Atlas */
+  /** Manually trigger a full sync with Atlas */
   triggerSync: (customToken?: any) => Promise<void>;
+  /** Manually push offline data to Cloud DB */
+  syncOfflineData: (customToken?: any) => Promise<{ success: boolean; count?: number; error?: string } | void>;
   /** Get live sync diagnostic logs */
   getSyncLogs: () => Promise<SyncDiagnostics | null>;
   /** Open Chromium DevTools in Electron */
@@ -169,6 +171,24 @@ export function useElectronBridge(): ElectronBridgeResult {
     }
   }, [isElectron]);
 
+  const syncOfflineData = useCallback(async (customToken?: any) => {
+    if (!isElectron || typeof electronAPI().syncOfflineData !== 'function') return;
+    try {
+      let token: string | null = null;
+      if (typeof customToken === 'string' && customToken.trim().length > 10) {
+        token = customToken.trim();
+      } else {
+        token = Cookies.get('authToken') || null;
+      }
+      if (!token && typeof localStorage !== 'undefined') {
+        token = localStorage.getItem('authToken') || null;
+      }
+      return await electronAPI().syncOfflineData(token);
+    } catch (err) {
+      console.warn('[useElectronBridge] syncOfflineData error:', err);
+    }
+  }, [isElectron]);
+
   const getSyncLogs = useCallback(async (): Promise<SyncDiagnostics | null> => {
     if (!isElectron || typeof electronAPI().getSyncLogs !== 'function') return null;
     try {
@@ -193,6 +213,7 @@ export function useElectronBridge(): ElectronBridgeResult {
     networkStatus,
     syncStatus,
     triggerSync,
+    syncOfflineData,
     getSyncLogs,
     openDevTools,
     localBackendPort,

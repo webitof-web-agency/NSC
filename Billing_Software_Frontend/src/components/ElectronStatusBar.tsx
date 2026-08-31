@@ -12,6 +12,7 @@ const ElectronStatusBar: React.FC = () => {
     networkStatus,
     syncStatus,
     triggerSync,
+    syncOfflineData,
     getSyncLogs,
     openDevTools,
     localBackendPort
@@ -21,6 +22,7 @@ const ElectronStatusBar: React.FC = () => {
   const [showInspect, setShowInspect] = useState<boolean>(false);
   const [diagnostics, setDiagnostics] = useState<SyncDiagnostics | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [isPushingOffline, setIsPushingOffline] = useState<boolean>(false);
 
   // Update window-cached mode whenever network status changes
   useEffect(() => {
@@ -66,6 +68,16 @@ const ElectronStatusBar: React.FC = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleSyncOfflineData = async () => {
+    if (isPushingOffline || syncStatus.state === 'syncing') return;
+    try {
+      setIsPushingOffline(true);
+      await syncOfflineData();
+    } finally {
+      setIsPushingOffline(false);
+    }
   };
 
   // Don't render in browser
@@ -200,6 +212,18 @@ const ElectronStatusBar: React.FC = () => {
             >
               <span>🔍 Inspect</span>
             </button>
+
+            {/* ── Sync Offline Data Button (Manual Offline to Online Push) ── */}
+            {isOnline && (
+              <button
+                onClick={handleSyncOfflineData}
+                disabled={isSyncing || isPushingOffline}
+                title="Manually push all offline created & modified data into Online DB"
+                className="flex items-center gap-1 bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 border border-emerald-600 rounded px-2 py-0.5 text-[9px] font-semibold cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              >
+                <span>{isPushingOffline ? '⬆️ Syncing...' : '⬆️ Sync Offline Data'}</span>
+              </button>
+            )}
           </div>
         </div>
 

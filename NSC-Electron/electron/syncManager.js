@@ -82,23 +82,100 @@ class SyncManager {
   }
 
   startPeriodicSync() {
+    // Automatic background sync disabled by default - manual sync only
     if (this._periodicSyncTimer) return;
-    this._log('info', 'Starting periodic background sync (every 5 mins)...');
-    this._periodicSyncTimer = setInterval(() => {
-      this.hasAuthToken().then((has) => {
-        if (has && !this._syncLock) {
-          this._log('info', 'Periodic sync interval triggered.');
-          this.startSync().catch(console.error);
-        }
-      });
-    }, 5 * 60 * 1000); // 5 minutes
+    this._log('info', 'Periodic background sync is disabled (Manual push on demand enabled).');
   }
 
   stopPeriodicSync() {
     if (this._periodicSyncTimer) {
-      this._log('info', 'Stopping periodic background sync.');
       clearInterval(this._periodicSyncTimer);
       this._periodicSyncTimer = null;
+    }
+  }
+
+  /**
+   * Dedicated manual push: Uploads offline-created and modified records to Cloud DB.
+   */
+  async pushOfflineData(passedToken = null) {
+    if (this._syncLock) {
+      let waitTime = 0;
+      while (this._syncLock && waitTime < 3000) {
+        await new Promise(r => setTimeout(r, 300));
+        waitTime += 300;
+      }
+      if (this._syncLock) {
+        this._log('info', 'Sync is already actively progressing.');
+        return { success: true, message: 'Sync in progress' };
+      }
+    }
+
+    this._syncLock = true;
+    this._state = 'syncing';
+    this._syncedCount = 0;
+    this._totalCount = 0;
+
+    this._log('info', 'Manually pushing offline-created data to Cloud DB...');
+    this._emit({ state: 'syncing', message: 'Syncing offline data to cloud...', pending: 0, synced: 0, total: 0 });
+
+    try {
+      const validPassedToken = typeof passedToken === 'string' && passedToken.trim().length > 10 ? passedToken.trim() : null;
+      let authToken = validPassedToken || this.cachedAuthToken || await this._getLocalAuthToken();
+
+      if (validPassedToken) {
+        this.cachedAuthToken = validPassedToken;
+        try {
+          await axios.post(
+            `${this.localBackendUrl}/api/local/sync-token`,
+            { token: validPassedToken },
+            { timeout: 5000 }
+          );
+        } catch (e) {}
+      }
+
+      if (!authToken) {
+        this._log('warn', 'No auth token found. Please login to sync offline data.');
+        this._state = 'idle';
+        this._syncLock = false;
+        this._emit({ state: 'idle', message: 'Waiting for login' });
+        return { success: false, message: 'No auth token found' };
+      }
+
+      this.cachedAuthToken = authToken;
+      this._log('info', `Using token: ${authToken.substring(0, 10)}...${authToken.slice(-5)}`);
+
+      // === PUSH PHASE (Local -> Cloud) ONLY ===
+      await this._pushSync(authToken);
+      await this._pushFiles(authToken);
+
+      this._state = 'done';
+      this._lastSyncAt = new Date().toISOString();
+      this._syncLock = false;
+
+      this._log('success', `Offline data pushed successfully! Processed ${this._syncedCount} records.`);
+      this._emit({
+        state: 'done',
+        pending: 0,
+        synced: this._syncedCount,
+        total: this._syncedCount,
+        lastSync: this._lastSyncAt,
+        message: `Offline data synced successfully (${this._syncedCount} records)`
+      });
+
+      return { success: true, count: this._syncedCount };
+    } catch (err) {
+      this._state = 'error';
+      this._syncLock = false;
+      this._log('error', `Offline data sync push failed: ${err.message}`, err.response?.data);
+      this._emit({
+        state: 'error',
+        pending: 0,
+        synced: this._syncedCount,
+        total: this._totalCount,
+        error: err.message,
+        lastSync: this._lastSyncAt,
+      });
+      return { success: false, error: err.message };
     }
   }
 

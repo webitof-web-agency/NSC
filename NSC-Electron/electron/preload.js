@@ -36,8 +36,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Get current sync status
   getSyncStatus: () => ipcRenderer.invoke('get:sync-status'),
 
-  // Manually trigger a sync (e.g., user clicks "Sync Now" button)
+  // Manually trigger a full sync (e.g., user clicks "Sync Now" button)
   triggerSync: (token) => ipcRenderer.invoke('trigger:sync', token),
+
+  // Manually push offline-created data into online live DB (e.g., user clicks "Sync Offline Data" button)
+  syncOfflineData: (token) => ipcRenderer.invoke('trigger:push-offline', token),
 
   // ── App Info ──────────────────────────────── 
   // Get local backend port so renderer can build API URLs

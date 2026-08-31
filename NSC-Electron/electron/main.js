@@ -290,6 +290,25 @@ function setupIPC() {
     return { success: false, message: 'Sync manager not ready' };
   });
 
+  // Renderer manually pushes offline-created data into online live DB
+  ipcMain.handle('trigger:push-offline', async (_event, token) => {
+    let validToken = typeof token === 'string' && token.trim().length > 10 ? token.trim() : null;
+    if (!validToken && mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        const cookies = await mainWindow.webContents.session.cookies.get({ name: 'authToken' });
+        if (cookies && cookies.length > 0 && cookies[0].value) {
+          validToken = cookies[0].value;
+        }
+      } catch (e) {
+        console.warn('Could not read session cookies:', e.message);
+      }
+    }
+    if (syncManager) {
+      return syncManager.pushOfflineData(validToken);
+    }
+    return { success: false, message: 'Sync manager not ready' };
+  });
+
   // Renderer asks for the local backend port
   ipcMain.handle('get:local-backend-port', () => LOCAL_BACKEND_PORT);
 
@@ -328,19 +347,9 @@ function onNetworkChange(status) {
     mainWindow.webContents.send('network:status', status);
   }
 
-  // When coming back online — only sync if auth token is already cached
-  // (prevents 401 errors on startup before the user has logged in)
-  if (status.isOnline && syncManager) {
-    syncManager.hasAuthToken().then((hasToken) => {
-      if (hasToken) {
-        console.log('🔄 Back online — starting sync...');
-        syncManager.startSync().catch(console.error);
-        syncManager.startPeriodicSync();
-      } else {
-        console.log('⏸️  Back online but no auth token yet — sync will run after login');
-      }
-    }).catch(console.error);
-  } else if (!status.isOnline && syncManager) {
+  // Automatic sync on reconnect disabled as requested.
+  // Data will only sync when user manually clicks "Sync Offline Data" or "Sync Now".
+  if (!status.isOnline && syncManager) {
     syncManager.stopPeriodicSync();
   }
 }
