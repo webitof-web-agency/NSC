@@ -1,0 +1,6 @@
+# Files in this directory are Vite's content-hashed build output
+# (e.g. index-D0KqKMfm.js) — a new build always gets new filenames,
+# so it's safe to cache these aggressively and forever.
+<IfModule mod_headers.c>
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</IfModule>

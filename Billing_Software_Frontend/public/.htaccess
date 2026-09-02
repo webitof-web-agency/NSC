@@ -6,3 +6,13 @@
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule . /index.html [L]
 </IfModule>
+
+# index.html must never be cached: it references content-hashed JS/CSS
+# filenames that change on every build. A stale cached index.html pointing
+# at deleted hashed assets causes them to 404 on refresh, so the app never
+# mounts and the in-app ErrorBoundary never gets a chance to run.
+<IfModule mod_headers.c>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
