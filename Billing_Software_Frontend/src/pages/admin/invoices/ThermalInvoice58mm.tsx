@@ -353,6 +353,22 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                             {(() => {
                                 const taxGroups = new Map();
 
+                                const resolveConfiguredTaxRate = (item: any) => {
+                                    const directRate = Number(item.taxRate ?? item.tax_rate ?? item.total_tax_rate ?? item.tax_group_rate ?? 0) || 0;
+                                    if (directRate > 0) return directRate;
+
+                                    const itemTax = item.tax;
+                                    const derivedFromTaxAmount = Number(itemTax || 0) > 0 && Number(item.rate || 0) > 0
+                                        ? Number(((Number(itemTax || 0) / Number(item.rate || 0)) * 100).toFixed(2))
+                                        : 0;
+
+                                    if (derivedFromTaxAmount > 0 && derivedFromTaxAmount <= 5.01) {
+                                        return 5;
+                                    }
+
+                                    return derivedFromTaxAmount || 0;
+                                };
+
                                 invoiceFormData.items
                                     .filter((item: any) => !!item?.name && item.name.trim() !== "")
                                     .forEach((item: any) => {
@@ -367,7 +383,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                             rate: Number(item.rate) || 0,
                                             discount: Number(item.discount) || 0,
                                             taxAmount: Number(item.tax) || 0,
-                                            configuredTaxRate: Number(item.taxRate ?? item.tax_rate ?? item.total_tax_rate ?? 0) || 0,
+                                            configuredTaxRate: resolveConfiguredTaxRate(item),
                                             isInclusive,
                                         });
 
@@ -394,7 +410,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                     return (
                                         <tr key={index} style={{ borderBottom: '1px solid black', borderColor: 'black', borderStyle: 'solid' }}>
                                             <td style={{ paddingTop: '2px', paddingBottom: '2px' }}>{group.hsn}</td>
-                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'center' }}>{group.taxRate}%</td>
+                                            <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'center' }}>{Number((group.taxRate || 0).toFixed(2))}%</td>
                                             <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{group.taxableAmount.toFixed(2)}</td>
                                             <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{cgstAmount}</td>
                                             <td style={{ paddingTop: '2px', paddingBottom: '2px', textAlign: 'right' }}>{sgstAmount}</td>

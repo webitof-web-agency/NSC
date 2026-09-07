@@ -38,6 +38,7 @@ const getNextExchangeInvoiceNumberInternal = async () => {
 const BankTransaction = require("@models/BankTransaction");
 const GeneralSetting = require("@models/GeneralSetting");
 const CompanySettings = require("@models/CompanySettings");
+const TaxGroup = require("@models/TaxGroup");
 const { sendMail } = require("@utils/mailer");
 const { syncCreditNotificationForInvoice, resolveNotificationForInvoice } = require("@services/notificationService");
 const toMoney = (value) =>
@@ -1677,7 +1678,15 @@ const getInvoice = async (req, res) => {
 
     const variantMrpMap = new Map();
     const productHsnMap = new Map();
-    const [variants, products] = await Promise.all([
+    const taxGroupRateMap = new Map();
+    const uniqueTaxGroupIds = Array.from(
+      new Set(
+        [...normalizedItems, ...normalizedExchangeItems]
+          .map((item) => String(item?.tax_group_id || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const [variants, products, taxGroups] = await Promise.all([
       uniqueVariantIds.length > 0
         ? ProductVariant.find({
           _id: { $in: uniqueVariantIds },
@@ -1690,6 +1699,11 @@ const getInvoice = async (req, res) => {
           .select("_id hsn_code")
           .lean()
         : [],
+      uniqueTaxGroupIds.length > 0
+        ? TaxGroup.find({ _id: { $in: uniqueTaxGroupIds } })
+          .select("_id total_tax_rate tax_rate_ids tax_name")
+          .lean()
+        : [],
     ]);
 
     variants.forEach((v) => {
@@ -1698,8 +1712,15 @@ const getInvoice = async (req, res) => {
     products.forEach((product) => {
       productHsnMap.set(String(product._id), String(product.hsn_code || "").trim());
     });
+    taxGroups.forEach((group) => {
+      const configuredRate = Number(group.total_tax_rate || 0)
+        || (Array.isArray(group.tax_rate_ids)
+          ? group.tax_rate_ids.reduce((sum, taxRate) => sum + Number(taxRate?.tax_rate || 0), 0)
+          : 0);
+      taxGroupRateMap.set(String(group._id), configuredRate);
+    });
 
-    const printMetadata = { variantMrpMap, productHsnMap };
+    const printMetadata = { variantMrpMap, productHsnMap, taxGroupRateMap };
     const enrichedItems = enrichInvoicePrintItems(invoice.items, printMetadata);
 
     const enrichedExchangeItems = enrichInvoicePrintItems(
@@ -2007,6 +2028,14 @@ const getAllInvoices = async (req, res) => {
         discount: item.discount,
         tax: item.tax,
         taxInfo: item.taxInfo,
+        tax_group_id: item.tax_group_id?._id || item.tax_group_id || null,
+        taxRate:
+          item.tax_group_id?.total_tax_rate ||
+          item.tax_group_id?.rate ||
+          item.tax_group_id?.tax_rate ||
+          (Array.isArray(item.tax_group_id?.tax_rate_ids)
+            ? item.tax_group_id.tax_rate_ids.reduce((sum, taxRate) => sum + Number(taxRate?.tax_rate || 0), 0)
+            : 0),
         amount: item.amount,
         discountType: item.discountType,
       }));
@@ -2396,6 +2425,14 @@ const getChildInvoices = async (req, res) => {
         discount: item.discount,
         tax: item.tax,
         taxInfo: item.taxInfo,
+        tax_group_id: item.tax_group_id?._id || item.tax_group_id || null,
+        taxRate:
+          item.tax_group_id?.total_tax_rate ||
+          item.tax_group_id?.rate ||
+          item.tax_group_id?.tax_rate ||
+          (Array.isArray(item.tax_group_id?.tax_rate_ids)
+            ? item.tax_group_id.tax_rate_ids.reduce((sum, taxRate) => sum + Number(taxRate?.tax_rate || 0), 0)
+            : 0),
         amount: item.amount,
         discountType: item.discountType,
       }));

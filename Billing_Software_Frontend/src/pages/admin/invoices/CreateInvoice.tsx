@@ -1591,7 +1591,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
       if (discountAmount > grossInclusive) discountAmount = grossInclusive;
 
       const netInclusive = grossInclusive - discountAmount;
-      calculatedTax = taxType === "GST" ? netInclusive - (netInclusive / (1 + (taxRate / 100))) : 0;
+      calculatedTax = taxType === "GST" ? Number((netInclusive * (taxRate / 100)).toFixed(2)) : 0;
       finalAmount = netInclusive;
     } else {
       // GST Exclusive OR Non-GST
@@ -1617,6 +1617,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
       ...item,
       discount: discountAmount,
       tax: calculatedTax,
+      taxRate,
       amount: finalAmount
     };
   }, []);
@@ -1836,6 +1837,23 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
     const newAmount = discountedSubtotal + totalTax;
 
     let updated = false;
+    const baseItem = {
+      id: product.id,
+      name: product.name,
+      hsn_code: product.hsn_code || "",
+      unit: product.unit?.name ?? "",
+      qty: 1,
+      rate: product.prices?.selling ?? 0,
+      amount: newAmount,
+      discount: discountAmount,
+      tax: totalTax,
+      tax_group_id: typeof product.tax === 'object' && product.tax !== null ? ((product.tax as any)._id || (product.tax as any).group_id || (product.tax as any).id) : product.tax,
+      discount_type: product.discount?.type || "Fixed",
+      discount_value: product.discount?.value,
+    } as ProductItem;
+
+    const finalItem = recalculateItem(baseItem, invoiceFormData.taxType, effectiveGstMode, taxes);
+
     setInvoiceFormData((prev) => ({
       ...prev,
       items: prev.items.map((item) => {
@@ -1843,18 +1861,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
           updated = true;
           return {
             ...item,
-            id: product.id,
-            name: product.name,
-            hsn_code: product.hsn_code || "",
-            unit: product.unit?.name ?? "",
-            qty: 1,
-            rate: product.prices?.selling ?? 0,
-            amount: newAmount,
-            discount: discountAmount,
-            tax: totalTax,
-            tax_group_id: typeof product.tax === 'object' && product.tax !== null ? ((product.tax as any)._id || (product.tax as any).group_id || (product.tax as any).id) : product.tax,
-            discount_type: product.discount?.type || "Fixed",
-            discount_value: product.discount?.value,
+            ...finalItem,
           };
         }
         return item;

@@ -5,7 +5,7 @@ const normalizeInvoiceItems = (items = []) =>
 
 const enrichInvoicePrintItems = (
   items = [],
-  { variantMrpMap = new Map(), productHsnMap = new Map() } = {}
+  { variantMrpMap = new Map(), productHsnMap = new Map(), taxGroupRateMap = new Map() } = {}
 ) =>
   normalizeInvoiceItems(items).map((item) => ({
     ...item,
@@ -18,6 +18,12 @@ const enrichInvoicePrintItems = (
       item?.variantMrp ??
       variantMrpMap.get(String(item?.variantId || "")) ??
       null,
+    taxRate:
+      item?.taxRate ??
+      item?.tax_rate ??
+      item?.total_tax_rate ??
+      taxGroupRateMap.get(String(item?.tax_group_id || "")) ??
+      0,
   }));
 
 module.exports = {
