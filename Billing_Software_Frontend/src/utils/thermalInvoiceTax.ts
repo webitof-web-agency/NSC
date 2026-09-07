@@ -1,3 +1,5 @@
+const MIN_INVOICE_GST_RATE = 5;
+
 export interface ThermalTaxLineInput {
     qty: number;
     rate: number;
@@ -33,6 +35,11 @@ export const calculateThermalTaxLine = ({
     let taxRate = Number(configuredTaxRate || 0);
     if (taxRate <= 0 && taxableAmount > 0 && normalizedTaxAmount > 0) {
         taxRate = Number(((normalizedTaxAmount / taxableAmount) * 100).toFixed(2));
+    }
+
+    // GST on printed invoices must never show below the standard 5% slab.
+    if (taxRate < MIN_INVOICE_GST_RATE) {
+        taxRate = MIN_INVOICE_GST_RATE;
     }
 
     return {

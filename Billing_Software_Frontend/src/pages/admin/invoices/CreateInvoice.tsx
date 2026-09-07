@@ -312,6 +312,18 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
     ? (invoiceFormData.gstType || systemSettings?.company?.gstMode || "Exclusive")
     : (systemSettings?.company?.gstMode || "Exclusive");
 
+  // invoiceFormData.gstType is what the printed receipt (ThermalInvoice58mm) reads to
+  // decide inclusive vs exclusive tax math. Tax calculation and saving use
+  // effectiveGstMode instead, so without this sync a brand-new invoice keeps
+  // gstType at its initial "Exclusive" default and the very first print (right
+  // after billing) derives the wrong GST% even though the saved tax amount was
+  // computed correctly as inclusive.
+  useEffect(() => {
+    setInvoiceFormData((prev) =>
+      prev.gstType === effectiveGstMode ? prev : { ...prev, gstType: effectiveGstMode }
+    );
+  }, [effectiveGstMode]);
+
   const getInvoiceDiscountAmount = (
     baseAmount: number,
     value: number,
