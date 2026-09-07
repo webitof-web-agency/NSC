@@ -1707,6 +1707,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
     : syncSubTotal + syncTotalTax - syncCombinedDiscount;
 
   const syncGrandTotal = Math.round(syncGrandTotalExact);
+  const syncGrandTotalExactRounded = Number(syncGrandTotalExact.toFixed(2));
   const syncTotalInWords = numberToWords(syncGrandTotal);
 
   useEffect(() => {
@@ -2749,12 +2750,13 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
   }
 
   const currentGrandTotal = syncGrandTotal;
+  const currentGrandTotalExact = syncGrandTotalExactRounded;
   const editAdditionalPayable = isEditMode
-    ? Math.max(currentGrandTotal - originalGrandTotal, 0)
-    : currentGrandTotal;
+    ? Math.max(currentGrandTotalExact - originalGrandTotal, 0)
+    : currentGrandTotalExact;
   const editOutstandingAmount = isEditMode
-    ? Math.max(currentGrandTotal - Number(invoiceFormData.totalPaid || 0), 0)
-    : currentGrandTotal;
+    ? Math.max(currentGrandTotalExact - Number(invoiceFormData.totalPaid || 0), 0)
+    : currentGrandTotalExact;
   const invoiceItemsTableTotals = invoiceFormData.items.reduce(
     (totals, item) => ({
       quantity: totals.quantity + Number(item.qty || 0),
