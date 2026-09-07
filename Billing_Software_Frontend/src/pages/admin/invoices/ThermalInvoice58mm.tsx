@@ -334,7 +334,7 @@ const ThermalInvoice58mm = React.forwardRef<HTMLDivElement, PrintableInvoiceProp
                                 <span>{parseFloat(gapPercentage.toFixed(2))}%</span>
                             </div>
                         </div>
-                        <hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} />
+                        {/*<hr style={{ border: 0, borderTop: '1px solid black', margin: '4px 0' }} /> */}
                     </>
                 )}
 
