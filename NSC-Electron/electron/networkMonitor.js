@@ -29,7 +29,12 @@ class NetworkMonitor extends EventEmitter {
     ];
     this.pingUrl = options.pingUrl || 'https://server.nareshsareecollection.com/api/admin/app-version';
 
+    this.pingTimeout = options.pingTimeout || 5000;
+    // Consecutive failed checks before switching to offline, so one slow response doesn't flip the API URL
+    this.failuresBeforeOffline = options.failuresBeforeOffline || 2;
+
     this._isOnline = false;   // Start assuming offline
+    this._failures = 0;
     this._timer = null;
     this._checking = false;
   }
@@ -68,9 +73,11 @@ class NetworkMonitor extends EventEmitter {
     if (this._checking) return; // Avoid overlapping checks
     this._checking = true;
 
+    let dnsOk = false;
     let newOnline = false;
 
-    // 1. Check DNS resolution of domain names (with 2500ms timeout per host)
+    // 1. Check DNS resolution of domain names (with 2500ms timeout per host).
+    //    DNS alone only proves internet access, not that the cloud backend is up.
     for (const host of this.testHosts) {
       try {
         await new Promise((resolve, reject) => {
@@ -81,19 +88,20 @@ class NetworkMonitor extends EventEmitter {
             else resolve(address);
           });
         });
-        newOnline = true;
+        dnsOk = true;
         break; // Stop checking if one succeeds
       } catch {
         // Try next host
       }
     }
 
-    // 2. HTTP ping fallback / verification if DNS failed
-    if (!newOnline && this.pingUrl) {
+    // 2. Online only if the cloud backend actually answers; a hung server must fall back to local
+    if (dnsOk && this.pingUrl) {
       try {
         await new Promise((resolve, reject) => {
           const client = this.pingUrl.startsWith('https') ? https : http;
-          const req = client.get(this.pingUrl, { timeout: 3000 }, (res) => {
+          const req = client.get(this.pingUrl, { timeout: this.pingTimeout }, (res) => {
+            res.resume();
             if (res.statusCode && res.statusCode < 500) {
               resolve();
             } else {
@@ -108,11 +116,19 @@ class NetworkMonitor extends EventEmitter {
         });
         newOnline = true;
       } catch {
-        // Still offline
+        // Cloud backend unreachable or hung
       }
+    } else if (dnsOk) {
+      newOnline = true;
     }
 
     this._checking = false;
+
+    if (newOnline) {
+      this._failures = 0;
+    } else if (dnsOk && this._isOnline && ++this._failures < this.failuresBeforeOffline) {
+      return; // Stay online until the cloud fails repeatedly
+    }
 
     if (newOnline !== this._isOnline) {
       const prev = this._isOnline;

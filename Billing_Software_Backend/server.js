@@ -96,14 +96,7 @@ app.use(express.json({
 const { getUploadsRoot } = require('./utils/storagePaths');
 app.use('/uploads', express.static(getUploadsRoot()));
 
-app.get('/', (req, res) => {
-  res.json({
-    status: 'success',
-    message: 'NSC Backend deployed successfully 🚀',
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString()
-  });
-});
+app.get('/', require('./controllers/statusController').getStatus);
 
 app.get('/health', (req, res) => {
   const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];

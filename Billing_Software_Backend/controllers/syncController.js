@@ -16,7 +16,16 @@ const missingSyncIdQuery = {
 exports.pullSyncEvents = async (req, res) => {
   try {
     const { cursor, limit = 500 } = req.query;
-    
+
+    // Events after an expired cursor may already be gone. An empty batch makes the
+    // desktop app download a fresh snapshot, which also resets its cursor.
+    if (cursor && SyncJournal.isCursorExpired(cursor)) {
+      return res.status(200).json({
+        success: true,
+        data: { events: [], nextCursor: cursor, hasMore: false, resetRequired: true }
+      });
+    }
+
     // Build query: if cursor provided, fetch events after cursor
     const query = {};
     if (cursor) {
