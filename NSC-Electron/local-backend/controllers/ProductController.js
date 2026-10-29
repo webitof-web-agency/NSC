@@ -9,6 +9,7 @@ const Inventory = require('../models/Inventory');
 const ProductVariant = require('../models/ProductVariant');
 const mongoose = require('mongoose');
 const ExcelJS = require('exceljs');
+const { addVariantToIndex, isDuplicateVariant } = require('../utils/variantImportDedupe');
 
 const buildProductsExportWorksheet = async ({ workbook, rows, sheetName = 'Products Export' }) => {
   const worksheet = workbook.addWorksheet(sheetName);
@@ -1274,19 +1275,6 @@ const buildUploadProductKey = ({ categoryName, brandName, unitName, hsnCode, gst
     normalizeUploadNumber(gstRate)
   ].join('|');
 
-const buildVariantDuplicateKey = (payload) =>
-  [
-    normalizeUploadTextLower(payload.designNo),
-    normalizeUploadTextLower(payload.color),
-    normalizeUploadTextLower(payload.size),
-    normalizeUploadNumber(payload.purchase_price),
-    normalizeUploadNumber(payload.sale_price),
-    normalizeUploadNumber(payload.mrp),
-    normalizeUploadNumber(payload.min_sale_price),
-    normalizeUploadNumber(payload.reorder_limit),
-    normalizeUploadNumber(payload.discount_value),
-    normalizeUploadText(payload.barcode)
-  ].join('|');
 
 const generateUniqueProductCode = async () => {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -1341,7 +1329,20 @@ exports.uploadProductsExcel = async (req, res) => {
 
     let lastProductContext = null;
     const productCache = new Map();
-    const seenVariantKeys = new Set();
+    // productId -> variant index of that product (existing variants + rows created in this upload)
+    const variantIndexByProduct = new Map();
+    const getVariantIndex = async (productId) => {
+      const id = String(productId);
+      if (!variantIndexByProduct.has(id)) {
+        const index = new Map();
+        const existing = await ProductVariant.find({ productId })
+          .select('designNo size color purchase_price sale_price mrp barcode')
+          .lean();
+        existing.forEach((variant) => addVariantToIndex(index, variant));
+        variantIndexByProduct.set(id, index);
+      }
+      return variantIndexByProduct.get(id);
+    };
 
     for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
       const row = worksheet.getRow(rowNumber);
@@ -1511,22 +1512,9 @@ exports.uploadProductsExcel = async (req, res) => {
             barcode: providedBarcode
           };
 
-          const variantDuplicateKey = `${String(product._id)}|${buildVariantDuplicateKey(variantPayload)}`;
-          const existingDuplicateVariant = await ProductVariant.findOne({
-            productId: product._id,
-            designNo,
-            color,
-            size,
-            purchase_price,
-            sale_price,
-            mrp,
-            min_sale_price,
-            reorder_limit,
-            discount_value,
-            ...(providedBarcode ? { barcode: providedBarcode } : {})
-          }).select('_id barcode');
+          const variantIndex = await getVariantIndex(product._id);
 
-          if (seenVariantKeys.has(variantDuplicateKey) || existingDuplicateVariant) {
+          if (isDuplicateVariant(variantIndex, variantPayload, providedBarcode)) {
             results.skippedDuplicates.push({
               row: rowNumber,
               designNo: designNo || '',
@@ -1600,7 +1588,7 @@ exports.uploadProductsExcel = async (req, res) => {
             barcode: resolvedBarcode,
             barcodeKey
           });
-          seenVariantKeys.add(variantDuplicateKey);
+          addVariantToIndex(variantIndex, variant);
 
           if (opening_stock > 0) {
             const userId = req.user;

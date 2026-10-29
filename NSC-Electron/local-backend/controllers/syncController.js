@@ -16,7 +16,16 @@ const missingSyncIdQuery = {
 exports.pullSyncEvents = async (req, res) => {
   try {
     const { cursor, limit = 500 } = req.query;
-    
+
+    // Events after an expired cursor may already be gone. An empty batch makes the
+    // desktop app download a fresh snapshot, which also resets its cursor.
+    if (cursor && SyncJournal.isCursorExpired(cursor)) {
+      return res.status(200).json({
+        success: true,
+        data: { events: [], nextCursor: cursor, hasMore: false, resetRequired: true }
+      });
+    }
+
     // Build query: if cursor provided, fetch events after cursor
     const query = {};
     if (cursor) {
@@ -66,7 +75,11 @@ exports.getBootstrapSnapshot = async (req, res) => {
     // Helper to safely require models
     const getModel = (name) => {
       try {
-        return mongoose.models[name] || require(`@models/${name}`);
+        if (mongoose.models[name]) return mongoose.models[name];
+        if (name === 'InvoicePreferences') {
+          return require('@models/invoicePreferencesModuleSettings');
+        }
+        return require(`@models/${name}`);
       } catch {
         return null;
       }
@@ -137,14 +150,28 @@ exports.getBootstrapSnapshot = async (req, res) => {
       { key: 'eway-bills', model: getModel('EWayBill') },
       { key: 'reminders', model: getModel('Reminder') },
       { key: 'notifications', model: getModel('Notification') },
-      { key: 'todo-tasks', model: getModel('TodoTask') }
+      { key: 'todo-tasks', model: getModel('TodoTask') },
+      { key: 'invoice-preferences', model: getModel('InvoicePreferences') },
+      { key: 'notification-tags', model: getModel('NotificationTag') },
+      { key: 'notification-types', model: getModel('NotificationType') }
     ];
 
     const baseQuery = { isDeleted: { $ne: true } };
 
     if (targetCollection) {
-      const def = modelDefinitions.find(d => d.key === targetCollection);
-      const data = def && def.model ? await def.model.find(baseQuery).sort({ createdAt: 1, _id: 1 }).lean() : [];
+      const normalizedTarget = targetCollection.toLowerCase().replace(/[-_]/g, '');
+      const def = modelDefinitions.find(d => {
+        const normKey = d.key.toLowerCase().replace(/[-_]/g, '');
+        return (
+          d.key === targetCollection ||
+          d.key === `${targetCollection}s` ||
+          (targetCollection.endsWith('s') && d.key === targetCollection.slice(0, -1)) ||
+          normKey === normalizedTarget ||
+          normKey === `${normalizedTarget}s` ||
+          (normalizedTarget.endsWith('s') && normKey === normalizedTarget.slice(0, -1))
+        );
+      });
+      const data = def && def.model ? await def.model.find(baseQuery).sort({ _id: 1 }).lean() : [];
       return res.status(200).json({
         success: true,
         data: {
@@ -156,15 +183,18 @@ exports.getBootstrapSnapshot = async (req, res) => {
       });
     }
 
-    // Execute in controlled batches of 5 to avoid database thread saturation
+    // Execute in controlled batches of 15 to balance speed and connection pool
     const snapshot = {};
-    const batchSize = 5;
+    const batchSize = 15;
     for (let i = 0; i < modelDefinitions.length; i += batchSize) {
       const batch = modelDefinitions.slice(i, i + batchSize);
       const batchResults = await Promise.all(
         batch.map(({ key, model }) => {
           if (!model) return Promise.resolve({ key, data: [] });
-          return model.find(baseQuery).sort({ createdAt: 1, _id: 1 }).lean().then(data => ({ key, data })).catch(() => ({ key, data: [] }));
+          return model.find(baseQuery).sort({ _id: 1 }).lean().then(data => ({ key, data })).catch((err) => {
+            console.warn(`[Sync Bootstrap] Failed to fetch collection ${key}:`, err.message);
+            return { key, data: [] };
+          });
         })
       );
       for (const { key, data } of batchResults) {

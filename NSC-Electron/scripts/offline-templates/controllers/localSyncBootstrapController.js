@@ -71,7 +71,10 @@ const COLLECTION_MAP = {
   'eway-bills': 'EWayBill',
   'reminders': 'Reminder',
   'notifications': 'Notification',
-  'todo-tasks': 'TodoTask'
+  'todo-tasks': 'TodoTask',
+  'invoice-preferences': 'InvoicePreferences',
+  'notification-tags': 'NotificationTag',
+  'notification-types': 'NotificationType'
 };
 
 exports.COLLECTION_MAP = COLLECTION_MAP;
@@ -198,7 +201,13 @@ exports.applyBootstrap = async (req, res) => {
 
       let Model;
       try {
-        Model = mongoose.models[modelName] || require(`../models/${modelName}`);
+        if (mongoose.models[modelName]) {
+          Model = mongoose.models[modelName];
+        } else if (modelName === 'InvoicePreferences') {
+          Model = require('../models/invoicePreferencesModuleSettings');
+        } else {
+          Model = require(`../models/${modelName}`);
+        }
       } catch (e) {
         console.warn(`[Sync Bootstrap] Could not load model ${modelName}:`, e.message);
         errors.push({ collection: collectionName, error: `Could not load model: ${e.message}` });
@@ -257,21 +266,23 @@ exports.applyBootstrap = async (req, res) => {
 
         // ── DELETE / REMOVE SYNC: Purge locally deleted records ──
         // If a record was removed/deleted online, delete it from local DB
-        // (excluding un-synced offline creations still pending in Outbox)
-        try {
-          const deleteFilter = {
-            _id: { $nin: activeDocIds },
-            _createdOffline: { $ne: true }
-          };
-          if (activeSyncIds.length > 0) {
-            deleteFilter.syncId = { $nin: activeSyncIds };
+        // ONLY run if activeDocIds has items, preventing total data wipe when collection is empty or fails
+        if (activeDocIds.length > 0) {
+          try {
+            const deleteFilter = {
+              _id: { $nin: activeDocIds },
+              _createdOffline: { $ne: true }
+            };
+            if (activeSyncIds.length > 0) {
+              deleteFilter.syncId = { $nin: activeSyncIds };
+            }
+            const deleteRes = await Model.deleteMany(deleteFilter);
+            if (deleteRes.deletedCount > 0) {
+              console.log(`[Sync Bootstrap] ${collectionName}: Removed ${deleteRes.deletedCount} records deleted from online DB`);
+            }
+          } catch (delErr) {
+            console.warn(`[Sync Bootstrap Deletion] ${collectionName} warning:`, delErr.message);
           }
-          const deleteRes = await Model.deleteMany(deleteFilter);
-          if (deleteRes.deletedCount > 0) {
-            console.log(`[Sync Bootstrap] ${collectionName}: Removed ${deleteRes.deletedCount} records deleted from online DB`);
-          }
-        } catch (delErr) {
-          console.warn(`[Sync Bootstrap Deletion] ${collectionName} warning:`, delErr.message);
         }
 
         // File scanning (non-blocking)

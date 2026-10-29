@@ -384,15 +384,7 @@ app.whenReady().then(async () => {
     // Step 3: Create window
     createWindow();
 
-    // Step 4: Start network monitor
-    networkMonitor = new NetworkMonitor({
-      checkInterval: 8000,      // Check every 8 seconds
-      onStatusChange: onNetworkChange,
-    });
-    networkMonitor.start();
-
-    // Step 5: Init sync manager
-    // Read REMOTE_BACKEND_URL from local-backend/.env.local so it's configurable without rebuilding
+    // Step 4: Resolve configuration and sync target
     const envFilePath = isDev
       ? path.join(__dirname, '../local-backend/.env.local')
       : path.join(process.resourcesPath, 'local-backend/.env.local');
@@ -400,6 +392,26 @@ app.whenReady().then(async () => {
     const remoteBackendUrl = envConfig.REMOTE_BACKEND_URL || 'https://server.nareshsareecollection.com';
     console.log('🔗 Sync target:', remoteBackendUrl);
 
+    const backendHost = (() => {
+      try {
+        return new URL(remoteBackendUrl).hostname;
+      } catch {
+        return 'server.nareshsareecollection.com';
+      }
+    })();
+
+    // Step 5: Start network monitor with dedicated backend health check
+    networkMonitor = new NetworkMonitor({
+      checkInterval: 10000,
+      pingUrl: `${remoteBackendUrl.replace(/\/+$/, '')}/health`,
+      testHosts: [backendHost, 'google.com', 'cloudflare.com'].filter(Boolean),
+      pingTimeout: 10000,
+      failuresBeforeOffline: 4,
+      onStatusChange: onNetworkChange,
+    });
+    await networkMonitor.start();
+
+    // Step 6: Init sync manager with network monitor reference
     const DeviceIdManager = require('./deviceIdManager');
     const deviceIdManager = new DeviceIdManager(app);
     const deviceId = deviceIdManager.getDeviceId();
@@ -409,6 +421,7 @@ app.whenReady().then(async () => {
       remoteBackendUrl,
       deviceId, // ── Phase 4: Device Identity ──
       userDataPath: app.getPath('userData'), // Pass userData path for cursor storage
+      networkMonitor, // Keep monitor aware of active data sync transfers
       onProgress: onSyncProgress,
     });
 

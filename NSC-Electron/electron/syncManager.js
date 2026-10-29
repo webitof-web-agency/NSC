@@ -27,6 +27,7 @@ class SyncManager {
     this.deviceId = options.deviceId || 'unknown-device';
     this.userDataPath = options.userDataPath || __dirname;
     this.cursorFilePath = path.join(this.userDataPath, 'sync_cursor.json');
+    this.networkMonitor = options.networkMonitor || null;
     this.onProgress = options.onProgress || null;
     this.cachedAuthToken = null; // in-memory fallback
     this.logs = [];              // In-memory diagnostic log buffer
@@ -115,6 +116,10 @@ class SyncManager {
     this._syncedCount = 0;
     this._totalCount = 0;
 
+    if (this.networkMonitor) {
+      this.networkMonitor.setSyncActive(true);
+    }
+
     this._log('info', 'Manually pushing offline-created data to Cloud DB...');
     this._emit({ state: 'syncing', message: 'Syncing offline data to cloud...', pending: 0, synced: 0, total: 0 });
 
@@ -137,6 +142,7 @@ class SyncManager {
         this._log('warn', 'No auth token found. Please login to sync offline data.');
         this._state = 'idle';
         this._syncLock = false;
+        if (this.networkMonitor) this.networkMonitor.setSyncActive(false);
         this._emit({ state: 'idle', message: 'Waiting for login' });
         return { success: false, message: 'No auth token found' };
       }
@@ -150,7 +156,6 @@ class SyncManager {
 
       this._state = 'done';
       this._lastSyncAt = new Date().toISOString();
-      this._syncLock = false;
 
       this._log('success', `Offline data pushed successfully! Processed ${this._syncedCount} records.`);
       this._emit({
@@ -165,7 +170,6 @@ class SyncManager {
       return { success: true, count: this._syncedCount };
     } catch (err) {
       this._state = 'error';
-      this._syncLock = false;
       this._log('error', `Offline data sync push failed: ${err.message}`, err.response?.data);
       this._emit({
         state: 'error',
@@ -176,6 +180,11 @@ class SyncManager {
         lastSync: this._lastSyncAt,
       });
       return { success: false, error: err.message };
+    } finally {
+      this._syncLock = false;
+      if (this.networkMonitor) {
+        this.networkMonitor.setSyncActive(false);
+      }
     }
   }
 
@@ -197,6 +206,10 @@ class SyncManager {
     this._state = 'syncing';
     this._syncedCount = 0;
     this._totalCount = 0;
+
+    if (this.networkMonitor) {
+      this.networkMonitor.setSyncActive(true);
+    }
 
     this._log('info', 'Starting synchronization sequence...');
     this._emit({ state: 'syncing', message: 'Starting sync...', pending: 0, synced: 0, total: 0 });
@@ -223,6 +236,7 @@ class SyncManager {
         this._log('warn', 'No auth token found. Waiting for user login.');
         this._state = 'idle';
         this._syncLock = false;
+        if (this.networkMonitor) this.networkMonitor.setSyncActive(false);
         this._emit({
           state: 'idle',
           pending: 0,
@@ -252,7 +266,6 @@ class SyncManager {
 
       this._state = 'done';
       this._lastSyncAt = new Date().toISOString();
-      this._syncLock = false;
 
       this._log('success', `Sync completed successfully! Processed ${this._syncedCount}/${this._totalCount} events.`);
       this._emit({
@@ -268,7 +281,6 @@ class SyncManager {
 
     } catch (err) {
       this._state = 'error';
-      this._syncLock = false;
       const status = err.response?.status;
       const serverMsg = err.response?.data?.message || err.response?.data?.error;
       const errMsg = serverMsg || (status ? `Request failed with status code ${status}` : err.message) || 'Sync operation failed';
@@ -276,6 +288,11 @@ class SyncManager {
       this._log('error', `Sync failed: ${errMsg}`, { status, data: err.response?.data, stack: err.stack });
       this._emit({ state: 'error', error: errMsg, pending: this._pendingCount });
       return { success: false, error: errMsg };
+    } finally {
+      this._syncLock = false;
+      if (this.networkMonitor) {
+        this.networkMonitor.setSyncActive(false);
+      }
     }
   }
 
@@ -306,6 +323,7 @@ class SyncManager {
               timeout: 10000 
             }
           );
+          if (this.networkMonitor) this.networkMonitor.recordActivity();
 
           const newBlock = cloudRes.data?.data;
           if (newBlock) {
@@ -374,6 +392,7 @@ class SyncManager {
           );
 
           const { processedEvents, conflicts } = remoteRes.data;
+          if (this.networkMonitor) this.networkMonitor.recordActivity();
           
           if (conflicts && conflicts.length > 0) {
             this._log('warn', `Cloud reported ${conflicts.length} conflicts during push.`);
@@ -452,53 +471,72 @@ class SyncManager {
       return;
     }
 
+    // 1. Drain all pending incremental journal events in a paginated loop
+    let currentCursor = cursor;
     let pulledEventsCount = 0;
-    try {
-      this._log('info', `Pull: Fetching cloud events after cursor ${cursor}...`);
-      const remoteRes = await axios.get(
-        `${this.remoteBackendUrl}/api/sync/pull?cursor=${cursor}&deviceId=${this.deviceId}`,
-        { 
-          headers: { Authorization: `Bearer ${authToken}` },
-          timeout: 30000 
-        }
-      );
+    let hasMoreEvents = true;
+    let loopIteration = 0;
 
-      const responseData = remoteRes.data?.data || remoteRes.data;
-      const events = responseData?.events || [];
-      const nextCursor = responseData?.nextCursor || cursor;
-
-      if (Array.isArray(events) && events.length > 0) {
-        this._log('info', `Pull: Applying ${events.length} cloud events to local database...`);
-        
-        const localRes = await axios.post(
-          `${this.localBackendUrl}/api/local/sync-apply`,
-          { events },
-          { timeout: 30000 }
+    while (hasMoreEvents && loopIteration < 50) {
+      loopIteration++;
+      try {
+        this._log('info', `Pull: Fetching cloud events (batch ${loopIteration}) after cursor ${currentCursor}...`);
+        const remoteRes = await axios.get(
+          `${this.remoteBackendUrl}/api/sync/pull?cursor=${currentCursor}&deviceId=${this.deviceId}&limit=500`,
+          { 
+            headers: { Authorization: `Bearer ${authToken}` },
+            timeout: 30000 
+          }
         );
 
-        if (localRes.data?.success) {
-          this._setCursor(nextCursor);
-          this._syncedCount += events.length;
-          pulledEventsCount = events.length;
-          this._log('success', `Pull: Applied ${events.length} cloud events successfully. Cursor updated to ${nextCursor}`);
+        if (this.networkMonitor) this.networkMonitor.recordActivity();
+
+        const responseData = remoteRes.data?.data || remoteRes.data;
+        const events = responseData?.events || [];
+        const nextCursor = responseData?.nextCursor || currentCursor;
+        const resetRequired = responseData?.resetRequired || false;
+
+        if (resetRequired) {
+          this._log('info', 'Cloud reported sync cursor expired. Performing full initial bootstrap...');
+          await this._bootstrapSync(authToken);
+          return;
         }
+
+        if (Array.isArray(events) && events.length > 0) {
+          this._log('info', `Pull: Applying ${events.length} cloud events to local database...`);
+          
+          const localRes = await axios.post(
+            `${this.localBackendUrl}/api/local/sync-apply`,
+            { events },
+            { timeout: 45000 }
+          );
+
+          if (localRes.data?.success) {
+            this._setCursor(nextCursor);
+            currentCursor = nextCursor;
+            this._syncedCount += events.length;
+            pulledEventsCount += events.length;
+            this._log('success', `Pull: Applied ${events.length} cloud events successfully. Cursor updated to ${nextCursor}`);
+          }
+        }
+
+        hasMoreEvents = Boolean(responseData?.hasMore && Array.isArray(events) && events.length > 0);
+      } catch (err) {
+        if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+          this.cachedAuthToken = null;
+          try {
+            await axios.post(`${this.localBackendUrl}/api/local/sync-token`, { token: null });
+          } catch (e) {}
+          throw new Error('Session expired or invalid token. Please log in again.');
+        }
+        this._log('warn', `Incremental pull notice on batch ${loopIteration}: ${err.message}`);
+        hasMoreEvents = false;
       }
-    } catch (err) {
-      if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-        this.cachedAuthToken = null;
-        try {
-          await axios.post(`${this.localBackendUrl}/api/local/sync-token`, { token: null });
-        } catch (e) {}
-        throw new Error('Session expired or invalid token. Please log in again.');
-      }
-      this._log('warn', `Incremental pull notice: ${err.message}`);
     }
 
-    // Always re-sync snapshot to guarantee all newly created records on web/cloud are brought locally
-    if (pulledEventsCount === 0) {
-      this._log('info', 'Refreshing cloud snapshot to synchronize latest records...');
-      await this._bootstrapSync(authToken);
-    }
+    // 2. Synchronize all workspace collections from Cloud DB into Local DB to guarantee 100% data parity
+    this._log('info', 'Synchronizing all workspace collections from Cloud DB into Local DB...');
+    await this._bootstrapSync(authToken);
   }
 
   // ─────────────────────────────────────────────
@@ -516,36 +554,29 @@ class SyncManager {
     let remoteRes = null;
     let fullSnapshotSuccess = false;
 
-    // Try full snapshot first (with 45s timeout per attempt)
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        remoteRes = await axios.get(
-          `${this.remoteBackendUrl}/api/sync/bootstrap`,
-          { 
-            headers: { Authorization: `Bearer ${authToken}` },
-            timeout: 45000
-          }
-        );
-        if (remoteRes.data?.data?.snapshot || remoteRes.data?.snapshot) {
-          fullSnapshotSuccess = true;
-          this._log('success', 'Full cloud snapshot downloaded successfully.');
-          break;
+    // Quick attempt at monolithic snapshot (with 12s timeout, avoiding 45s freeze)
+    try {
+      remoteRes = await axios.get(
+        `${this.remoteBackendUrl}/api/sync/bootstrap`,
+        { 
+          headers: { Authorization: `Bearer ${authToken}` },
+          timeout: 12000
         }
-      } catch (err) {
-        if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-          this.cachedAuthToken = null;
-          try {
-            await axios.post(`${this.localBackendUrl}/api/local/sync-token`, { token: null });
-          } catch (e) {}
-          throw new Error('Session expired or invalid token. Please log in again.');
-        }
-        const status = err.response?.status;
-        const msg = err.response?.data?.message || err.response?.data?.error || err.message;
-        this._log('warn', `Full snapshot attempt ${attempt}/2 failed (${status || 'ERR'}): ${msg}`);
-        if (attempt < 2) {
-          await new Promise(r => setTimeout(r, 2000));
-        }
+      );
+      if (remoteRes.data?.data?.snapshot || remoteRes.data?.snapshot) {
+        fullSnapshotSuccess = true;
+        if (this.networkMonitor) this.networkMonitor.recordActivity();
+        this._log('success', 'Full cloud snapshot downloaded in one batch.');
       }
+    } catch (err) {
+      if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+        this.cachedAuthToken = null;
+        try {
+          await axios.post(`${this.localBackendUrl}/api/local/sync-token`, { token: null });
+        } catch (e) {}
+        throw new Error('Session expired or invalid token. Please log in again.');
+      }
+      this._log('info', `Monolithic snapshot skipped (${err.message}). Proceeding directly with fast concurrent collection sync...`);
     }
 
     if (fullSnapshotSuccess && remoteRes) {
@@ -553,7 +584,7 @@ class SyncManager {
       const snapshot = responseData?.snapshot;
       const cursor = responseData?.cursor;
 
-      if (snapshot) {
+      if (snapshot && typeof snapshot === 'object') {
         const collectionCount = Object.keys(snapshot).length;
         this._log('info', `Applying snapshot (${collectionCount} collections) to local database...`);
         this._emit({ state: 'syncing', message: 'Applying Snapshot Locally...' });
@@ -567,45 +598,53 @@ class SyncManager {
 
           if (localRes.data?.success) {
             if (cursor) this._setCursor(cursor);
+            let totalRecordsSaved = 0;
             if (localRes.data?.results) {
+              for (const [col, count] of Object.entries(localRes.data.results)) {
+                totalRecordsSaved += count;
+              }
               const summary = Object.entries(localRes.data.results)
                 .filter(([_, count]) => count > 0)
                 .map(([col, count]) => `${col}: ${count}`)
                 .join(', ');
               this._log('info', `Bootstrap summary: ${summary || 'all empty collections'}`);
             }
-            this._log('success', `Bootstrap complete! Saved all collections to nsc_local.`);
+            this._syncedCount += totalRecordsSaved;
+            this._log('success', `Bootstrap complete! Saved ${totalRecordsSaved} records to nsc_local.`);
             return;
           }
         } catch (localErr) {
-          const msg = localErr.response?.data?.message || localErr.response?.data?.error || localErr.message;
-          this._log('error', `Local bootstrap write failed: ${msg}`);
-          throw localErr;
+          this._log('warn', `Direct bulk bootstrap write had notice: ${localErr.message}. Falling back to concurrent collection sync...`);
         }
       }
     }
 
-    // Fallback: Concurrent Collection-by-Collection sync (fast & resilient)
+    // Fast, resilient concurrent Collection-by-Collection sync
     this._log('info', 'Executing fast concurrent Collection-by-Collection sync...');
     const collectionsToSync = [
-      'users', 'customers', 'suppliers', 'products', 'product-variants',
-      'categories', 'brands', 'units', 'tax-rates', 'tax-groups',
-      'company-details', 'bank-details', 'bank-transactions', 'signatures',
-      'payment-modes', 'invoices', 'invoice-payments', 'invoice-templates',
-      'delivery-challans', 'quotations', 'purchases', 'credit-notes',
-      'debit-notes', 'supplier-payments', 'expenses', 'expense-categories',
-      'monthly-expenses', 'petty-cashes', 'petty-cash-transactions',
-      'inventories', 'attendance', 'staff-salary', 'customer-portal-branding',
-      'legal-settings', 'qr-settings', 'general-settings', 'localizations',
-      'barcode-settings', 'mrp-settings', 'number-sequences', 'brokers',
-      'commissions', 'colors', 'sizes', 'cities', 'states', 'countries',
-      'currencies', 'roles', 'permissions', 'email-settings', 'reminders',
-      'notifications', 'todo-tasks'
+      // 1. Roles, Permissions & Modules
+      'roles', 'permissions', 'modules',
+      // 2. Localization & Geographics
+      'currencies', 'date-formats', 'time-formats', 'timezones', 'countries', 'states', 'cities', 'localizations',
+      // 3. Settings & Configuration
+      'general-settings', 'company-details', 'legal-settings', 'qr-settings', 'barcode-settings', 'mrp-settings',
+      'number-sequences', 'customer-portal-branding', 'email-settings', 'email-templates', 'invoice-preferences',
+      'notification-tags', 'notification-types',
+      // 4. Master Data
+      'users', 'units', 'tax-rates', 'tax-groups', 'payment-modes', 'categories', 'brands', 'colors', 'sizes',
+      'products', 'product-variants', 'customers', 'suppliers', 'bank-details', 'signatures',
+      'brokers', 'broker-details', 'commissions', 'commission-system-settings', 'expense-categories',
+      // 5. Operations & Transactions
+      'invoices', 'invoice-payments', 'invoice-templates', 'delivery-challans', 'quotations', 'purchases',
+      'credit-notes', 'debit-notes', 'supplier-payments', 'expenses', 'monthly-expenses', 'expense-change-logs',
+      'petty-cashes', 'petty-cash-transactions', 'bank-transactions', 'inventories', 'attendance', 'staff-salary',
+      'eway-bills', 'reminders', 'notifications', 'todo-tasks', 'custom-fields', 'custom-field-data-types'
     ];
 
     let lastKnownCursor = null;
     let totalSyncedCollections = 0;
-    const concurrency = 6;
+    let totalRecordsSynced = 0;
+    const concurrency = 4;
 
     for (let i = 0; i < collectionsToSync.length; i += concurrency) {
       const chunk = collectionsToSync.slice(i, i + concurrency);
@@ -617,30 +656,52 @@ class SyncManager {
             message: `Syncing ${colName} (${overallIdx}/${collectionsToSync.length})...`,
           });
 
-          try {
-            const colRes = await axios.get(
-              `${this.remoteBackendUrl}/api/sync/bootstrap?collection=${colName}`,
-              {
-                headers: { Authorization: `Bearer ${authToken}` },
-                timeout: 30000
-              }
-            );
+          let colSuccess = false;
+          let attempt = 0;
+          const maxAttempts = 3;
 
-            const dataPayload = colRes.data?.data || colRes.data;
-            const colData = dataPayload?.data || dataPayload?.snapshot?.[colName] || [];
-            if (dataPayload?.cursor && !lastKnownCursor) lastKnownCursor = dataPayload.cursor;
-
-            if (Array.isArray(colData) && colData.length > 0) {
-              await axios.post(
-                `${this.localBackendUrl}/api/local/sync-bootstrap`,
-                { snapshot: { [colName]: colData } },
-                { timeout: 30000 }
+          while (!colSuccess && attempt < maxAttempts) {
+            attempt++;
+            try {
+              const colRes = await axios.get(
+                `${this.remoteBackendUrl}/api/sync/bootstrap?collection=${colName}`,
+                {
+                  headers: { Authorization: `Bearer ${authToken}` },
+                  timeout: 25000
+                }
               );
-              this._log('info', `✓ Synced ${colName}: ${colData.length} records`);
-              totalSyncedCollections++;
+
+              if (this.networkMonitor) this.networkMonitor.recordActivity();
+
+              const dataPayload = colRes.data?.data || colRes.data;
+              const colData = dataPayload?.data || dataPayload?.snapshot?.[colName] || [];
+              if (dataPayload?.cursor && !lastKnownCursor) lastKnownCursor = dataPayload.cursor;
+
+              if (Array.isArray(colData)) {
+                const saveRes = await axios.post(
+                  `${this.localBackendUrl}/api/local/sync-bootstrap`,
+                  { snapshot: { [colName]: colData } },
+                  { timeout: 30000 }
+                );
+                const savedCount = saveRes.data?.results?.[colName] ?? colData.length;
+                totalRecordsSynced += (typeof savedCount === 'number' ? savedCount : colData.length);
+                if (colData.length > 0) {
+                  this._log('info', `✓ Synced ${colName}: ${colData.length} records`);
+                }
+                totalSyncedCollections++;
+                colSuccess = true;
+              }
+            } catch (colErr) {
+              if (colErr.response && (colErr.response.status === 401 || colErr.response.status === 403)) {
+                this.cachedAuthToken = null;
+                throw new Error('Session expired or invalid token. Please log in again.');
+              }
+              if (attempt < maxAttempts) {
+                await new Promise(res => setTimeout(res, 800 * attempt));
+              } else {
+                this._log('warn', `Collection ${colName} could not sync after ${maxAttempts} attempts: ${colErr.message}`);
+              }
             }
-          } catch (colErr) {
-            this._log('warn', `Could not sync collection ${colName}: ${colErr.message}`);
           }
         })
       );
@@ -649,7 +710,8 @@ class SyncManager {
     if (lastKnownCursor) {
       this._setCursor(lastKnownCursor);
     }
-    this._log('success', `Collection-by-collection sync finished! Updated ${totalSyncedCollections} collections in nsc_local.`);
+    this._syncedCount += totalRecordsSynced;
+    this._log('success', `Collection sync complete! Synced ${totalSyncedCollections}/${collectionsToSync.length} collections (${totalRecordsSynced} records) into nsc_local.`);
   }
 
   // ─────────────────────────────────────────────
@@ -705,6 +767,7 @@ class SyncManager {
             });
 
             if (response.ok) {
+              if (this.networkMonitor) this.networkMonitor.recordActivity();
               await axios.post(`${this.localBackendUrl}/api/local/file-outbox/status`, { id: fileRecord._id, status: 'SYNCED' });
             } else {
               const errText = await response.text();
@@ -766,6 +829,7 @@ class SyncManager {
               dest.on('finish', resolve);
             });
 
+            if (this.networkMonitor) this.networkMonitor.recordActivity();
             await axios.post(`${this.localBackendUrl}/api/local/file-pull/status`, { id: fileRecord._id, status: 'SYNCED' });
           } catch (err) {
             this._log('warn', `Failed to pull file ${fileRecord.filePath}: ${err.message}`);

@@ -87,18 +87,31 @@ if (!process.env.JWT_SECRET) {
 
 app.use(cors());
 app.use(express.json({
+  limit: '50mb',
   verify: (req, res, buf) => {
     if (req.originalUrl.startsWith('/api/whatsapp/webhook')) {
       req.rawBody = buf.toString('utf8');
     }
   }
 }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 const { getUploadsRoot } = require('./utils/storagePaths');
 app.use('/uploads', express.static(getUploadsRoot()));
 
 app.get('/', require('./controllers/statusController').getStatus);
 
 app.get('/health', (req, res) => {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  res.json({
+    status: 'ok',
+    server: 'running',
+    db: states[mongoose.connection.readyState],
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/api/health', (req, res) => {
   const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
   res.json({
     status: 'ok',

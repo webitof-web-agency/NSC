@@ -3,49 +3,7 @@
 
 const mongoose = require('mongoose');
 
-const COLLECTION_MODEL_MAP = {
-  'users': 'User',
-  'customers': 'Customer',
-  'suppliers': 'Supplier',
-  'invoices': 'Invoice',
-  'quotations': 'Quotation',
-  'credit-notes': 'CreditNote',
-  'debit-notes': 'DebitNote',
-  'delivery-challans': 'DeliveryChallan',
-  'purchases': 'Purchase',
-  'supplier-payments': 'SupplierPayment',
-  'invoice-payments': 'InvoicePayment',
-  'attendance': 'Attendance',
-  'staff-salary': 'StaffSalary',
-  'products': 'Product',
-  'product-variants': 'ProductVariant',
-  'categories': 'Category',
-  'brands': 'Brand',
-  'units': 'Unit',
-  'tax-groups': 'TaxGroup',
-  'tax-rates': 'TaxRate',
-  'company-details': 'CompanySettings',
-  'bank-details': 'BankDetail',
-  'signatures': 'Signature',
-  'payment-modes': 'PaymentMode',
-  'expenses': 'Expense',
-  'expense-categories': 'ExpenseCategory',
-  'monthly-expenses': 'MonthlyExpense',
-  'petty-cashes': 'PettyCash',
-  'petty-cash-transactions': 'PettyCashTransaction',
-  'inventories': 'Inventory',
-  'brokers': 'Broker',
-  'commissions': 'Commission',
-  'reminders': 'Reminder',
-  'notifications': 'Notification',
-  'todo-tasks': 'TodoTask',
-  'customer-portal-branding': 'CustomerPortalBranding',
-  'legal-settings': 'LegalSettings',
-  'qr-settings': 'QrSettings',
-  'roles': 'Role',
-  'permissions': 'Permission',
-  'bank-transactions': 'BankTransaction',
-};
+const { COLLECTION_MAP: COLLECTION_MODEL_MAP } = require('./localSyncBootstrapController');
 
 const DATE_FIELD_NAMES = new Set([
   'createdAt', 'updatedAt', 'invoiceDate', 'dueDate', 'date',
@@ -150,7 +108,9 @@ function getModel(name) {
   const modelName = COLLECTION_MODEL_MAP[name];
   if (!modelName) return null;
   try {
-    return mongoose.models[modelName] || require(`@models/${modelName}`);
+    if (mongoose.models[modelName]) return mongoose.models[modelName];
+    if (modelName === 'InvoicePreferences') return require('../models/invoicePreferencesModuleSettings');
+    return require(`@models/${modelName}`);
   } catch (err) {
     console.warn(`[Sync Apply] Model for collection "${name}" not found:`, err.message);
     return null;
