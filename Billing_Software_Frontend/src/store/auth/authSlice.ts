@@ -57,6 +57,7 @@ export const loginUser = createAsyncThunk(
             if (typeof localStorage !== 'undefined') {
                 localStorage.setItem("authToken", token);
                 localStorage.setItem("authUser", JSON.stringify(user));
+                localStorage.setItem("sidebar-open", "false");
             }
 
             // In Electron: after a successful ONLINE login, cache token + user into
@@ -107,6 +108,7 @@ export const authSlice = createSlice({
                 localStorage.removeItem("authToken");
                 localStorage.removeItem("authUser");
                 localStorage.removeItem("systemSettings");
+                localStorage.setItem("sidebar-open", "false");
             }
         },
         initializeAuth: (state) => {

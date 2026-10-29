@@ -1,7 +1,7 @@
 import Header from '../layouts/AdminHeader';
 import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../Sidebar';
 import ProductSidebar from '../ProductSidebar';
 import SidebarToggleButton from '../SidebarToggleButton';
@@ -11,7 +11,11 @@ interface AdminLayoutProps {
 }
 
 const AdminLayout = ({ children }: AdminLayoutProps) => {
+  const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      return false;
+    }
     const saved = localStorage.getItem("sidebar-open");
     return saved ? JSON.parse(saved) : false;
   });
@@ -26,16 +30,24 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
     };
 
     window.addEventListener("resize", handleResize);
-    // don't force handleResize() on load if we want to respect localStorage for desktop,
-    // but we still want to force close on mobile load
     if (window.innerWidth < 768) {
-        setIsSidebarOpen(false);
+      setIsSidebarOpen(false);
     }
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Automatically close sidebar on small screens when route changes
   useEffect(() => {
-    localStorage.setItem("sidebar-open", JSON.stringify(isSidebarOpen));
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  // Only persist sidebar open state on desktop screens
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth >= 768) {
+      localStorage.setItem("sidebar-open", JSON.stringify(isSidebarOpen));
+    }
   }, [isSidebarOpen]);
 
   const isElectron = typeof window !== 'undefined' && 'electronAPI' in window;
@@ -57,10 +69,18 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       {/* ElectronStatusBar is rendered once at root level in App.tsx — NOT here */}
       <div className={`flex bg-white font-sans ${layoutHeightClass}`}>
 
-        <Sidebar isOpen={isSidebarOpen} />
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <Header toggleSidebar={() => setIsSidebarOpen(prev => !prev)} />
-          <main key={contentKey} className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4">
+          <main
+            key={contentKey}
+            onClick={() => {
+              if (window.innerWidth < 768 && isSidebarOpen) {
+                setIsSidebarOpen(false);
+              }
+            }}
+            className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4"
+          >
             {children || <Outlet />}
           </main>
         </div>

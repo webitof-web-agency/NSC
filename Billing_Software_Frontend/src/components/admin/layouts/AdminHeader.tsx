@@ -77,6 +77,7 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
     const todoRef = useRef<HTMLDivElement>(null);
     const customBarcodeRef = useRef<HTMLDivElement>(null);
     const quickCreateRef = useRef<HTMLDivElement>(null);
+    const profileRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
     const dispatch = useDispatch();
 
@@ -462,6 +463,9 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
             if (quickCreateRef.current && !quickCreateRef.current.contains(e.target as Node)) {
                 setOpen(false);
             }
+            if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+                setIsDropdownOpen(false);
+            }
         };
 
         document.addEventListener("mousedown", handler);
@@ -486,21 +490,25 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
     };
 
     return (
-        <header className="flex items-center justify-between px-4 py-1 bg-white shadow sticky top-0 z-40">
-            <div className="flex items-center gap-2">
-                <button onClick={(e) => { e.stopPropagation(); toggleSidebar(); }} className="text-gray-500 focus:outline-none cursor-pointer mr-1">
-                    <Menu className="w-6 h-6" />
+        <header className="flex items-center justify-between px-2 sm:px-4 py-1.5 bg-white shadow sticky top-0 z-40 gap-1 sm:gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                <button
+                    onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
+                    className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 p-1.5 rounded-lg focus:outline-none cursor-pointer transition shrink-0"
+                    title="Toggle Sidebar"
+                >
+                    <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
-                <div className="flex items-center gap-2">
-                    <div className="relative" ref={todoRef}>
+                <div className="flex items-center gap-1 sm:gap-2">
+                    <div className="relative shrink-0" ref={todoRef}>
                         <button
                             onClick={() => setTodoOpen(!todoOpen)}
-                            className="relative flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-100 transition"
+                            className="relative flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full hover:bg-gray-100 transition shrink-0"
                             title="To-Do Tasks"
                         >
-                            <ListTodo className="w-5 h-5 text-gray-700" />
+                            <ListTodo className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
                             {todoSummary.attentionCount > 0 && (
-                                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center">
+                                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] sm:min-w-[18px] sm:h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] sm:text-[10px] font-semibold flex items-center justify-center">
                                     {todoSummary.attentionCount > 99 ? "99+" : todoSummary.attentionCount}
                                 </span>
                             )}
@@ -654,13 +662,13 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
                             </div>
                         )}
                     </div>
-                    <div className="relative" ref={customBarcodeRef}>
+                    <div className="relative shrink-0" ref={customBarcodeRef}>
                         <button
                             onClick={() => setCustomBarcodeOpen((prev) => !prev)}
-                            className="relative flex items-center justify-center w-9 h-9 rounded-full hover:bg-gray-100 transition"
+                            className="relative flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full hover:bg-gray-100 transition shrink-0"
                             title="Custom QR Print"
                         >
-                            <QrCode className="w-5 h-5 text-gray-700" />
+                            <QrCode className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
                         </button>
 
                         {customBarcodeOpen && (
@@ -783,35 +791,39 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
                 </div>
             </div>
 
-            <div className="flex items-center space-x-2">
-                <div className='flex items-center justify-center w-34 h-10 rounded-full hover:bg-gray-100 transition'>
-                    <button onClick={() => { navigate(`/admin/invoices/exchange/new`) }}>
-                        <div className='flex items-center gap-1'>
-                            <ArrowLeftRight className="w-5 h-5 text-gray-700" />
-                            New Exchange
-                        </div>
-                    </button>
-                </div>
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                <button
+                    onClick={() => { navigate(`/admin/invoices/exchange/new`) }}
+                    title="New Exchange"
+                    className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 md:w-auto md:h-9 md:px-3 rounded-full hover:bg-gray-100 transition text-gray-700 shrink-0"
+                >
+                    <div className="flex items-center gap-1.5">
+                        <ArrowLeftRight className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
+                        <span className="hidden md:inline text-xs sm:text-sm font-medium whitespace-nowrap">New Exchange</span>
+                    </div>
+                </button>
 
-                <div className='flex items-center justify-center w-30 h-10 rounded-full hover:bg-gray-100 transition'>
-                    <button onClick={() => { navigate(`/admin/invoices/create-invoice`) }}>
-                        <div className='flex items-center gap-1'>
-                            <FileText className="w-5 h-5 text-gray-700" />
-                            New Invoice
-                        </div>
-                    </button>
-                </div>
-
+                <button
+                    onClick={() => { navigate(`/admin/invoices/create-invoice`) }}
+                    title="New Invoice"
+                    className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 md:w-auto md:h-9 md:px-3 rounded-full hover:bg-gray-100 transition text-gray-700 shrink-0"
+                >
+                    <div className="flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
+                        <span className="hidden md:inline text-xs sm:text-sm font-medium whitespace-nowrap">New Invoice</span>
+                    </div>
+                </button>
 
                 {canViewNotifications && (
-                    <div className="relative" ref={notificationRef}>
+                    <div className="relative shrink-0" ref={notificationRef}>
                         <button
                             onClick={() => setNotificationOpen(!notificationOpen)}
-                            className="relative flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-100 transition"
+                            className="relative flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full hover:bg-gray-100 transition shrink-0"
+                            title="Notifications"
                         >
-                            <Bell className="w-5 h-5 text-gray-700" />
+                            <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
                             {unreadCount > 0 && (
-                                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center">
+                                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] sm:min-w-[18px] sm:h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] sm:text-[10px] font-semibold flex items-center justify-center">
                                     {unreadCount > 99 ? "99+" : unreadCount}
                                 </span>
                             )}
@@ -949,12 +961,13 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
                     </div>
                 )}
 
-                <div className="relative" ref={invoiceRef}>
+                <div className="relative shrink-0" ref={invoiceRef}>
                     <button
                         onClick={() => setInvoiceOpen(!invoiceOpen)}
-                        className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-100 transition"
+                        className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full hover:bg-gray-100 transition shrink-0"
+                        title="Recent Invoices"
                     >
-                        <IoReceiptOutline className="w-5 h-5 text-gray-700" />
+                        <IoReceiptOutline className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
                     </button>
 
                     {invoiceOpen && (
@@ -1118,27 +1131,28 @@ const AdminHeader = ({ toggleSidebar }: HeaderProps) => {
                     )}
                 </div>
 
-                <div className="relative">
+                <div className="relative shrink-0" ref={profileRef}>
                     <button
                         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                        className="flex items-center space-x-2 focus:outline-none  rounded-full p-1 cursor-pointer"
+                        className="flex items-center focus:outline-none rounded-full p-0.5 cursor-pointer shrink-0"
                         aria-expanded={isDropdownOpen}
                         aria-haspopup="true"
+                        title={user?.firstName ? `${user.firstName} ${user.lastName || ''}` : "User Profile"}
                     >
                         <div className={
                             user?.profileImageUrl ?
-                                `w-10 h-10 border-2 border-primary text-white rounded-full flex items-center justify-center text-lg font-semibold`
-                                : `w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-500 text-white rounded-full flex items-center justify-center text-lg font-semibold`
+                                `w-8 h-8 sm:w-9 sm:h-9 border-2 border-primary text-white rounded-full flex items-center justify-center text-sm font-semibold overflow-hidden`
+                                : `w-8 h-8 sm:w-9 sm:h-9 bg-gradient-to-br from-purple-600 to-blue-500 text-white rounded-full flex items-center justify-center text-sm font-semibold`
                         }>
                             {user?.profileImageUrl ? (
                                 <img
                                     src={normalizeImageUrl(user.profileImageUrl)}
                                     alt="User"
-                                    className="w-8 h-8 rounded-full"
+                                    className="w-full h-full object-cover"
                                 />
                             )
                                 :
-                                <UserCircle className="w-6 h-6" />
+                                <UserCircle className="w-5 h-5 sm:w-6 sm:h-6" />
                             }
                         </div>
                     </button>

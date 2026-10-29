@@ -38,6 +38,9 @@ const LoginPage: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("sidebar-open", "false");
+      }
       navigate("/admin/dashboard");
     }
   }, [isAuthenticated, navigate]);
@@ -91,6 +94,9 @@ const LoginPage: React.FC = () => {
     e.preventDefault();
     const resultAction = await dispatch(loginUser({ email, password }));
     if (loginUser.fulfilled.match(resultAction)) {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("sidebar-open", "false");
+      }
       navigate("/");
     }
   };

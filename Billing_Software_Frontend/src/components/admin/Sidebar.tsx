@@ -26,6 +26,7 @@ import {
     PackageOpen,
     AlertTriangle,
     XCircle,
+    X,
     User,
     Building,
     Globe,
@@ -557,12 +558,14 @@ const NavItem = ({
     permissions,
     user,
     allLinkPaths,
+    onClose,
 }: {
     item: NavLinkItem;
     isSidebarOpen: boolean;
     permissions: PermissionSet[];
     user: any;
     allLinkPaths: string[];
+    onClose?: () => void;
 }) => {
     const { pathname } = useLocation();
     const { to, icon, title, slug, addPath } = item;
@@ -583,7 +586,15 @@ const NavItem = ({
 
     return (
         <div className="relative group">
-            <NavLink to={to} className={getLinkClasses({ isActive })}>
+            <NavLink
+                to={to}
+                onClick={() => {
+                    if (window.innerWidth < 768 && onClose) {
+                        onClose();
+                    }
+                }}
+                className={getLinkClasses({ isActive })}
+            >
                 <div className="flex items-center">
                     {icon}
                     <span
@@ -604,6 +615,11 @@ const NavItem = ({
             {isSidebarOpen && addPath && canCreate(slug, permissions, user) && (
                 <Link
                     to={addPath}
+                    onClick={() => {
+                        if (window.innerWidth < 768 && onClose) {
+                            onClose();
+                        }
+                    }}
                     className="absolute right-0 top-0 h-full w-8 flex items-center justify-center bg-primary text-white rounded-r-lg opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                     <Plus size={18} />
@@ -618,11 +634,13 @@ const SubNavLinkItem = ({
     permissions,
     user,
     allLinkPaths,
+    onClose,
 }: {
     item: NavLinkItem;
     permissions: PermissionSet[];
     user: any;
     allLinkPaths: string[];
+    onClose?: () => void;
 }) => {
     const { to, title, slug, addPath } = item;
     const { pathname } = useLocation();
@@ -643,13 +661,26 @@ const SubNavLinkItem = ({
 
     return (
         <div className="relative group/subitem">
-            <NavLink to={to} className={getSubLinkClasses({ isActive })}>
+            <NavLink
+                to={to}
+                onClick={() => {
+                    if (window.innerWidth < 768 && onClose) {
+                        onClose();
+                    }
+                }}
+                className={getSubLinkClasses({ isActive })}
+            >
                 <span>{title}</span>
             </NavLink>
 
             {addPath && canCreate(slug, permissions, user) && (
                 <Link
                     to={addPath}
+                    onClick={() => {
+                        if (window.innerWidth < 768 && onClose) {
+                            onClose();
+                        }
+                    }}
                     className="absolute right-0 top-0 h-full w-8 flex items-center justify-center bg-primary text-white rounded-r-lg opacity-0 group-hover/subitem:opacity-100 transition-opacity"
                 >
                     <Plus size={18} />
@@ -670,6 +701,7 @@ interface CollapsibleNavItemProps {
     permissions: PermissionSet[];
     user: any;
     allLinkPaths: string[];
+    onClose?: () => void;
 }
 
 // This is the updated CollapsibleNavItem component
@@ -683,6 +715,7 @@ const CollapsibleNavItem = ({
     permissions,
     user,
     allLinkPaths,
+    onClose,
 }: CollapsibleNavItemProps) => {
     const { id, icon, title, children, slug, addPath } = item;
     const isOpen = openMenus[id] || false;
@@ -721,6 +754,11 @@ const CollapsibleNavItem = ({
             {isSidebarOpen && addPath && canCreate(slug, permissions, user) && (
                 <Link
                     to={addPath}
+                    onClick={() => {
+                        if (window.innerWidth < 768 && onClose) {
+                            onClose();
+                        }
+                    }}
                     className="absolute right-0 top-0 h-full w-8 flex items-center justify-center bg-primary text-white rounded-r-lg opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                     <Plus size={18} />
@@ -757,6 +795,7 @@ const CollapsibleNavItem = ({
                                         permissions={permissions}
                                         user={user}
                                         allLinkPaths={allLinkPaths}
+                                        onClose={onClose}
                                     />
                                 );
                             case "collapsible":
@@ -772,6 +811,7 @@ const CollapsibleNavItem = ({
                                         permissions={permissions}
                                         user={user}
                                         allLinkPaths={allLinkPaths}
+                                        onClose={onClose}
                                     />
                                 );
                             default:
@@ -827,7 +867,7 @@ const findPathToId = (items: NavItemType[], targetId: string): string[] => {
 };
 
 // --- Main Sidebar Component ---
-const Sidebar = ({ isOpen }: { isOpen: boolean }) => {
+const Sidebar = ({ isOpen, onClose }: { isOpen: boolean; onClose?: () => void }) => {
     const { pathname } = useLocation();
     const navigate = useNavigate();
 
@@ -937,41 +977,68 @@ const Sidebar = ({ isOpen }: { isOpen: boolean }) => {
     }, [filterNavItems]);
 
     return (
-        <aside
-            ref={sidebarRef}
-            className={`bg-gray-50 text-gray-950 flex flex-col transition-all duration-300 ease-in-out z-50 border-r border-gray-200 ${isOpen ? "w-60" : "w-16"
+        <>
+            {isOpen && (
+                <div
+                    className="fixed inset-0 bg-black/40 z-40 md:hidden transition-opacity"
+                    onClick={onClose}
+                />
+            )}
+            <aside
+                ref={sidebarRef}
+                className={`bg-gray-50 text-gray-950 flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out z-50 fixed inset-y-0 left-0 md:static ${
+                    isOpen
+                        ? "w-60 min-w-[15rem] border-r border-gray-200 shadow-2xl md:shadow-none translate-x-0"
+                        : "w-0 min-w-0 border-r-0 overflow-hidden pointer-events-none -translate-x-full md:translate-x-0 md:pointer-events-auto md:w-16 md:min-w-[4rem] md:border-r md:border-gray-200 md:overflow-visible"
                 }`}
-        >
-            <div className="p-4 flex items-center h-12">
-                {(() => {
-                    const logoSrc =
-                        resolveAssetUrl(systemSettings?.company?.favicon) ||
-                        resolveAssetUrl(systemSettings?.company?.siteLogo) ||
-                        logoImage;
-                    return (
-                        <img
-                            src={logoSrc}
-                            alt="Logo"
-                            className={`h-6 w-6 ${isOpen ? "hidden" : ""}`}
-                        />
-                    );
-                })()}
-                <span
-                    onClick={() => navigate("/admin/dashboard")}
-                    className={`text-xl font-medium ml-2 text-gray-950 transition-opacity duration-200 whitespace-nowrap cursor-pointer ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-                        }`}
-                >
-                    <img
-                        src={
-                            resolveAssetUrl(systemSettings?.company?.siteLogo) ||
-                            resolveAssetUrl(systemSettings?.company?.favicon) ||
-                            logoImage
-                        }
-                        alt="Logo"
-                        className="w-32"
-                    />
-                </span>
-            </div>
+            >
+                <div className="p-4 flex items-center justify-between h-12">
+                    <div className="flex items-center min-w-0">
+                        {(() => {
+                            const logoSrc =
+                                resolveAssetUrl(systemSettings?.company?.favicon) ||
+                                resolveAssetUrl(systemSettings?.company?.siteLogo) ||
+                                logoImage;
+                            return (
+                                <img
+                                    src={logoSrc}
+                                    alt="Logo"
+                                    className={`h-6 w-6 ${isOpen ? "hidden md:hidden" : ""}`}
+                                />
+                            );
+                        })()}
+                        <span
+                            onClick={() => {
+                                navigate("/admin/dashboard");
+                                if (window.innerWidth < 768 && onClose) {
+                                    onClose();
+                                }
+                            }}
+                            className={`text-xl font-medium ml-2 text-gray-950 transition-opacity duration-200 whitespace-nowrap cursor-pointer ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+                                }`}
+                        >
+                            <img
+                                src={
+                                    resolveAssetUrl(systemSettings?.company?.siteLogo) ||
+                                    resolveAssetUrl(systemSettings?.company?.favicon) ||
+                                    logoImage
+                                }
+                                alt="Logo"
+                                className="w-32"
+                            />
+                        </span>
+                    </div>
+                    {isOpen && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="p-1 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-200 transition md:hidden ml-2 shrink-0"
+                            title="Close Sidebar"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    )}
+                </div>
             <nav className={`flex-1 px-3 py-2 ${isOpen ? "overflow-y-auto" : "overflow-visible"}`}>
                 {filterNavItems.map((item, index) => {
                     switch (item.type) {
@@ -996,6 +1063,7 @@ const Sidebar = ({ isOpen }: { isOpen: boolean }) => {
                                     permissions={permissions}
                                     user={user}
                                     allLinkPaths={allLinkPaths}
+                                    onClose={onClose}
                                 />
                             );
                         case "collapsible":
@@ -1011,6 +1079,7 @@ const Sidebar = ({ isOpen }: { isOpen: boolean }) => {
                                     permissions={permissions}
                                     user={user}
                                     allLinkPaths={allLinkPaths}
+                                    onClose={onClose}
                                 />
                             );
                         default:
@@ -1020,6 +1089,7 @@ const Sidebar = ({ isOpen }: { isOpen: boolean }) => {
             </nav>
             {isOpen && <BottomBar />}
         </aside>
+        </>
     );
 };
 
