@@ -23,9 +23,11 @@ export const ActionMenu = <T,>({ row, actions }: ActionMenuProps<T>) => {
   useLayoutEffect(() => {
     if (isOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      const menuWidth = 148;
+      const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
       setPosition({
-        top: rect.bottom + window.scrollY + 4, // Position below the button
-        left: rect.right + window.scrollX - 128, // 128 is the menu width (w-32)
+        top: rect.bottom + 4,
+        left,
       });
     }
   }, [isOpen]);

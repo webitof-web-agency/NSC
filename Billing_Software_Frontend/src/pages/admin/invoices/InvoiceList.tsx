@@ -1087,46 +1087,46 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
 
     return (
         <div className="space-y-4">
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
-                <h1 className="text-2xl font-bold text-gray-950 ">{title}</h1>
-                <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-950">{title}</h1>
+                <div className="flex flex-wrap items-center gap-2">
                     {headerActions ? headerActions : (showCreateActions && hasPermission(permissions, 'invoices', 'create') && (
                         <>
                             {hasPermission(permissions, 'invoices', 'delete') && (
                                 <button
                                     onClick={() => setShowBulkDeleteModal(true)}
                                     disabled={selectedIds.length === 0}
-                                    className={`px-3 py-2 rounded-md shadow cursor-pointer flex items-center gap-2 ${selectedIds.length === 0
+                                    className={`px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2 ${selectedIds.length === 0
                                         ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                                         : "bg-red-100 hover:bg-red-200 text-red-600"
                                         }`}
                                 >
-                                    <Trash2Icon size={16} /> Bulk Delete {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
+                                    <Trash2Icon size={15} /> <span>Bulk Delete</span> {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
                                 </button>
                             )}
                             <button
                                 onClick={handleExportClick}
-                                className="bg-emerald-100 hover:bg-emerald-200 text-emerald-600 px-3 py-2 rounded-md shadow cursor-pointer flex items-center gap-2">
-                                <Download size={16} /> Export Excel {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
+                                className="bg-emerald-100 hover:bg-emerald-200 text-emerald-600 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2">
+                                <Download size={15} /> <span>Export</span> {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
                             </button>
                             {!hideUploadButton && (
                                 <button
                                     onClick={() => navigate('/admin/invoices/bulk-import')}
-                                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-md shadow cursor-pointer flex items-center gap-2">
-                                    <Upload size={16} /> Upload Excel
+                                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2">
+                                    <Upload size={15} /> <span>Upload</span>
                                 </button>
                             )}
                             {!hideNewExchangeButton && (
                                 <button
                                     onClick={() => navigate('/admin/invoices/exchange/new')}
-                                    className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-2 rounded-md shadow cursor-pointer flex items-center gap-2">
-                                    <ArrowLeftRight size={16} /> New Exchange
+                                    className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2">
+                                    <ArrowLeftRight size={15} /> <span>New Exchange</span>
                                 </button>
                             )}
                             <button
                                 onClick={handleNewInvoiceClick}
-                                className="bg-primary hover:bg-gray-950 text-white px-2 py-1 rounded-md shadow cursor-pointer flex items-center gap-2">
-                                <CirclePlusIcon size={14} /> {createLabel}
+                                className="bg-primary hover:bg-gray-950 text-white px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2">
+                                <CirclePlusIcon size={15} /> <span>{createLabel}</span>
                             </button>
                         </>
                     ))}
@@ -1134,17 +1134,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
             </div>
 
             {/* Search Input & Filters */}
-            <div className="flex flex-col md:flex-row justify-between gap-4 mb-4">
+            <div className="flex flex-col md:flex-row justify-between gap-3 sm:gap-4 mb-4">
                 <input
                     type="text"
                     placeholder="Search by invoice number, phone..."
                     value={searchInput}
                     onChange={(e) => handleSearch(e.target.value)}
-                    className="border border-gray-300 rounded-md px-4 py-2 w-full md:w-80 text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                    className="border border-gray-300 rounded-md px-3 sm:px-4 py-2 w-full md:w-80 text-sm text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
                 />
-                <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-start sm:items-center">
+                <div className="flex flex-col sm:flex-row flex-wrap gap-2.5 sm:gap-3 w-full md:w-auto items-stretch sm:items-center">
                     {/* Date Range Picker */}
-                    <div className="relative flex items-center gap-1">
+                    <div className="relative flex items-center gap-1 w-full sm:w-auto">
                         <DateRangePicker
                             value={dateRange}
                             onChange={handleDateRangeChange}
@@ -1153,7 +1153,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                             <button
                                 onClick={() => handleDateRangeChange({ startDate: null, endDate: null })}
                                 title="Clear date filter"
-                                className="ml-1 text-gray-400 hover:text-gray-600 transition-colors"
+                                className="ml-1 text-gray-400 hover:text-gray-600 transition-colors shrink-0"
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
@@ -1177,7 +1177,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                                     { value: 'cancelled', label: 'Cancelled' },
                                 ]}
                                 placeholder="Select Status"
-                                className="min-w-[180px] w-full"
+                                className="w-full sm:min-w-[180px]"
                             />
                         </div>
                     )}
@@ -1185,7 +1185,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                     <select
                         value={limit}
                         onChange={(e) => handlePageLengthChange(Number(e.target.value))}
-                        className="border border-gray-300 px-4 py-2 rounded-md bg-white text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent cursor-pointer w-full sm:w-auto"
+                        className="border border-gray-300 px-3 sm:px-4 py-2 rounded-md bg-white text-sm text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent cursor-pointer w-full sm:w-auto"
                     >
                         {[10, 25, 50].map((num) => (
                             <option className="text-gray-950" key={num} value={num}>{num} / page</option>
@@ -1193,7 +1193,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
                     </select>
                 </div>
             </div>
-            <div className="w-full overflow-hidden [&_table]:table-fixed [&_th]:px-2 [&_th]:py-2 [&_td]:px-2 [&_td]:py-1 [&_td]:text-xs [&_th]:text-[10px] [&_td]:break-words [&_table]:w-full [&_th:first-child]:w-[40px] [&_th:nth-child(2)]:w-[40px]">
+            <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 bg-white [&_th]:px-2.5 [&_th]:py-2 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-xs [&_th]:text-[11px] [&_td]:break-words [&_table]:min-w-[1020px] [&_th:first-child]:w-[40px] [&_th:nth-child(2)]:w-[40px]">
                 <Table headers={[
                     "#",
                     <CustomCheckbox

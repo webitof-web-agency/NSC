@@ -2808,19 +2808,19 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
   );
 
   return (
-    <div className="md:p-4 bg-white-50 min-h-screen border border-gray-200 rounded pb-4 md:pb-24 relative">
+    <div className="p-3 md:p-4 bg-white-50 min-h-screen border border-gray-200 rounded pb-4 md:pb-24 relative">
       <form>
         <div className="max-w-7xl mx-auto space-y-3">
-          <div className="flex items-center justify-between gap-4 mb-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-950 shrink-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-1">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-950 shrink-0">
                 {isEditMode ? (isCreditNote ? "Edit Credit Note" : "Edit Invoice") : isExchangeCreate ? "New Exchange" : (isCreditNote ? "New Credit Note" : "New Invoice")}
               </h1>
               {!isEditMode && !isExchangeCreate && (
                 <button
                   type="button"
                   onClick={() => setShowAiInvoiceScanModal(true)}
-                  className="inline-flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-semibold text-primary hover:bg-primary/10"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold text-primary hover:bg-primary/10"
                 >
                   <FileSearch className="h-4 w-4" />
                   Scan Invoice
@@ -2828,8 +2828,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-2">
-              <div className="w-48 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <div className="w-full sm:w-44 lg:w-48">
                 <SmartDropdown
                   items={taxTypeOptions}
                   value={invoiceFormData.taxType}
@@ -2843,7 +2843,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
 
               {/* GST / Shipping Details widget — stays on title line */}
               <div
-                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 transition-all duration-200 ${enableInvoiceDetails
+                className={`flex flex-1 sm:flex-none items-center gap-2 rounded-lg border px-3 py-1.5 transition-all duration-200 ${enableInvoiceDetails
                   ? "border-[#CCA2BB] bg-[#fce6f4]"
                   : "border-gray-300 bg-gray-50"
                   }`}
@@ -2898,12 +2898,12 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
           </div>
 
           {/* ── Compact single-row form fields ── */}
-          <div className="bg-white border border-gray-200 rounded-lg px-4 pt-3 pb-4">
+          <div className="bg-white border border-gray-200 rounded-lg px-3 sm:px-4 pt-3 pb-4">
             {/* Logo in form card top-right */}
             <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
 
               {/* Invoice Number */}
-              <div className="w-44 shrink-0">
+              <div className="w-full sm:w-44 shrink-0">
                 <label htmlFor="invoiceNumber" className="block text-xs font-medium text-gray-600 mb-1">
                   {isCreditNote ? "Credit Note Number" : "Invoice Number"}
                 </label>
@@ -2932,7 +2932,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
               </div>
 
               {/* Invoice Date */}
-              <div className="w-40 shrink-0">
+              <div className="w-full sm:w-40 shrink-0">
                 <DateInput
                   label={isCreditNote ? "Credit Note Date" : "Invoice Date"}
                   value={invoiceFormData.invoiceDate}
@@ -2946,7 +2946,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
               </div>
 
               {/* Bill To */}
-              <div className="flex-1 min-w-[200px]">
+              <div className="w-full sm:flex-1 sm:min-w-[200px]">
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-medium text-gray-600">
                     Bill To (Optional)
@@ -2983,7 +2983,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
               </div>
 
               {/* Staff Member */}
-              <div className="w-52 shrink-0">
+              <div className="w-full sm:w-52 shrink-0">
                 {showStaffSelector ? (
                   <>
                     <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -3017,7 +3017,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
 
               {/* Exchange Invoice (only on exchange create) */}
               {isExchangeCreate && (
-                <div className="w-56 shrink-0">
+                <div className="w-full sm:w-56 shrink-0">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Exchange Invoice</label>
                   <SmartDropdown
                     items={exchangeInvoiceOptions}
@@ -3042,8 +3042,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
 
               {isExchangeCreate ? (
                 <>
-                  <div className="flex flex-wrap gap-6 items-center pb-4">
-                    <div ref={quickAddRef} className="relative flex-1 min-w-[320px]">
+                  <div className="flex flex-wrap gap-4 sm:gap-6 items-center pb-4">
+                    <div ref={quickAddRef} className="relative flex-1 min-w-0 w-full sm:min-w-[280px]">
                       <input
                         ref={quickAddInputRef}
                         type="text"
@@ -3256,8 +3256,8 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
                 </>
               ) : (
                 <>
-                  <div className="flex flex-wrap gap-6 items-center pb-4">
-                    <div ref={quickAddRef} className="relative flex-1 min-w-[320px]">
+                  <div className="flex flex-wrap gap-4 sm:gap-6 items-center pb-4">
+                    <div ref={quickAddRef} className="relative flex-1 min-w-0 w-full sm:min-w-[280px]">
                       <input
                         ref={quickAddInputRef}
                         type="text"
@@ -3494,7 +3494,7 @@ const CreateInvoice: React.FC<CreateInvoiceProps> = ({
                 </div>
                 {showExtraInfo && (
                   <>
-                    <div className="flex items-center gap-2 mb-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-4">
                       <button
                         type="button"
                         onClick={() => setActiveInfoTab("notes")}

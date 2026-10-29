@@ -170,7 +170,7 @@ const InvoicePaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, inv
         <Modal isOpen={isOpen} onClose={() => handleOnClose()} title="Invoice Payment">
             <form onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
                 {/* Invoice Number & Amount */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="form-control">
                         <label htmlFor="invoiceNumber" className="block text-sm font-medium text-gray-700 ">
                             Invoice Number
@@ -192,7 +192,7 @@ const InvoicePaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, inv
                 </div>
 
                 {/* Balance amount & Received Date */}
-                <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                     <div className="form-control">
                         <label
                             htmlFor="balanceAmount"

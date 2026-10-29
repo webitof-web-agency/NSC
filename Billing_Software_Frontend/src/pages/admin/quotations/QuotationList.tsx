@@ -351,50 +351,51 @@ const QuotationList: React.FC = () => {
 
     return (
         <div className="space-y-4">
-            <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold text-gray-950 ">Quotations</h1>
-                <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-950">Quotations</h1>
+                <div className="flex flex-wrap items-center gap-2">
                     {hasPermission(permissions, 'quotations', 'delete') && (
                         <button
                             onClick={() => setShowBulkDeleteModal(true)}
                             disabled={selectedIds.length === 0}
-                            className={`px-2 py-1 rounded-md shadow cursor-pointer flex items-center gap-2 ${selectedIds.length === 0
+                            className={`px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2 ${selectedIds.length === 0
                                 ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                                 : "bg-red-100 hover:bg-red-200 text-red-600"
                                 }`}
                         >
-                            <Trash2Icon size={14} /> Bulk Delete {selectedIds.length > 0 ? `(${selectedIds.length})` : ""} {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
+                            <Trash2Icon size={15} /> <span>Bulk Delete</span> {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
                         </button>
                     )}
                     {hasPermission(permissions, 'quotations', 'create') && (
                         <button
                             onClick={handleNewQuotationClick}
-                            className="bg-primary hover:bg-gray-950 text-white px-2 py-1 rounded-md shadow cursor-pointer flex items-center gap-2">
-                            <CirclePlusIcon size={14} /> New Quotation
+                            className="bg-primary hover:bg-gray-950 text-white px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md shadow cursor-pointer flex items-center gap-1.5 sm:gap-2">
+                            <CirclePlusIcon size={15} /> <span>New Quotation</span>
                         </button>
                     )}
                 </div>
             </div>
 
             {/* Search Input & PageLength */}
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-4 mb-4">
                 <input
                     type="text"
                     placeholder="Search..."
                     value={searchInput}
                     onChange={(e) => handleSearch(e.target.value)}
-                    className="border border-gray-300 rounded-md px-4 py-2 w-full md:w-64  text-gray-950  focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                    className="border border-gray-300 rounded-md px-3 sm:px-4 py-2 w-full md:w-80 text-sm text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
                 />
                 <select
                     value={limit}
                     onChange={(e) => handlePageLengthChange(Number(e.target.value))}
-                    className="border border-gray-300 px-3 py-2 rounded-md bg-white  text-gray-950  focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                    className="border border-gray-300 px-3 sm:px-4 py-2 rounded-md bg-white text-sm text-gray-950 focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent cursor-pointer w-full sm:w-auto"
                 >
                     {[10, 25, 50].map((num) => (
-                        <option className="text-gray-950 " key={num} value={num}>{num} / page</option>
+                        <option className="text-gray-950" key={num} value={num}>{num} / page</option>
                     ))}
                 </select>
             </div>
+            <div className="w-full overflow-x-auto shadow-sm rounded-lg border border-gray-200 bg-white [&_th]:px-2.5 [&_th]:py-2 [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:text-xs [&_th]:text-[11px] [&_td]:break-words [&_table]:min-w-[760px] [&_th:first-child]:w-[40px] [&_th:nth-child(2)]:w-[40px]">
             <Table
                 headers={[
                     "#",
@@ -454,6 +455,7 @@ const QuotationList: React.FC = () => {
                 )}
 
             </Table>
+            </div>
 
             <PaginationWrapper
                 count={pagination.totalPages}

@@ -79,7 +79,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                 setIsSidebarOpen(false);
               }
             }}
-            className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-4"
+            className="flex-1 overflow-x-hidden overflow-y-auto bg-white-50 p-2.5 sm:p-4"
           >
             {children || <Outlet />}
           </main>

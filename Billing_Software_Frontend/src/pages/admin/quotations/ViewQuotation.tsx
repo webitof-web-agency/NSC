@@ -244,17 +244,17 @@ const ViewQuotation: React.FC = () => {
                 )}
             </div>
 
-            <div className="flex p-12 font-sans text-gray-950 max-w-5xl mx-auto my-8">
+            <div className="flex flex-wrap gap-3 p-4 sm:p-8 lg:p-12 font-sans text-gray-950 max-w-5xl mx-auto my-4 sm:my-8">
                 <button
                     onClick={() => setShowPrintDialog(true)}
-                    className="mr-4 bg-primary hover:bg-gray-950 text-white px-4 py-2 rounded cursor-pointer"
+                    className="w-full sm:w-auto bg-primary hover:bg-gray-950 text-white px-4 py-2 rounded cursor-pointer text-center"
                 >
                     Print / Save as PDF
                 </button>
                 {token && (
                     <button
                         onClick={handleSendWhatsAppClick}
-                        className="mr-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded cursor-pointer"
+                        className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded cursor-pointer text-center"
                     >
                         Send on WhatsApp
                     </button>
@@ -262,7 +262,7 @@ const ViewQuotation: React.FC = () => {
                 {token && (
                     <button
                         onClick={() => navigate("/admin/quotations")}
-                        className="bg-gray-300 hover:bg-gray-400 text-gray-950 px-4 py-2 rounded cursor-pointer"
+                        className="w-full sm:w-auto bg-gray-300 hover:bg-gray-400 text-gray-950 px-4 py-2 rounded cursor-pointer text-center"
                     >
                         Back
                     </button>
@@ -270,7 +270,7 @@ const ViewQuotation: React.FC = () => {
             </div>
 
             {/* Public Link Section */}
-            <div className="p-8 max-w-5xl mx-auto mb-12 bg-white rounded-2xl shadow-sm border border-gray-200">
+            <div className="p-4 sm:p-8 max-w-5xl mx-auto mb-12 bg-white rounded-2xl shadow-sm border border-gray-200">
                 <div className="flex items-center gap-3 mb-4">
                     <div className="bg-emerald-100 text-emerald-700 p-2 rounded-xl">
                         <Link2 size={24} />

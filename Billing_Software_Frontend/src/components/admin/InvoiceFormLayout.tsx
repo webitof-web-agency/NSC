@@ -113,27 +113,27 @@ const InvoiceFormLayout: React.FC<InvoiceFormLayoutProps> = ({
   currencySymbol = "",
 }) => {
   return (
-    <div className="md:p-4 bg-white-50 min-h-screen border border-gray-200 rounded pb-4 md:pb-24 relative">
+    <div className="p-3 md:p-4 bg-white-50 min-h-screen border border-gray-200 rounded pb-4 md:pb-24 relative">
       <form onSubmit={onSubmit}>
         <div className="max-w-7xl mx-auto space-y-2">
-          <div className="flex justify-between items-center mb-2 gap-4">
-            <h1 className="text-2xl font-bold text-gray-950">{title}</h1>
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2 gap-3">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-950">{title}</h1>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               {titleActions}
               {logoSrc && (
                 <img
                   src={logoSrc}
                   alt=""
-                  className="w-32"
+                  className="w-28 sm:w-32"
                 />
               )}
             </div>
           </div>
 
           <div className="w-full">
-            <div className="flex flex-wrap gap-4 w-full items-center">
+            <div className="flex flex-wrap gap-4 w-full items-start">
               {invoiceNumberField && (
-                <div className="w-52">
+                <div className="w-full sm:w-52 shrink-0">
                   <label className="block text-sm font-medium text-gray-900">
                     {invoiceNumberField.label}
                   </label>
@@ -166,7 +166,7 @@ const InvoiceFormLayout: React.FC<InvoiceFormLayoutProps> = ({
               )}
 
               {dateField && (
-                <div className="w-44">
+                <div className="w-full sm:w-44 shrink-0">
                   {dateField.inputNode}
                   {dateField.error && (
                     <span className="text-red-500 text-sm">{dateField.error}</span>
@@ -175,13 +175,13 @@ const InvoiceFormLayout: React.FC<InvoiceFormLayoutProps> = ({
               )}
 
               {taxTypeField && (
-                <div className="w-32">
+                <div className="w-full sm:w-36 shrink-0">
                   {taxTypeField}
                 </div>
               )}
 
               {headerFields.map((field, index) => (
-                <div key={index} className="w-56">
+                <div key={index} className="w-full sm:w-56 sm:flex-1 min-w-[200px]">
                   {field}
                 </div>
               ))}
@@ -313,7 +313,7 @@ const InvoiceFormLayout: React.FC<InvoiceFormLayoutProps> = ({
                 </div>
                 {(!extraInfo.showToggle || extraInfo.isVisible) && (
                   <>
-                    <div className="flex items-center gap-2 mb-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-4">
                       {extraInfo.tabs.map((tab) => (
                         <button
                           key={tab.id}

@@ -1372,8 +1372,8 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
     );
 
     const itemsFooter = (
-        <div className="flex flex-wrap gap-6 items-center">
-            <div ref={quickAddRef} className="relative flex-1 min-w-[320px]">
+        <div className="flex flex-wrap gap-4 sm:gap-6 items-center">
+            <div ref={quickAddRef} className="relative flex-1 min-w-0 w-full sm:min-w-[280px]">
                 <input
                     ref={quickAddInputRef}
                     type="text"
@@ -1547,12 +1547,12 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
     ) : null;
 
     const footerButtons = (
-        <div className="flex justify-end mt-4 gap-3">
-            <button type='button' onClick={() => navigate('/admin/quotations')} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50    cursor-pointer">Cancel</button>
+        <div className="flex flex-col sm:flex-row sm:justify-end mt-4 gap-3 w-full">
+            <button type='button' onClick={() => navigate('/admin/quotations')} className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer text-center">Cancel</button>
             {isEditMode ? (
                 <button
                     type="button"
-                    className="px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-gray-950 focus:outline-none flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-gray-950 focus:outline-none flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                     disabled={isSaving}
                     onClick={handleUpdateQuotation}
                 >
@@ -1561,7 +1561,7 @@ const CreateNewQuotation: React.FC<CreateNewQuotationProps> = ({ mode = 'create'
             ) : (
                 <button
                     type="button"
-                    className="px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-gray-950 focus:outline-none flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-gray-950 focus:outline-none flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                     disabled={isSaving}
                     onClick={handleSaveAndSend}
                 >

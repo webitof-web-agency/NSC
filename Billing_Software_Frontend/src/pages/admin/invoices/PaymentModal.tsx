@@ -740,8 +740,8 @@ const PaymentModal: React.FC<Props> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-      <div className="bg-white w-[420px] rounded-lg p-5 space-y-4">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white w-full max-w-[420px] rounded-lg p-4 sm:p-5 space-y-4 max-h-[90vh] overflow-y-auto">
         <h2 className="text-lg font-bold">
           {isExchangePayment ? 'Complete Exchange Payment' : 'Complete Payment'}
         </h2>
